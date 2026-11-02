@@ -1,0 +1,4 @@
+module CNes {
+    header "cnes.h"
+    export *
+}

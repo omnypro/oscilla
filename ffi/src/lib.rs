@@ -1,6 +1,6 @@
-//! The C interfaces of `cgba.h` and `cgb.h`, over the Rust cores. This is the
-//! only crate that exports symbols and the only one that holds unsafe code. A
-//! cargo feature selects each core.
+//! The C interfaces of `cgba.h`, `cgb.h` and `cnes.h`, over the Rust cores.
+//! This is the only crate that exports symbols and the only one that holds
+//! unsafe code. A cargo feature selects each core.
 
 // The contract of each function is the comment on its declaration in the
 // header.
@@ -10,9 +10,11 @@
 mod gb;
 #[cfg(feature = "gba")]
 mod gba;
+#[cfg(feature = "nes")]
+mod nes;
 
 /// Copies `text` into the caller's error buffer and ends it with a NUL.
-#[cfg(any(feature = "gb", feature = "gba"))]
+#[cfg(any(feature = "gb", feature = "gba", feature = "nes"))]
 fn write_error(error: *mut std::ffi::c_char, size: usize, text: &[u8]) {
     if error.is_null() || size == 0 {
         return;

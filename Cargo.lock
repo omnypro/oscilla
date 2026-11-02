@@ -50,6 +50,8 @@ dependencies = [
  "oscilla-gb",
  "oscilla-gba",
  "oscilla-gbs",
+ "oscilla-nes",
+ "oscilla-nsf",
 ]
 
 [[package]]
@@ -70,6 +72,18 @@ dependencies = [
 
 [[package]]
 name = "oscilla-gbs"
+version = "0.0.0"
+
+[[package]]
+name = "oscilla-nes"
+version = "0.0.0"
+dependencies = [
+ "oscilla-nsf",
+ "oscilla-resample",
+]
+
+[[package]]
+name = "oscilla-nsf"
 version = "0.0.0"
 
 [[package]]

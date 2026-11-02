@@ -9,8 +9,11 @@ let package = Package(
         .library(name: "CGba", type: .static, targets: ["CGba"]),
         // The Game Boy core, in the same Rust library.
         .library(name: "CGb", type: .static, targets: ["CGb"]),
+        // The NES core, in the same Rust library.
+        .library(name: "CNes", type: .static, targets: ["CNes"]),
         .executable(name: "oscilla-gsf", targets: ["OscillaGSF"]),
         .executable(name: "oscilla-gbs", targets: ["OscillaGBS"]),
+        .executable(name: "oscilla-nsf", targets: ["OscillaNSF"]),
     ],
     targets: [
         // The C header of the Rust library, and the module that Swift imports.
@@ -23,6 +26,11 @@ let package = Package(
             name: "CGb",
             dependencies: ["OscillaRust"],
             path: "swift/CGb"
+        ),
+        .target(
+            name: "CNes",
+            dependencies: ["OscillaRust"],
+            path: "swift/CNes"
         ),
         // The Rust library as a prebuilt XCFramework (scripts/build-xcframework.sh).
         .binaryTarget(
@@ -43,10 +51,22 @@ let package = Package(
             dependencies: ["CGb"],
             path: "cores/gb/tools/oscilla-gbs"
         ),
+        // Plays an NSF file to a WAV file and writes the stream of sound
+        // register stores.
+        .executableTarget(
+            name: "OscillaNSF",
+            dependencies: ["CNes"],
+            path: "cores/nes/tools/oscilla-nsf"
+        ),
         .testTarget(
             name: "CGbTests",
             dependencies: ["CGb"],
             path: "cores/gb/tests"
+        ),
+        .testTarget(
+            name: "CNesTests",
+            dependencies: ["CNes"],
+            path: "cores/nes/tests"
         ),
         .testTarget(
             name: "CGbaTests",

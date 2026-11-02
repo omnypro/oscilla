@@ -64,7 +64,8 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md" \
             "build/OscillaRust-$VERSION.xcframework.zip" \
             swift/CGba/include/cgba.h \
-            swift/CGb/include/cgb.h
+            swift/CGb/include/cgb.h \
+            swift/CNes/include/cnes.h
       - name: Remove the key
         if: always()
         run: rm -f "$RUNNER_TEMP/release_key"
