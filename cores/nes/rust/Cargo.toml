@@ -1,0 +1,9 @@
+[package]
+name = "oscilla-nes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+oscilla-nsf.workspace = true
+oscilla-resample.workspace = true

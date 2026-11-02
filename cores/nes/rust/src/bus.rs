@@ -1,0 +1,130 @@
+//! The CPU's view of memory: the 2 KiB of RAM, the sound registers, the 8 KiB
+//! at 0x6000 and the program in eight windows of 4 KiB.
+
+use crate::state::*;
+
+/// Warning bits, one per kind, so that each is recorded once.
+pub(crate) const WARN_STALL: u32 = 1;
+pub(crate) const WARN_LOCK: u32 = 2;
+pub(crate) const WARN_BRK: u32 = 4;
+pub(crate) const WARN_UNSTABLE: u32 = 8;
+pub(crate) const WARN_CHIP: u32 = 16;
+
+impl Machine {
+    pub(crate) fn warn(&mut self, bit: u32, text: &str) {
+        if self.warned & bit != 0 {
+            return;
+        }
+        self.warned |= bit;
+        // The list holds at most 2048 bytes and its room is reserved, so a
+        // pointer to it stays valid.
+        if self.warnings.len() + text.len() + 1 > 2048 {
+            return;
+        }
+        self.warnings.pop();
+        self.warnings.extend_from_slice(text.as_bytes());
+        self.warnings.push(b'\n');
+        self.warnings.push(0);
+    }
+
+    /// A byte of the program as the CPU would read it at `address`.
+    pub(crate) fn read_rom(&self, address: u16) -> u8 {
+        if address < 0x8000 {
+            return 0;
+        }
+        let window = usize::from((address - 0x8000) >> 12);
+        let offset = usize::from(self.banks[window]) * 0x1000 + usize::from(address & 0xFFF);
+        self.image.get(offset).copied().unwrap_or(0)
+    }
+
+    /// The screen register of a test cartridge: it is in its vertical blank
+    /// half of the time, so that a program that waits for either edge goes on.
+    fn ppu_status(&self) -> u8 {
+        if (self.now / 29781).is_multiple_of(2) {
+            0x80
+        } else {
+            0
+        }
+    }
+
+    /// Reads memory as the CPU would see it, with no side effects.
+    pub fn peek(&self, address: u16) -> u8 {
+        match address {
+            0x0000..=0x1FFF => self.ram[usize::from(address & 0x7FF)],
+            0x2002 if self.cartridge => self.ppu_status(),
+            0x4015 => {
+                let a = &self.apu;
+                u8::from(a.pulse[0].len > 0)
+                    | u8::from(a.pulse[1].len > 0) << 1
+                    | u8::from(a.tri.len > 0) << 2
+                    | u8::from(a.noise.len > 0) << 3
+                    | u8::from(a.dmc.remaining > 0) << 4
+                    | (self.bus & 0x20)
+                    | u8::from(a.frame.irq) << 6
+                    | u8::from(a.dmc.irq) << 7
+            }
+            0x6000..=0x7FFF => self.wram[usize::from(address - 0x6000)],
+            0x8000..=0xFFFF => self.read_rom(address),
+            _ => self.bus,
+        }
+    }
+
+    /// A read bus cycle.
+    pub(crate) fn read(&mut self, address: u16) -> u8 {
+        let v = match address {
+            0x0000..=0x1FFF => self.ram[usize::from(address & 0x7FF)],
+            0x2000..=0x3FFF => {
+                if self.cartridge && address & 7 == 2 {
+                    self.ppu_status()
+                } else {
+                    self.bus
+                }
+            }
+            0x4000..=0x401F => {
+                if address == 0x4015 {
+                    self.apu_read(address)
+                } else if self.cartridge && address >= 0x4016 {
+                    0
+                } else {
+                    self.bus
+                }
+            }
+            0x6000..=0x7FFF => self.wram[usize::from(address - 0x6000)],
+            0x8000..=0xFFFF => self.read_rom(address),
+            _ => self.bus,
+        };
+        // A read of the status register leaves the bit that comes from the bus
+        // where it was.
+        if address != 0x4015 {
+            self.bus = v;
+        }
+        self.now += 1;
+        v
+    }
+
+    /// A write bus cycle.
+    pub(crate) fn write(&mut self, address: u16, v: u8) {
+        self.bus = v;
+        match address {
+            0x0000..=0x1FFF => self.ram[usize::from(address & 0x7FF)] = v,
+            0x4000..=0x4017 => {
+                // The cycles that sample reads took are charged before the
+                // store, so the observer sees the cycle it happens on.
+                self.sync_apu();
+                let t = self.now;
+                if let Some(o) = self.observer.0.as_mut() {
+                    o.sound_write(t, address, v);
+                }
+                if address != 0x4014 && address != 0x4016 {
+                    self.apu_write(address, v);
+                }
+            }
+            0x5FF8..=0x5FFF if self.banked => {
+                self.banks[usize::from(address - 0x5FF8)] = v;
+            }
+            0x6000..=0x7FFF => self.wram[usize::from(address - 0x6000)] = v,
+            _ => {}
+        }
+        self.now += 1;
+    }
+}

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["audio/resample", "formats/gbs", "formats/psf", "cores/gba/rust", "cores/gb/rust", "ffi"]
+members = ["audio/resample", "formats/gbs", "formats/nsf", "formats/psf", "cores/gba/rust", "cores/gb/rust", "cores/nes/rust", "ffi"]
 
 [workspace.package]
 version = "0.0.0"
@@ -10,10 +10,12 @@ publish = false
 [workspace.dependencies]
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 oscilla-gbs = { path = "formats/gbs" }
+oscilla-nsf = { path = "formats/nsf" }
 oscilla-psf = { path = "formats/psf" }
 oscilla-resample = { path = "audio/resample" }
 oscilla-gba = { path = "cores/gba/rust" }
 oscilla-gb = { path = "cores/gb/rust" }
+oscilla-nes = { path = "cores/nes/rust" }
 
 [profile.release]
 panic = "abort"
