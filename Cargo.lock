@@ -47,7 +47,9 @@ dependencies = [
 name = "oscilla-ffi"
 version = "0.0.0"
 dependencies = [
+ "oscilla-gb",
  "oscilla-gba",
+ "oscilla-gbs",
 ]
 
 [[package]]

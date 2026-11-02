@@ -417,6 +417,16 @@ impl Machine {
                 let i = usize::from(address - 0xFF10);
                 self.apu.r[i] | crate::apu::READ_OR[i]
             }
+            0xFF26 => {
+                let a = &self.apu;
+                u8::from(a.on) << 7
+                    | 0x70
+                    | u8::from(a.ch1.active)
+                    | u8::from(a.ch2.active) << 1
+                    | u8::from(a.ch3.active) << 2
+                    | u8::from(a.ch4.active) << 3
+            }
+            0xFF27..=0xFF2F => 0xFF,
             0xFF30..=0xFF3F => self.apu.wave_ram[usize::from(address - 0xFF30)],
             0xFFFF => self.ie,
             _ => self.mem[usize::from(address)],
