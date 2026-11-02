@@ -7,8 +7,9 @@
 //! and each phase sums to exactly 1 << BLEP_SHIFT, so the running integral
 //! never drifts.
 //!
-//! The chip's clock must be a power of two, 2^`clock_shift` cycles per second,
-//! and no more than 2^24.
+//! The chip's clock is either a power of two, 2^`clock_shift` cycles per second
+//! and no more than 2^24, or a ratio `num / den` cycles per second. The ratio
+//! is exact: a position is `cycle * rate * den / num` in integers.
 
 mod tables;
 
@@ -21,10 +22,17 @@ pub const BLEP_SHIFT: u32 = 15;
 /// Frames in each output ring. A caller takes at most a quarter of it at a time.
 pub const OUT_RING: usize = 16384;
 
+/// How cycles turn into positions.
+#[derive(Clone, Copy)]
+enum Clock {
+    Shift(u32),
+    Ratio { num: u64, den: u64 },
+}
+
 #[derive(Clone)]
 pub struct Resampler {
     rate: i32,
-    clock_shift: u32,
+    clock: Clock,
     /// Two rings of OUT_RING frames, left then right.
     buf: Vec<i64>,
     integ: [i64; 2],
@@ -38,9 +46,20 @@ impl Resampler {
     /// producing `rate` frames per second.
     pub fn new(rate: i32, clock_shift: u32) -> Resampler {
         assert!(clock_shift <= 24);
+        Resampler::with(rate, Clock::Shift(clock_shift))
+    }
+
+    /// A resampler for a chip that runs at `num / den` cycles per second.
+    /// `num` and `den` are at least 1, and `den` is at most 2^16.
+    pub fn with_ratio(rate: i32, num: u64, den: u64) -> Resampler {
+        assert!(num >= 1 && (1..=1 << 16).contains(&den));
+        Resampler::with(rate, Clock::Ratio { num, den })
+    }
+
+    fn with(rate: i32, clock: Clock) -> Resampler {
         Resampler {
             rate,
-            clock_shift,
+            clock,
             buf: vec![0; 2 * OUT_RING],
             integ: [0; 2],
             read_pos: 0,
@@ -76,8 +95,13 @@ impl Resampler {
     /// every step's first tap at frame 1 or later. The result is a fixed
     /// latency of BLEP_HALF frames. Positions are in frames scaled by 2^24.
     fn position(&self, cycle: u64) -> u128 {
-        ((u128::from(cycle) * self.rate as u128) << (24 - self.clock_shift))
-            + ((BLEP_HALF as u128) << 24)
+        let scaled = match self.clock {
+            Clock::Shift(shift) => (u128::from(cycle) * self.rate as u128) << (24 - shift),
+            Clock::Ratio { num, den } => {
+                ((u128::from(cycle) * self.rate as u128 * u128::from(den)) << 24) / u128::from(num)
+            }
+        };
+        scaled + ((BLEP_HALF as u128) << 24)
     }
 
     fn advance_avail(&mut self, pos: u128) {
@@ -254,6 +278,35 @@ mod tests {
         r.step(late, 100, -100);
         r.finalize(late + 4_194_304);
         assert!(r.available() > 0);
+    }
+
+    #[test]
+    fn a_ratio_of_a_power_of_two_gives_the_same_positions() {
+        let mut a = Resampler::new(48000, 22);
+        let mut b = Resampler::with_ratio(48000, 1 << 22, 1);
+        for (i, cycle) in [0u64, 1, 77, 4_194_304, 123_456_789, 1 << 40]
+            .into_iter()
+            .enumerate()
+        {
+            let level = 100 * (i as i32 + 1);
+            a.step(cycle, level, -level);
+            b.step(cycle, level, -level);
+            assert_eq!(a.position(cycle), b.position(cycle));
+        }
+        assert_eq!(a.buf, b.buf);
+    }
+
+    #[test]
+    fn a_ratio_clock_places_a_step_at_its_time() {
+        // 19687500 / 11 cycles per second, the clock of an NTSC console.
+        let (num, den) = (19_687_500u64, 11u64);
+        let mut r = Resampler::with_ratio(48000, num, den);
+        r.step(num / den / 4, 1000, 1000);
+        r.finalize(num / den / 2);
+        let mut out = vec![0i16; 2 * 20_000];
+        assert_eq!(r.take_s16(Some(&mut out), 20_000, 1, BLEP_SHIFT), 20_000);
+        assert_eq!(out[2 * 11_000], 0, "before the step");
+        assert_eq!(out[2 * 13_000], 1000, "after the step");
     }
 
     #[test]
