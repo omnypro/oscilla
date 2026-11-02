@@ -1,5 +1,22 @@
 # Changes
 
+## 0.3.0
+
+- NES core in Rust: a 6502 CPU, the 2A03 sound unit with the console's
+  filters, and NSF loading for both consoles.
+- A C interface, `cnes.h`, and a `CNes` product in the Swift package. The
+  XCFramework carries all three cores, and the static library has cargo
+  features `gba`, `gb` and `nes`, all on by default.
+- Snapshots, channel levels with a channel mask, end-of-song signals, an
+  observer, warnings and a bass cutoff, as in the Game Boy core.
+- `oscilla-nsf`: renders an NSF file to a WAV file and writes the stream of
+  sound register stores.
+- The resampler takes a clock given as a ratio, which the NES needs. The Game
+  Boy and GBA output is unchanged.
+- `CNES_OUTPUT_REVISION` (1) in `cnes.h`: bumped whenever the same input
+  renders different samples or traces.
+- Expansion sound chips are not played yet.
+
 ## 0.2.0
 
 - Game Boy core in Rust: an SM83 CPU, timer, sound unit and GBS loading. It
