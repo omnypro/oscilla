@@ -44,8 +44,8 @@ impl Machine {
         m.double_speed = gbs.tac & 0x80 != 0;
         m.tick = u64::from(gbs.tick_clocks());
         m.songs = gbs.songs;
-        m.first_song = gbs.first_song;
-        m.select_song(gbs.first_song);
+        m.first_song = gbs.first_song.min(gbs.songs.saturating_sub(1));
+        m.select_song(m.first_song);
         Some(m)
     }
 
@@ -419,6 +419,16 @@ impl Machine {
                 }
             }
             0xE000..=0xFDFF => self.mem[usize::from(address - 0x2000)],
+            0xFEA0..=0xFF00 => 0xFF,
+            0xFF04 => (self.sys(self.now) >> 8) as u8,
+            0xFF05 => self.timer_at(self.now).0,
+            0xFF06 => self.timer.tma,
+            0xFF07 => self.timer.tac | 0xF8,
+            0xFF0F => {
+                let overflowed = self.timer_at(self.now).1;
+                (self.iflag | u8::from(overflowed) << 2) | 0xE0
+            }
+            0xFF44 => self.ly_at(self.now),
             0xFF10..=0xFF25 => {
                 let i = usize::from(address - 0xFF10);
                 self.apu.r[i] | crate::apu::READ_OR[i]
@@ -477,6 +487,7 @@ impl Machine {
         }
         let observer = std::mem::take(&mut self.observer);
         let mask = self.channel_mask;
+        let snapshot_mask = s.channel_mask;
         // The warning list keeps its allocation, so a pointer to it stays good.
         let mut warnings = std::mem::take(&mut self.warnings);
         *self = Machine::clone(s);
@@ -485,6 +496,12 @@ impl Machine {
         self.warnings = warnings;
         self.observer = observer;
         self.channel_mask = mask;
+        if mask != snapshot_mask {
+            // The snapshot's mix was made with its own mask.
+            let t = self.now;
+            self.apu_advance(t);
+            self.apu_emit(t);
+        }
         Ok(())
     }
 

@@ -94,7 +94,7 @@ sum. The levels it leaves out stay visible through `channel_levels`.
 A high-pass filter follows the mixer, with the charge factor of the original
 console, 0.999958 per clock. It runs on the mixer's events. Between events the
 level is constant, and the filter's state moves by a factor that a table gives
-for each count of clocks. A tick every 2048 clocks keeps its output current.
+for each count of clocks. A tick every 256 clocks keeps its output current.
 With no DAC on, the output is exactly 0 and the capacitor holds its charge.
 The capacitor starts at the level of the idle DACs, so a song does not start
 with a thump.

@@ -26,7 +26,7 @@ const DUTY: [[u8; 8]; 4] = [
 ];
 
 /// Clocks between recomputations of the filter's output.
-const HPF_TICK: u64 = 2048;
+const HPF_TICK: u64 = 256;
 /// The capacitor's charge factor for one clock.
 const HPF_CHARGE: f64 = 0.999958;
 /// Level units per mixer unit at the resampler's input.
@@ -64,10 +64,23 @@ impl Default for Apu {
             on: false,
             r: [0; 0x17],
             wave_ram: [0; 16],
-            ch1: Pulse::default(),
-            ch2: Pulse::default(),
-            ch3: Wave::default(),
-            ch4: Noise::default(),
+            // No generator runs before its first trigger.
+            ch1: Pulse {
+                next_step: NEVER,
+                ..Pulse::default()
+            },
+            ch2: Pulse {
+                next_step: NEVER,
+                ..Pulse::default()
+            },
+            ch3: Wave {
+                next_step: NEVER,
+                ..Wave::default()
+            },
+            ch4: Noise {
+                next_step: NEVER,
+                ..Noise::default()
+            },
             sweep: Sweep::default(),
             fs_step: 0,
             time: 0,

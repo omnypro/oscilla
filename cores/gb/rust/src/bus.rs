@@ -50,31 +50,43 @@ impl Machine {
         [9, 3, 5, 7][usize::from(tac & 3)]
     }
 
+    /// TIMA at cycle `t`, and whether it overflowed since it was last synced.
+    pub(crate) fn timer_at(&self, t: u64) -> (u8, bool) {
+        let tm = &self.timer;
+        if t <= tm.synced || tm.tac & 4 == 0 {
+            return (tm.tima, false);
+        }
+        let shift = Self::timer_bit(tm.tac) + 1;
+        let off = tm.tima_offset;
+        let edges = ((t + off) >> shift) - ((tm.synced + off) >> shift);
+        if edges == 0 {
+            return (tm.tima, false);
+        }
+        let tima = u64::from(tm.tima);
+        if tima + edges <= 0xFF {
+            return ((tima + edges) as u8, false);
+        }
+        let after_first = tima + edges - 0x100;
+        let period = 0x100 - u64::from(tm.tma);
+        ((u64::from(tm.tma) + after_first % period) as u8, true)
+    }
+
     /// Brings TIMA up to cycle `t`.
     pub(crate) fn timer_sync(&mut self, t: u64) {
-        let from = self.timer.synced;
-        if t <= from {
+        if t <= self.timer.synced {
             return;
         }
+        let (tima, overflowed) = self.timer_at(t);
         self.timer.synced = t;
-        if self.timer.tac & 4 == 0 {
-            return;
+        self.timer.tima = tima;
+        if overflowed {
+            self.iflag |= 4;
         }
-        let shift = Self::timer_bit(self.timer.tac) + 1;
-        let off = self.timer.tima_offset;
-        let edges = ((t + off) >> shift) - ((from + off) >> shift);
-        if edges == 0 {
-            return;
-        }
-        let tima = u64::from(self.timer.tima);
-        if tima + edges <= 0xFF {
-            self.timer.tima = (tima + edges) as u8;
-            return;
-        }
-        self.iflag |= 4;
-        let after_first = tima + edges - 0x100;
-        let period = 0x100 - u64::from(self.timer.tma);
-        self.timer.tima = (u64::from(self.timer.tma) + after_first % period) as u8;
+    }
+
+    /// The display line at cycle `t`: 144 when a routine starts.
+    pub(crate) fn ly_at(&self, t: u64) -> u8 {
+        (((t - self.ly_origin.min(t)) / 456 + 144) % 154) as u8
     }
 
     fn write_tac(&mut self, v: u8) {
@@ -111,6 +123,7 @@ impl Machine {
         // selected bit.
         if sys & 0x1000 != 0 {
             self.apu_frame_sequencer_tick();
+            self.apu_emit(t);
         }
         let counter = ((t + self.timer.tima_offset) & 0xFFFF) as u16;
         if self.timer.tac & 4 != 0 && (counter >> Self::timer_bit(self.timer.tac)) & 1 != 0 {
@@ -164,7 +177,7 @@ impl Machine {
                 self.iflag | 0xE0
             }
             0xFF10..=0xFF3F => self.apu_read(a),
-            0xFF44 => (((self.now - self.ly_origin.min(self.now)) / 456 + 144) % 154) as u8,
+            0xFF44 => self.ly_at(self.now),
             0xFF80..=0xFFFE | 0xFF01..=0xFF03 | 0xFF40..=0xFF7F => self.mem[usize::from(a)],
             0xFFFF => self.ie,
             _ => 0xFF,

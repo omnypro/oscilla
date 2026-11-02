@@ -397,7 +397,8 @@ impl Machine {
                 self.idle();
             }
             0x10 => {
-                self.fetch8();
+                // The second byte is skipped without a cycle of its own.
+                self.cpu.pc = self.cpu.pc.wrapping_add(1);
                 if self.interrupts {
                     // STOP ends when a button is pressed; no input exists.
                 } else {

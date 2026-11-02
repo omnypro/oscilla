@@ -310,3 +310,83 @@ fn the_timer_registers_count_from_the_play_call() {
     let s = seen.borrow();
     assert!(s.writes.iter().all(|w| w.2 == 0xF0), "{:?}", &s.writes[..4]);
 }
+
+#[test]
+fn peek_shows_the_registers_the_cpu_reads() {
+    let f = file(&[], &[], 0xF0, 0x05, None);
+    let mut m = Machine::new(&Gbs::parse(&f).unwrap(), 48000).unwrap();
+    m.run_cycles(SECOND / 100);
+    assert_eq!(m.peek(0xFF06), 0xF0);
+    assert_eq!(m.peek(0xFF07), 0xFD);
+    let tima = m.peek(0xFF05);
+    assert!(tima >= 0xF0, "{tima:#x}");
+    assert!(m.peek(0xFF44) < 154);
+    assert_eq!(m.peek(0xFEA0), 0xFF);
+    assert_eq!(m.peek(0xFF00), 0xFF);
+    // DIV moves with time.
+    let before = m.peek(0xFF04);
+    m.run_cycles(SECOND / 10);
+    assert_ne!(m.peek(0xFF04), before);
+}
+
+#[test]
+fn a_restore_into_a_machine_with_another_mask_mixes_with_that_mask() {
+    let init = [power(), set(0x16, 0x80), set(0x17, 0xF0), set(0x19, 0x87)].concat();
+    let mut a = machine(&init, &[]);
+    render(&mut a, 4000);
+    let snap = a.snapshot();
+
+    let mut b = machine(&init, &[]);
+    b.set_channel_mask(0);
+    b.restore(&snap).unwrap();
+    let restored = render(&mut b, 4000);
+
+    let mut c = machine(&init, &[]);
+    c.restore(&snap).unwrap();
+    c.set_channel_mask(0);
+    assert_eq!(restored, render(&mut c, 4000));
+}
+
+#[test]
+fn a_wave_channel_starts_from_silence() {
+    // Full-scale wave RAM, the channel on and triggered: until the first
+    // sample is read the channel outputs 0.
+    let mut init = power();
+    for i in 0..16u8 {
+        init.extend(set(0x30 + i, 0xFF));
+    }
+    init.extend(
+        [
+            set(0x1A, 0x80),
+            set(0x1C, 0x20),
+            set(0x1D, 0x00),
+            set(0x1E, 0x80),
+        ]
+        .concat(),
+    );
+    let mut m = machine(&init, &[]);
+    m.run_cycles(400);
+    assert_eq!(m.channel_levels()[2], 0);
+    m.run_cycles(20000);
+    assert_eq!(m.channel_levels()[2], 15);
+}
+
+#[test]
+fn an_idle_unit_costs_next_to_nothing() {
+    // No channel has been triggered, so no generator runs.
+    let mut m = machine(&power(), &[]);
+    let start = std::time::Instant::now();
+    m.run_cycles(60 * SECOND);
+    assert!(start.elapsed().as_millis() < 500, "{:?}", start.elapsed());
+}
+
+#[test]
+fn a_first_song_past_the_count_is_clamped() {
+    let mut g = gbs(&[], &set(0x24, 0x33));
+    g.first_song = 200;
+    let mut m = Machine::new(&g, 48000).unwrap();
+    assert_eq!(m.song(), 3);
+    let seen = watch(&mut m);
+    m.run_cycles(SECOND / 10);
+    assert_eq!(seen.borrow().calls[0], (0, -1));
+}

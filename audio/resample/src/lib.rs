@@ -75,12 +75,13 @@ impl Resampler {
     /// the kernel reaches BLEP_HALF frames back from each step, and this keeps
     /// every step's first tap at frame 1 or later. The result is a fixed
     /// latency of BLEP_HALF frames. Positions are in frames scaled by 2^24.
-    fn position(&self, cycle: u64) -> u64 {
-        ((cycle * self.rate as u64) << (24 - self.clock_shift)) + ((BLEP_HALF as u64) << 24)
+    fn position(&self, cycle: u64) -> u128 {
+        ((u128::from(cycle) * self.rate as u128) << (24 - self.clock_shift))
+            + ((BLEP_HALF as u128) << 24)
     }
 
-    fn advance_avail(&mut self, pos: u64) {
-        let idx = pos >> 24;
+    fn advance_avail(&mut self, pos: u128) {
+        let idx = (pos >> 24) as u64;
         let done = (idx + 1).saturating_sub(BLEP_HALF as u64);
         if done > self.avail_pos {
             self.avail_pos = done;
@@ -94,8 +95,8 @@ impl Resampler {
         let dl = left - self.level[0];
         let dr = right - self.level[1];
         if dl != 0 || dr != 0 {
-            let idx = pos >> 24;
-            let phase = ((pos >> 16) & (BLEP_PHASES as u64 - 1)) as usize;
+            let idx = (pos >> 24) as u64;
+            let phase = ((pos >> 16) & (BLEP_PHASES as u128 - 1)) as usize;
             let k = &kernel()[phase * BLEP_TAPS..(phase + 1) * BLEP_TAPS];
             let base = idx + 1 - BLEP_HALF as u64;
             for (j, kj) in k.iter().enumerate() {
@@ -240,4 +241,34 @@ pub fn reference_kernel() -> &'static [i64] {
         }
         k
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_very_late_cycle_keeps_working() {
+        let mut r = Resampler::new(192000, 22);
+        let late = 1u64 << 60;
+        r.step(late, 100, -100);
+        r.finalize(late + 4_194_304);
+        assert!(r.available() > 0);
+    }
+
+    #[test]
+    fn a_step_shows_after_its_cycle() {
+        let mut r = Resampler::new(48000, 22);
+        r.step(4_194_304 / 2, 1000, 1000);
+        r.finalize(4_194_304);
+        let mut out = vec![0i64; 2 * 48000];
+        let n = r.take_s16(None, 0, 1, 0);
+        assert_eq!(n, 0);
+        let mut s16 = vec![0i16; 2 * 40000];
+        let n = r.take_s16(Some(&mut s16), 40000, 1, BLEP_SHIFT);
+        assert_eq!(n, 40000);
+        out.clear();
+        assert_eq!(s16[2 * 1000], 0, "before the step");
+        assert_eq!(s16[2 * 30000], 1000, "after the step");
+    }
 }
