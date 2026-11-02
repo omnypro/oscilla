@@ -199,6 +199,8 @@ pub struct Machine {
     pub(crate) iflag: u8,
     pub(crate) apu: Apu,
     pub(crate) out: Resampler,
+    /// The high-pass filter's cutoff. A player's choice, outside the snapshot.
+    pub(crate) hp: crate::apu::Highpass,
     /// The channel mask: bit n is channel n + 1.
     pub(crate) channel_mask: u8,
     pub(crate) last_change: u64,

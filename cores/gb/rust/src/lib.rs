@@ -13,5 +13,6 @@ mod cpu;
 mod machine;
 mod state;
 
+pub use apu::{CONSOLE_HIGHPASS_HZ, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 pub use machine::{EndState, RestoreError, Snapshot};
 pub use state::{CLOCK_HZ, Machine, Observer};

@@ -501,6 +501,32 @@ pub unsafe extern "C" fn cgb_channel_mask(machine: *const CMachine) -> u32 {
     u32::from(unsafe { &(*machine).machine }.channel_mask())
 }
 
+/// 1 when the cutoff is in range and applied, 0 otherwise (also from inside a
+/// callback).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_set_highpass_hz(machine: *mut CMachine, hz: f64) -> c_int {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
+    c_int::from(unsafe { &mut (*machine).machine }.set_highpass_hz(hz))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_use_console_highpass(machine: *mut CMachine) {
+    if unsafe { in_callback(machine) } {
+        return;
+    }
+    unsafe { &mut (*machine).machine }.use_console_highpass();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_highpass_hz(machine: *const CMachine) -> f64 {
+    if unsafe { in_callback(machine) } {
+        return 0.0;
+    }
+    unsafe { &(*machine).machine }.highpass_hz()
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgb_end_state_get(machine: *const CMachine) -> c_int {
     if unsafe { in_callback(machine) } {

@@ -194,6 +194,30 @@ void cgb_channel_levels_get(const cgb_machine *machine, int32_t out[4]);
 void cgb_set_channel_mask(cgb_machine *machine, uint32_t mask);
 uint32_t cgb_channel_mask(const cgb_machine *machine);
 
+/* ---- Bass cutoff ------------------------------------------------------- */
+
+/*
+ * The output passes a high-pass filter, and these calls choose its cutoff.
+ * The default is the original console's own filter, which cuts below about
+ * 28 Hz. A higher cutoff thins the bass. The calls work while a song plays and
+ * the output stays continuous across the change. A reset, a song change and
+ * cgb_snapshot_restore leave the choice alone.
+ */
+#define CGB_HIGHPASS_CONSOLE_HZ 28.04
+#define CGB_HIGHPASS_MIN_HZ 1.0
+#define CGB_HIGHPASS_MAX_HZ 1000.0
+
+/* Sets the cutoff in Hz. Returns 1 when applied, and 0 with nothing changed
+ * for a value outside CGB_HIGHPASS_MIN_HZ to CGB_HIGHPASS_MAX_HZ (NaN
+ * included) or a call from an observer callback. */
+int cgb_set_highpass_hz(cgb_machine *machine, double hz);
+
+/* Goes back to the console's own filter. */
+void cgb_use_console_highpass(cgb_machine *machine);
+
+/* The cutoff in use: CGB_HIGHPASS_CONSOLE_HZ for the console's own filter. */
+double cgb_highpass_hz(const cgb_machine *machine);
+
 /* ---- The end of a song ------------------------------------------------- */
 
 typedef enum {

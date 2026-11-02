@@ -7,14 +7,15 @@
 /* oscilla-gbs: plays one song of a GBS file.
  *
  *   oscilla-gbs FILE.gbs [--song N] [--seconds S] [--rate HZ] [--out FILE.wav]
- *                        [--writes FILE.txt]
+ *                        [--writes FILE.txt] [--highpass HZ]
  *   oscilla-gbs FILE.gbs --info
- *   oscilla-gbs FILE.gbs [--song N] --bench [--seconds S] [--rate HZ]
+ *   oscilla-gbs FILE.gbs [--song N] --bench [--seconds S] [--rate HZ] [--highpass HZ]
  *
  * The default is song 0 for 30 seconds at 48000 Hz, written to out.wav.
  * --writes adds a text file with one line per store to the sound registers:
  * the song, the frame (-1 for the init routine), the cycle since that
  * frame's start, the address and the value. --info prints the header.
+ * --highpass moves the bass cutoff from the console's 28 Hz.
  * Bench mode renders with no output and prints how long that took. */
 
 typedef struct {
@@ -64,13 +65,14 @@ static double now_seconds(void) {
 int main(int argc, char **argv) {
     const char *path = NULL, *out_path = "out.wav", *writes_path = NULL;
     int song = 0, rate = 48000, info = 0, bench = 0;
-    double seconds = 30;
+    double seconds = 30, highpass = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--song") && i + 1 < argc) song = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
         else if (!strcmp(argv[i], "--rate") && i + 1 < argc) rate = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) out_path = argv[++i];
         else if (!strcmp(argv[i], "--writes") && i + 1 < argc) writes_path = argv[++i];
+        else if (!strcmp(argv[i], "--highpass") && i + 1 < argc) highpass = atof(argv[++i]);
         else if (!strcmp(argv[i], "--info")) info = 1;
         else if (!strcmp(argv[i], "--bench")) bench = 1;
         else if (argv[i][0] != '-' && !path) path = argv[i];
@@ -102,6 +104,13 @@ int main(int argc, char **argv) {
         fprintf(stderr, "the file has %d songs\n", h.songs);
         cgb_free(m);
         return 1;
+    }
+
+    if (highpass != 0 && !cgb_set_highpass_hz(m, highpass)) {
+        fprintf(stderr, "the cutoff must be between %.0f and %.0f Hz\n", CGB_HIGHPASS_MIN_HZ,
+                CGB_HIGHPASS_MAX_HZ);
+        cgb_free(m);
+        return 2;
     }
 
     /* A WAV file holds at most 4 GiB. */

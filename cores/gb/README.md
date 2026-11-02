@@ -41,13 +41,17 @@ of the init and play routines. Each play call is the driver's own tick, so a
 host can digest the stores per call. Rust code uses `oscilla_gb::Machine`
 directly.
 
-A player has three more groups of calls.
+A player has four more groups of calls.
 
 - `cgb_snapshot_take` copies the whole machine. `cgb_snapshot_restore` puts a
   machine with the same file and output rate back to that point, and the same
   calls then render the same samples.
 - `cgb_set_channel_mask` chooses which of the four channels reach the mix.
   `cgb_channel_levels_get` shows what each channel outputs, muted or not.
+- `cgb_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
+  plays. The default is the console's own filter at about 28 Hz, and
+  `cgb_use_console_highpass` returns to it. `cgb_highpass_hz` reads the cutoff
+  in use. A reset, a song change and a snapshot restore keep the choice.
 - `cgb_end_state_get` reports a unit with no channel on and a routine that
   never returned. `cgb_quiet_cycles` counts the cycles since the output level
   changed.

@@ -1,7 +1,7 @@
 import Testing
 import CGb
 
-/// The observer, snapshots and the channel mask, through the C interface.
+/// The observer, snapshots, the channel mask and the bass cutoff, through the C interface.
 struct HooksTests {
     final class Log {
         var machine: OpaquePointer?
@@ -22,6 +22,8 @@ struct HooksTests {
                 log.inside.append(cgb_register(log.machine, 0))
                 log.inside.append(UInt32(cgb_frames(log.machine)))
                 log.inside.append(UInt32(truncatingIfNeeded: cgb_quiet_cycles(log.machine)))
+                log.inside.append(UInt32(truncatingIfNeeded: cgb_set_highpass_hz(log.machine, 200)))
+                log.inside.append(UInt32(cgb_highpass_hz(log.machine)))
             },
             play_call: { context, frame in
                 let log = Unmanaged<Log>.fromOpaque(context!).takeUnretainedValue()
@@ -96,6 +98,40 @@ struct HooksTests {
             loudest = max(loudest, levels[1])
         }
         #expect(loudest == 15, "a muted channel still shows its level")
+    }
+
+    @Test func theBassCutoffStartsAtTheConsoleAndAcceptsOnlyItsRange() throws {
+        let m = try #require(Support.machine(init: Support.note))
+        defer { cgb_free(m) }
+        #expect(cgb_highpass_hz(m) == CGB_HIGHPASS_CONSOLE_HZ)
+        #expect(cgb_set_highpass_hz(m, 300) == 1)
+        #expect(cgb_highpass_hz(m) == 300)
+        for bad in [0, CGB_HIGHPASS_MIN_HZ - 0.5, CGB_HIGHPASS_MAX_HZ + 0.5, -5, .nan, .infinity] {
+            #expect(cgb_set_highpass_hz(m, bad) == 0, "\(bad)")
+            #expect(cgb_highpass_hz(m) == 300)
+        }
+        #expect(cgb_set_highpass_hz(m, CGB_HIGHPASS_MIN_HZ) == 1)
+        #expect(cgb_set_highpass_hz(m, CGB_HIGHPASS_MAX_HZ) == 1)
+        cgb_use_console_highpass(m)
+        #expect(cgb_highpass_hz(m) == CGB_HIGHPASS_CONSOLE_HZ)
+    }
+
+    @Test func theBassCutoffChangesTheSoundDuringPlayAndSurvivesAReset() throws {
+        let plain = try #require(Support.machine(init: Support.note))
+        let thin = try #require(Support.machine(init: Support.note))
+        defer { cgb_free(plain); cgb_free(thin) }
+        _ = Support.render(plain, frames: 4800)
+        _ = Support.render(thin, frames: 4800)
+        #expect(cgb_set_highpass_hz(thin, 1000) == 1)
+        let a = Support.render(plain, frames: 9600)
+        let b = Support.render(thin, frames: 9600)
+        #expect(a != b)
+        cgb_reset(thin)
+        #expect(cgb_highpass_hz(thin) == 1000)
+        cgb_use_console_highpass(thin)
+        cgb_reset(thin)
+        cgb_reset(plain)
+        #expect(Support.render(thin, frames: 9600) == Support.render(plain, frames: 9600))
     }
 
     @Test func theChannelLevelsAreFourNumbersFromZeroToFifteen() throws {

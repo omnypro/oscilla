@@ -6,7 +6,8 @@
 //!
 //! Regenerate `goldens/gb.txt` with
 //! `cargo test -p oscilla-gb --release --test goldens -- --ignored --nocapture print`
-//! and keep the lines between the markers.
+//! and keep the lines between the markers. The cutoff block goes in
+//! `goldens/gb-highpass.txt`.
 
 mod common;
 
@@ -77,8 +78,15 @@ fn program(seed: u64) -> Vec<u8> {
 }
 
 fn run(seed: u64) -> (u64, u64) {
+    run_with(seed, None)
+}
+
+fn run_with(seed: u64, cutoff: Option<f64>) -> (u64, u64) {
     let gbs = Gbs::parse(&program(seed)).unwrap();
     let mut m = Machine::new(&gbs, 48000).unwrap();
+    if let Some(hz) = cutoff {
+        assert!(m.set_highpass_hz(hz));
+    }
     let seen = watch(&mut m);
     let out = render(&mut m, 96000);
     let s = seen.borrow();
@@ -92,6 +100,11 @@ fn run(seed: u64) -> (u64, u64) {
 }
 
 const SEEDS: u64 = 64;
+
+/// The seeds and cutoffs of the second list: a custom cutoff builds its own
+/// factors, so it gets its own digests.
+const CUTOFF_SEEDS: u64 = 8;
+const CUTOFFS: [f64; 3] = [100.0, 300.0, 1000.0];
 
 fn expected() -> Vec<(u64, u64, u64)> {
     include_str!("goldens/gb.txt")
@@ -126,6 +139,43 @@ fn the_digests_match() {
 }
 
 #[test]
+fn the_digests_with_a_cutoff_match() {
+    let want: Vec<(u64, u64, u64)> = include_str!("goldens/gb-highpass.txt")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            (
+                p[0].parse().unwrap(),
+                p[1].parse().unwrap(),
+                u64::from_str_radix(p[2], 16).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(want.len() as u64, CUTOFF_SEEDS * CUTOFFS.len() as u64);
+    let mut bad = Vec::new();
+    for (seed, hz, audio) in want {
+        let got = run_with(seed, Some(hz as f64)).0;
+        if got != audio {
+            bad.push(format!(
+                "seed {seed} at {hz} Hz: {got:016x} (want {audio:016x})"
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn a_cutoff_changes_the_audio_and_leaves_the_writes() {
+    for seed in 0..CUTOFF_SEEDS {
+        let (audio, writes) = run(seed);
+        let (thin_audio, thin_writes) = run_with(seed, Some(300.0));
+        assert_eq!(writes, thin_writes, "seed {seed}");
+        assert_ne!(audio, thin_audio, "seed {seed}");
+    }
+}
+
+#[test]
 fn the_programs_make_sound_and_differ() {
     let digests: std::collections::HashSet<_> = (0..SEEDS).map(|s| run(s).0).collect();
     assert!(
@@ -153,4 +203,11 @@ fn print() {
         println!("{seed} {audio:016x} {writes:016x}");
     }
     println!("-----END GOLDENS-----");
+    println!("-----BEGIN CUTOFF GOLDENS-----");
+    for seed in 0..CUTOFF_SEEDS {
+        for hz in CUTOFFS {
+            println!("{seed} {hz} {:016x}", run_with(seed, Some(hz)).0);
+        }
+    }
+    println!("-----END CUTOFF GOLDENS-----");
 }

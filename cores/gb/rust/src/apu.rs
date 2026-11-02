@@ -6,7 +6,6 @@
 //! the access.
 
 use crate::state::*;
-use std::sync::OnceLock;
 
 /// The first register of each channel minus one: NRx1 is base + 1.
 const BASE: [usize; 4] = [0, 5, 0xA, 0xF];
@@ -25,42 +24,80 @@ const DUTY: [[u8; 8]; 4] = [
     [0, 1, 1, 1, 1, 1, 1, 0],
 ];
 
-/// Clocks between recomputations of the filter's output.
+/// Clocks between recomputations of the filter's output, for the console's own
+/// filter.
 const HPF_TICK: u64 = 256;
 /// The capacitor's charge factor for one clock.
 const HPF_CHARGE: f64 = 0.999958;
+/// The corner frequency of the console's filter, from HPF_CHARGE and the clock.
+pub const CONSOLE_HIGHPASS_HZ: f64 = 28.04;
+/// The lowest and highest cutoff that `set_highpass_hz` accepts.
+pub const MIN_HIGHPASS_HZ: f64 = 1.0;
+pub const MAX_HIGHPASS_HZ: f64 = 1000.0;
+/// How far the capacitor moves in one tick, at most: about the console's own
+/// 1.1 percent. A higher cutoff gets a shorter tick.
+const HPF_STEP: f64 = 0.0107;
+const HPF_TICK_MIN: u64 = 16;
 /// Level units per mixer unit at the resampler's input.
 const LEVEL_SCALE: f64 = 64.0;
 
-/// The charge factor for n clocks, for n up to HPF_TICK. Built by repeated
-/// multiplication, which gives the same bits on every platform.
-fn decay_table() -> &'static [f64] {
-    static TABLE: OnceLock<Vec<f64>> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let mut t = Vec::with_capacity(HPF_TICK as usize + 1);
+/// The high-pass filter's cutoff and the charge factors that follow from it.
+/// The console's filter is the default. A table gives the factor for each count
+/// of clocks up to one tick, built by repeated multiplication, which gives
+/// the same bits on every platform.
+#[derive(Clone)]
+pub(crate) struct Highpass {
+    hz: f64,
+    tick: u64,
+    table: [f64; HPF_TICK as usize + 1],
+}
+
+impl Highpass {
+    fn with(hz: f64, charge: f64, tick: u64) -> Highpass {
+        let mut table = [0.0; HPF_TICK as usize + 1];
         let mut d = 1.0f64;
-        t.push(d);
-        for _ in 0..HPF_TICK {
-            d *= HPF_CHARGE;
-            t.push(d);
+        table[0] = d;
+        for slot in table.iter_mut().take(tick as usize + 1).skip(1) {
+            d *= charge;
+            *slot = d;
         }
-        t
-    })
-}
-
-/// Builds the decay table now, so that rendering allocates nothing.
-pub(crate) fn warm_decay_table() {
-    decay_table();
-}
-
-fn decay(n: u64) -> f64 {
-    let t = decay_table();
-    let mut d = t[(n % HPF_TICK) as usize];
-    let full = t[HPF_TICK as usize];
-    for _ in 0..n / HPF_TICK {
-        d *= full;
+        Highpass { hz, tick, table }
     }
-    d
+
+    pub(crate) fn console() -> Highpass {
+        Highpass::with(CONSOLE_HIGHPASS_HZ, HPF_CHARGE, HPF_TICK)
+    }
+
+    /// A filter with its corner at `hz`, from MIN_HIGHPASS_HZ to
+    /// MAX_HIGHPASS_HZ. The per-clock factor is exp(-x) with x = 2 pi hz / clock,
+    /// from its series, which holds only basic arithmetic.
+    pub(crate) fn at(hz: f64) -> Highpass {
+        let x = 2.0 * std::f64::consts::PI * hz / f64::from(CLOCK_HZ);
+        let x2 = x * x;
+        let x3 = x2 * x;
+        let x4 = x2 * x2;
+        let x5 = x4 * x;
+        let charge = 1.0 - x + x2 / 2.0 - x3 / 6.0 + x4 / 24.0 - x5 / 120.0;
+        let tick = ((HPF_STEP / x) as u64).clamp(HPF_TICK_MIN, HPF_TICK);
+        Highpass::with(hz, charge, tick)
+    }
+
+    pub(crate) fn hz(&self) -> f64 {
+        self.hz
+    }
+
+    /// The charge factor for n clocks.
+    fn decay(&self, n: u64) -> f64 {
+        let mut d = self.table[(n % self.tick) as usize];
+        let full = self.table[self.tick as usize];
+        for _ in 0..n / self.tick {
+            d *= full;
+            if d == 0.0 {
+                break;
+            }
+        }
+        d
+    }
 }
 
 impl Default for Apu {
@@ -451,7 +488,7 @@ impl Machine {
         let a = &mut self.apu;
         if a.gate {
             let n = te - a.hpf_time;
-            let d = decay(n);
+            let d = self.hp.decay(n);
             for i in 0..2 {
                 let x = f64::from(a.input[i]);
                 a.cap[i] = x + (a.cap[i] - x) * d;
@@ -468,7 +505,7 @@ impl Machine {
         } else {
             [0, 0]
         };
-        a.next_hpf = if gate { te + HPF_TICK } else { NEVER };
+        a.next_hpf = if gate { te + self.hp.tick } else { NEVER };
         if level != self.out.level() {
             self.last_change = te;
         }

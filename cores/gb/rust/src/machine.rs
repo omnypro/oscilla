@@ -5,6 +5,7 @@
 //! song number in A, and when that returns it calls the play routine at the
 //! rate the header names. A routine ends when it returns to RETURN_ADDRESS.
 
+use crate::apu::{Highpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 use crate::bus::WARN_STALL;
 use crate::state::*;
 use oscilla_gbs::Gbs;
@@ -35,7 +36,6 @@ impl Machine {
         if !(8000..=192000).contains(&output_rate) {
             return None;
         }
-        crate::apu::warm_decay_table();
         let mut m = Machine::blank(Arc::from(gbs.data.as_slice()), gbs.load, output_rate);
         m.init = gbs.init;
         m.play = gbs.play;
@@ -91,6 +91,7 @@ impl Machine {
             iflag: 0,
             apu: Apu::default(),
             out: Resampler::new(output_rate, CLOCK_SHIFT),
+            hp: Highpass::console(),
             channel_mask: 0xF,
             last_change: 0,
             phase: Phase::Idle,
@@ -488,6 +489,7 @@ impl Machine {
         }
         let observer = std::mem::take(&mut self.observer);
         let mask = self.channel_mask;
+        let hp = self.hp.clone();
         let snapshot_mask = s.channel_mask;
         // The warning list keeps its allocation, so a pointer to it stays good.
         let mut warnings = std::mem::take(&mut self.warnings);
@@ -497,6 +499,7 @@ impl Machine {
         self.warnings = warnings;
         self.observer = observer;
         self.channel_mask = mask;
+        self.hp = hp;
         if mask != snapshot_mask {
             // The snapshot's mix was made with its own mask.
             let t = self.now;
@@ -523,6 +526,38 @@ impl Machine {
 
     pub fn channel_mask(&self) -> u8 {
         self.channel_mask
+    }
+
+    /// Moves the high-pass filter's corner to `hz`, from MIN_HIGHPASS_HZ to
+    /// MAX_HIGHPASS_HZ. The capacitor keeps its charge, so the output is
+    /// continuous at the change. Returns false and changes nothing for a value
+    /// outside the range, NaN included. The console's own filter is the
+    /// default, and a reset or a restore leaves the choice alone.
+    pub fn set_highpass_hz(&mut self, hz: f64) -> bool {
+        if !(MIN_HIGHPASS_HZ..=MAX_HIGHPASS_HZ).contains(&hz) {
+            return false;
+        }
+        self.change_highpass(Highpass::at(hz));
+        true
+    }
+
+    /// Goes back to the console's own filter.
+    pub fn use_console_highpass(&mut self) {
+        self.change_highpass(Highpass::console());
+    }
+
+    /// The corner of the filter in use: CONSOLE_HIGHPASS_HZ for the console's.
+    pub fn highpass_hz(&self) -> f64 {
+        self.hp.hz()
+    }
+
+    fn change_highpass(&mut self, hp: Highpass) {
+        let t = self.now;
+        self.apu_advance(t);
+        // The capacitor is brought to this cycle with the old factors first.
+        self.apu_emit(t);
+        self.hp = hp;
+        self.apu_emit(t);
     }
 
     pub fn end_state(&self) -> EndState {

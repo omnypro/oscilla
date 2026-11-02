@@ -94,10 +94,18 @@ sum. The levels it leaves out stay visible through `channel_levels`.
 A high-pass filter follows the mixer, with the charge factor of the original
 console, 0.999958 per clock. It runs on the mixer's events. Between events the
 level is constant, and the filter's state moves by a factor that a table gives
-for each count of clocks. A tick every 256 clocks keeps its output current.
+for each count of clocks. A tick every 256 clocks keeps its output current at the console's corner.
 With no DAC on, the output is exactly 0 and the capacitor holds its charge.
 The capacitor starts at the level of the idle DACs, so a song does not start
 with a thump.
+
+A player can move the corner from the console's 28 Hz to any value from 1 to
+1000 Hz. The factor per clock is then exp(-2 pi f / clock), summed from its
+series so that only basic arithmetic is involved. A higher corner shortens the
+tick, so that the capacitor moves by about the same fraction between outputs
+(1.1 percent), down to 16 clocks. A change first brings the capacitor to the
+current cycle with the old factors, so the output is continuous. The choice
+lives outside the machine's snapshot, like the channel mask.
 
 `audio/resample` turns the stream of level changes into samples at the
 caller's rate. Each change is a band-limited step at its exact cycle. One
