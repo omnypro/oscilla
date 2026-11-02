@@ -95,11 +95,13 @@ streams of a reference player gave the same stores in the same order in every
 play call for all but one of 99 songs. The output is checked against public
 test cartridges.
 
-Not emulated: the display, input, the link port, interrupts in a GBS (the
-player calls the routines itself), cartridge hardware other than the ROM bank
-register, and the access rules for wave RAM while the wave channel plays. The
-output keeps the bass of the console's headphone output, so it has more bass
-than a player that cuts it.
+Not emulated: the display (a routine that waits for VBlank through STAT or the
+interrupt flag stalls, and one that reads LY works), input, the link port,
+interrupts in a GBS (the player calls the routines itself), the color console's
+double speed (TAC bit 7 only halves the tick), cartridge hardware other than
+the ROM bank register, and the access rules for wave RAM while the wave channel
+plays. The output keeps the bass of the console's headphone output, so it has
+more bass than a player that cuts it. `cgb_set_highpass_hz` moves that corner.
 
 ## References
 

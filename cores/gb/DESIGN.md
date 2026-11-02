@@ -30,9 +30,12 @@ machine cycles, one for each access and each internal step. The halt bug, the
 one-instruction delay of `ei` and interrupt entry follow the documentation.
 An opcode that locks the CPU sets a flag, and the player reports it.
 
-A GBS is played without interrupts. A routine that executes `halt` or `stop`
-ends, and the player records a warning. `rst` goes to the vector plus the load
-address, as the format asks.
+A GBS is played without interrupts. A routine that executes `halt` waits for the
+next tick, when the player would raise its flag, and the player records a
+warning. A routine that executes `stop` ends, unless it armed a speed switch
+(bit 0 of 0xFF4D) for a color console. The routine then goes on at the same
+speed and a warning says so. `rst` goes to the vector plus the load address, as
+the format asks.
 
 ## Bus
 
@@ -58,10 +61,11 @@ call. The init routine starts at cycle 0. The first play call comes at the
 later of one tick and the end of init. A later call comes one tick after the
 previous one began, or at the end of the routine if that is later.
 
-The tick follows the timer registers as they stand. With TAC bit 2 clear it
-is one video frame, 70,224 clocks. With it set, it is the period of a timer
-overflow, and a driver that changes TMA or TAC changes the rate. A routine that
-has run for a second without returning is abandoned.
+The header chooses the tick. With TAC bit 2 clear it is one video frame, 70,224
+clocks, and nothing a driver writes changes that. With it set, it is the period
+of a timer overflow, and a driver that changes TMA or the clock select in TAC
+changes the rate. A routine that has run for a second without returning is
+abandoned.
 
 A routine starts as if the hardware had just raised its interrupt. LY reads
 144, the start of VBlank. TIMA reads TMA and takes its first step 96 clocks
@@ -137,8 +141,8 @@ runs the callback holds the machine.
 
 ## Snapshots
 
-`snapshot` copies everything a machine is except the observer and the channel
-mask. Those belong to the listener. The program data is shared between
+`snapshot` copies everything a machine is except the observer, the channel
+mask and the bass cutoff. Those belong to the listener. The program data is shared between
 copies. A restore checks the output rate and the file, then replaces the
 state, and the same calls render the same samples from there. The output ring
 is the largest part of a copy.
@@ -146,7 +150,8 @@ is the largest part of a copy.
 ## End of a song
 
 `end_state` reports a unit with no channel on, and a routine that did not
-return, halted or locked the CPU. A song does not end in the file itself: the
-play routine goes on being called. `quiet_cycles` counts the cycles since the
-output level last changed. The machine has no rule for how long a silence
+return or locked the CPU. A song does not end in the file itself: the play
+routine goes on being called. `quiet_cycles` counts the cycles since the output
+level last changed, and it is the signal for the end of a song. The drivers in
+most files keep a DAC on, so `end_state` seldom reports that no channel is on. The machine has no rule for how long a silence
 lasts before a song has ended.

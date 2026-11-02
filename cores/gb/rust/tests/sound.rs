@@ -260,3 +260,36 @@ fn the_channel_mask_removes_a_channel_from_the_mix() {
         "the level stays visible"
     );
 }
+
+#[test]
+fn a_retrigger_keeps_the_duty_step_where_it_is() {
+    // A pulse at 75 percent duty with a step every 1024 clocks. The play
+    // routine triggers it again on every call. A trigger resets the step
+    // timer and leaves the step itself alone, so a high level stays high.
+    let init = [
+        power(),
+        set(0x11, 0xC0),
+        set(0x12, 0xF0),
+        set(0x13, 0x00),
+        set(0x14, 0x87),
+    ]
+    .concat();
+    let play = set(0x14, 0x87);
+    let mut m = machine(&init, &play);
+    let (mut high_before, mut kept) = (0, 0);
+    for call in 1..=40u64 {
+        let at = 70_224 * call;
+        m.run_cycles(at - 8 - m.cycles());
+        let before = m.channel_levels()[0];
+        m.run_cycles(at + 200 - m.cycles());
+        let after = m.channel_levels()[0];
+        if before == 15 {
+            high_before += 1;
+            if after == 15 {
+                kept += 1;
+            }
+        }
+    }
+    assert!(high_before > 10, "{high_before}");
+    assert_eq!(kept, high_before);
+}

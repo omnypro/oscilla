@@ -153,9 +153,9 @@ uint32_t cgb_peek(const cgb_machine *machine, uint32_t address);
 
 /*
  * Things the machine met and does not support (a routine that did not
- * return, HALT or STOP in a routine, an opcode that locks the CPU), as a
- * NUL-terminated list of short sentences, one per line. The machine reports
- * each kind once and never prints.
+ * return, HALT, STOP or a speed switch in a routine, an opcode that locks the
+ * CPU), as a NUL-terminated list of short sentences, one per line. The machine
+ * reports each kind once and never prints.
  */
 const char *cgb_warnings(const cgb_machine *machine);
 
@@ -223,7 +223,7 @@ double cgb_highpass_hz(const cgb_machine *machine);
 typedef enum {
     CGB_RUNNING = 0,        /* a channel is sounding, or may be */
     CGB_CHANNELS_OFF,       /* no channel is on; a later play call can start one */
-    CGB_STALLED             /* a routine did not return, halted, or locked the CPU */
+    CGB_STALLED             /* a routine did not return, stopped, or locked the CPU */
 } cgb_end_state;
 
 cgb_end_state cgb_end_state_get(const cgb_machine *machine);

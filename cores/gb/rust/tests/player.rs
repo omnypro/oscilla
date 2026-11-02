@@ -79,6 +79,27 @@ fn a_driver_that_changes_the_timer_changes_the_rate() {
 }
 
 #[test]
+fn a_driver_cannot_switch_between_the_vblank_and_the_timer() {
+    // A VBlank file whose driver turns the timer on for itself keeps its rate.
+    let play = [set(0x07, 0x04), set(0x06, 0x00)].concat();
+    let f = file(&[], &play, 0, 0, None);
+    let mut m = Machine::new(&Gbs::parse(&f).unwrap(), 48000).unwrap();
+    let seen = watch(&mut m);
+    m.run_cycles(SECOND);
+    let calls = seen.borrow().calls.clone();
+    assert_eq!(calls[3].0 - calls[2].0, 70224);
+    // A timer file whose driver turns the timer off keeps its rate too, and
+    // the clock select it leaves still counts.
+    let play = [set(0x07, 0x00), set(0x06, 0x00)].concat();
+    let f = file(&[], &play, 0xF0, 0x04, None);
+    let mut m = Machine::new(&Gbs::parse(&f).unwrap(), 48000).unwrap();
+    let seen = watch(&mut m);
+    m.run_cycles(SECOND);
+    let calls = seen.borrow().calls.clone();
+    assert_eq!(calls[3].0 - calls[2].0, 262144);
+}
+
+#[test]
 fn a_routine_that_runs_long_delays_the_next_call() {
     // 20,000 iterations of dec bc / jr take longer than a frame.
     let play = vec![0x01, 0x20, 0x4E, 0x0B, 0x78, 0xB1, 0x20, 0xFB];
@@ -99,14 +120,47 @@ fn a_routine_that_never_returns_stalls_the_machine() {
 }
 
 #[test]
-fn halt_in_a_routine_ends_it_with_a_warning() {
-    let mut m = machine(&[], &[0x76]);
+fn halt_in_a_routine_waits_for_the_next_tick() {
+    // A play routine that halts, then stores to NR13. The store comes with the
+    // next tick, and the song is not stalled.
+    let play = [vec![0x76], set(0x13, 0x80)].concat();
+    let mut m = machine(&[], &play);
+    let seen = watch(&mut m);
     m.run_cycles(SECOND / 10);
-    assert_eq!(m.end_state(), EndState::Stalled);
+    assert_eq!(m.end_state(), EndState::ChannelsOff);
     let warnings = String::from_utf8_lossy(m.warnings_nul()).into_owned();
     assert!(warnings.contains("HALT"), "{warnings}");
-    // The player goes on calling the routine.
+    let seen = seen.borrow();
+    let stores: Vec<u64> = seen.writes.iter().map(|w| w.0).collect();
+    assert!(!stores.is_empty());
+    // The first play call starts at 70224; the store waits one more tick.
+    assert!(stores[0] >= 2 * 70224, "{stores:?}");
     assert!(m.frames() > 3);
+}
+
+#[test]
+fn a_routine_that_halts_forever_still_stalls() {
+    // halt; jr -3 (back to the halt).
+    let mut m = machine(&[], &[0x76, 0x18, 0xFD]);
+    m.run_cycles(SECOND + SECOND / 4);
+    assert_eq!(m.end_state(), EndState::Stalled);
+}
+
+#[test]
+fn stop_after_arming_a_speed_switch_goes_on() {
+    // ld a,1; ldh [0x4D],a; stop; then a store to NR13.
+    let init = [set(0x4D, 1), vec![0x10, 0x00], set(0x13, 0x80)].concat();
+    let mut m = machine(&init, &[]);
+    let seen = watch(&mut m);
+    m.run_cycles(SECOND / 10);
+    assert!(seen.borrow().writes.iter().any(|w| w.1 == 0xFF13));
+    let warnings = String::from_utf8_lossy(m.warnings_nul()).into_owned();
+    assert!(warnings.contains("speed"), "{warnings}");
+    assert_eq!(m.peek(0xFF4D), 0x80);
+    // Without the arming, STOP ends the routine.
+    let mut m = machine(&[0x10, 0x00], &[]);
+    m.run_cycles(SECOND / 10);
+    assert_eq!(m.end_state(), EndState::Stalled);
 }
 
 #[test]

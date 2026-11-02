@@ -2,7 +2,7 @@
 //! internal step costs one machine cycle of 4 clocks, so an instruction's
 //! length is the sum of its steps.
 
-use crate::bus::{WARN_HALT, WARN_LOCK, WARN_STOP};
+use crate::bus::{WARN_HALT, WARN_LOCK, WARN_SPEED, WARN_STOP};
 use crate::state::*;
 
 const FZ: u8 = 0x80;
@@ -401,6 +401,14 @@ impl Machine {
                 self.cpu.pc = self.cpu.pc.wrapping_add(1);
                 if self.interrupts {
                     // STOP ends when a button is pressed; no input exists.
+                } else if self.mem[0xFF4D] & 1 != 0 {
+                    // A speed switch that a color console's driver arms. The
+                    // switch does not happen, and the routine goes on.
+                    self.mem[0xFF4D] = (self.mem[0xFF4D] ^ 0x80) & 0xFE;
+                    self.warn(
+                        WARN_SPEED,
+                        "A routine switched the speed; the core does not.",
+                    );
                 } else {
                     self.cpu.stopped = true;
                     self.warn(WARN_STOP, "A routine executed STOP.");

@@ -9,6 +9,7 @@ pub(crate) const WARN_STALL: u32 = 1;
 pub(crate) const WARN_HALT: u32 = 2;
 pub(crate) const WARN_LOCK: u32 = 4;
 pub(crate) const WARN_STOP: u32 = 8;
+pub(crate) const WARN_SPEED: u32 = 16;
 
 impl Machine {
     pub(crate) fn warn(&mut self, bit: u32, text: &str) {

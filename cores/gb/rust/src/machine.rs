@@ -230,10 +230,12 @@ impl Machine {
         }
     }
 
-    /// Clocks between calls of the play routine, from the timer registers
-    /// as they stand.
+    /// Clocks between calls of the play routine. The header chooses between
+    /// the VBlank and the timer, and a driver cannot change that. In timer
+    /// mode the modulo and the clock select follow the registers as the driver
+    /// leaves them.
     fn live_tick(&self) -> u64 {
-        if self.timer.tac & 4 == 0 {
+        if self.tac0 & 4 == 0 {
             return u64::from(oscilla_gbs::VBLANK_CLOCKS);
         }
         let per_count: u64 = [1024, 16, 64, 256][usize::from(self.timer.tac & 3)];
@@ -281,7 +283,19 @@ impl Machine {
                         self.routine_returned();
                         continue;
                     }
-                    let broken = self.cpu.halted || self.cpu.stopped || self.cpu.locked;
+                    if self.cpu.halted {
+                        // With no interrupt controller in a GBS, the wait ends
+                        // when the player's next tick would raise its flag.
+                        let wake = (self.call_start + self.tick).max(self.now);
+                        if wake >= target {
+                            self.now = target;
+                            break;
+                        }
+                        self.now = wake;
+                        self.cpu.halted = false;
+                        continue;
+                    }
+                    let broken = self.cpu.stopped || self.cpu.locked;
                     if broken || self.now - self.call_start > ROUTINE_LIMIT {
                         if !broken {
                             self.warn(WARN_STALL, "A routine did not return within a second.");

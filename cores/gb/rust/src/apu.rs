@@ -680,7 +680,6 @@ impl Machine {
                 let freq = u64::from(ap.freq(ch));
                 let p = if ch == 0 { &mut ap.ch1 } else { &mut ap.ch2 };
                 p.next_step = t + (2048 - freq) * 4;
-                p.started = false;
                 if ch == 0 {
                     let sw = ap.r[0];
                     ap.sweep.shadow = ap.freq(0);
