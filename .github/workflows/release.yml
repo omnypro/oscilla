@@ -1,0 +1,95 @@
+name: Release
+
+# Run by hand from main. The job builds the XCFramework, commits the manifest
+# that points at it, signs that commit and a tag with the release key, and
+# publishes the release. Only the tag reaches the repository. The commit is
+# reachable from the tag and main stays on the local-path manifest.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version that heads CHANGES.md, such as 0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release ${{ inputs.version }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    # The release environment holds the signing key and can require approval.
+    environment: release
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the version
+        run: |
+          case "$VERSION" in
+            *[!0-9.]*|"") echo "Not a version: $VERSION" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show
+      - name: Build the artifact and rewrite the manifest
+        run: scripts/release.sh "$VERSION"
+      - name: Commit, sign and tag
+        env:
+          SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          AUTHOR_NAME: ${{ vars.RELEASE_AUTHOR_NAME }}
+          AUTHOR_EMAIL: ${{ vars.RELEASE_AUTHOR_EMAIL }}
+        run: |
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/release_key"
+          git config user.name "$AUTHOR_NAME"
+          git config user.email "$AUTHOR_EMAIL"
+          git config gpg.format ssh
+          git config user.signingkey "$RUNNER_TEMP/release_key"
+          git add Package.swift
+          git commit -S -m "Release $VERSION."
+          git tag -s "v$VERSION" -m "$VERSION"
+          git push origin "v$VERSION"
+      - name: Publish
+        run: |
+          awk -v v="$VERSION" '$0 == "## " v {on=1; next} /^## / {on=0} on' CHANGES.md > "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" \
+            --title "$VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "build/OscillaRust-$VERSION.xcframework.zip" \
+            swift/CGba/include/cgba.h
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release_key"
+
+  libraries:
+    name: Static library for ${{ matrix.target }}
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            file: oscilla_ffi.lib
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            file: liboscilla_ffi.a
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+      - name: Install the pinned toolchain
+        run: rustup show
+      - name: Build
+        run: cargo build --release --locked -p oscilla-ffi --target ${{ matrix.target }}
+      - name: Attach
+        shell: bash
+        run: |
+          cp "target/${{ matrix.target }}/release/${{ matrix.file }}" "oscilla-$VERSION-${{ matrix.target }}-${{ matrix.file }}"
+          gh release upload "v$VERSION" "oscilla-$VERSION-${{ matrix.target }}-${{ matrix.file }}"

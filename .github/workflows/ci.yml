@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show
+      # The digests were made on Apple silicon. The same digests passing on the
+      # other two systems is the check that the output does not depend on the
+      # platform.
+      - name: Test
+        run: cargo test --workspace --release --locked
+
+  swift:
+    name: Swift tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup show
+      - name: Build the XCFramework
+        run: scripts/build-xcframework.sh
+      - name: Test
+        run: swift test

@@ -1,0 +1,17 @@
+.build/
+.swiftpm/
+/target/
+/build/
+Package.resolved
+*.o
+listen/
+.DS_Store
+fifo-a.bin
+fifo-b.bin
+mix.wav
+sound-writes*.txt
+*.gsf
+*.minigsf
+*.gsflib
+*.gba
+*.nsf

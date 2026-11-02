@@ -1,0 +1,4 @@
+module CGba {
+    header "cgba.h"
+    export *
+}

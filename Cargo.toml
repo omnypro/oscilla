@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["formats/psf", "cores/gba/rust", "ffi"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+oscilla-psf = { path = "formats/psf" }
+oscilla-gba = { path = "cores/gba/rust" }
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1

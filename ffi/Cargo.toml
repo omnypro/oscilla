@@ -1,0 +1,11 @@
+[package]
+name = "oscilla-ffi"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+oscilla-gba.workspace = true
