@@ -51,12 +51,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "oscilla-gb"
+version = "0.0.0"
+dependencies = [
+ "oscilla-gbs",
+ "oscilla-resample",
+]
+
+[[package]]
 name = "oscilla-gba"
 version = "0.0.0"
 dependencies = [
  "oscilla-psf",
  "oscilla-resample",
 ]
+
+[[package]]
+name = "oscilla-gbs"
+version = "0.0.0"
 
 [[package]]
 name = "oscilla-psf"
