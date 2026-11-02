@@ -97,6 +97,12 @@ enum Op {
     Clv,
     Cld,
     Sed,
+    /// A and X load an immediate byte through the bits that the chip's analog
+    /// behavior leaves set.
+    Lxa,
+    /// A store of Y or X ANDed with the high byte of the address plus one.
+    Shy,
+    Shx,
     /// An opcode whose result depends on the chip's analog behavior. The core
     /// reads its operand and does nothing else.
     Unstable,
@@ -174,7 +180,7 @@ fn decode(op: u8) -> (Op, Mode) {
                 5 => (ops[aaa], if aaa == 4 || aaa == 5 { Zpy } else { Zpx }),
                 6 => (Nop, Imp),
                 _ => match op {
-                    0x9E => (Unstable, Aby),
+                    0x9E => (Shx, Aby),
                     0xBE => (Ldx, Aby),
                     _ => (ops[aaa], Abx),
                 },
@@ -189,7 +195,8 @@ fn decode(op: u8) -> (Op, Mode) {
                     0x0B | 0x2B => (Anc, Imm),
                     0x4B => (Alr, Imm),
                     0x6B => (Arr, Imm),
-                    0x8B | 0xAB => (Unstable, Imm),
+                    0x8B => (Unstable, Imm),
+                    0xAB => (Lxa, Imm),
                     0xCB => (Axs, Imm),
                     _ => (Sbc, Imm),
                 },
@@ -225,7 +232,7 @@ fn decode(op: u8) -> (Op, Mode) {
                 _ => (Nop, Zpx),
             },
             _ => match aaa {
-                4 => (Unstable, Abx),
+                4 => (Shy, Abx),
                 5 => (Ldy, Abx),
                 _ => (Nop, Abx),
             },
@@ -494,12 +501,52 @@ impl Machine {
                 let hi = u16::from(self.pull());
                 self.cpu.pc = hi << 8 | lo;
             }
+            Op::Brk if self.cartridge => {
+                let pc = self.cpu.pc;
+                self.read(pc);
+                let pc = pc.wrapping_add(1);
+                self.push((pc >> 8) as u8);
+                self.push(pc as u8);
+                let p = self.cpu.p | BREAK | UNUSED;
+                self.push(p);
+                self.cpu.p |= I;
+                let lo = u16::from(self.read(0xFFFE));
+                let hi = u16::from(self.read(0xFFFF));
+                self.cpu.pc = hi << 8 | lo;
+            }
             Op::Brk => {
                 self.warn(
                     WARN_BRK,
                     "A routine executed BRK, which the core does not run.",
                 );
                 self.cpu.locked = true;
+            }
+            Op::Shy | Op::Shx => {
+                let lo = u16::from(self.fetch());
+                let hi = u16::from(self.fetch());
+                let base = hi << 8 | lo;
+                let (index, reg) = if op == Op::Shy {
+                    (self.cpu.x, self.cpu.y)
+                } else {
+                    (self.cpu.y, self.cpu.x)
+                };
+                let addr = base.wrapping_add(u16::from(index));
+                self.read(base & 0xFF00 | addr & 0xFF);
+                let value = reg & ((base >> 8) as u8).wrapping_add(1);
+                // Across a page the value replaces the high byte of the address.
+                let target = if (addr ^ base) & 0xFF00 != 0 {
+                    u16::from(value) << 8 | addr & 0xFF
+                } else {
+                    addr
+                };
+                self.write(target, value);
+            }
+            Op::Lxa => {
+                let addr = self.address(mode, false);
+                let v = self.read(addr);
+                self.cpu.a = v;
+                self.cpu.x = v;
+                self.set_nz(v);
             }
             Op::Kil => {
                 self.warn(WARN_LOCK, "The CPU met an opcode that locks it up.");
@@ -568,8 +615,15 @@ impl Machine {
                     WARN_UNSTABLE,
                     "A routine ran an opcode with unstable results; the core skips it.",
                 );
-                let addr = self.address(mode, false);
-                self.read(addr);
+                if matches!(opcode, 0x93 | 0x9B | 0x9F) {
+                    // These store, so they take a cycle for the write, which
+                    // the core leaves out.
+                    self.address(mode, true);
+                    self.now += 1;
+                } else {
+                    let addr = self.address(mode, false);
+                    self.read(addr);
+                }
             }
             Op::Nop if mode != Mode::Imp => {
                 let addr = self.address(mode, false);

@@ -6,7 +6,7 @@
 //! play routine at the interval the header names. A routine ends when it
 //! returns to RETURN_ADDRESS.
 
-use crate::apu::{CONSOLE_HIGHPASS_HZ, Highpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
+use crate::apu::{CONSOLE_HIGHPASS_HZ, Highpass, Lowpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 use crate::bus::WARN_STALL;
 use crate::state::*;
 use oscilla_nsf::{Nsf, Region};
@@ -27,11 +27,11 @@ fn routine_limit(clock: (u64, u64)) -> u64 {
 }
 
 /// A level unit becomes OUT_MUL / 2^OUT_SHIFT of a 16-bit step. The mixer's full
-/// scale then sits at 11/16 of a sample's range. A delta-channel step from 0 to
-/// 127 is 0.563 of a unit, and the resampler overshoots a step by 7.7 percent,
-/// so the loudest register write a driver can make still fits.
-const OUT_MUL: i64 = 11;
-const OUT_SHIFT: u32 = 4;
+/// scale then sits at 29/32 of a sample's range, which gives the loudness of a
+/// reference player. A drum made of delta-channel steps can reach past full
+/// scale, and a host that needs headroom scales the output.
+const OUT_MUL: i64 = 29;
+const OUT_SHIFT: u32 = 5;
 
 fn ram(size: usize) -> Ram {
     vec![0u8; size].into_boxed_slice()
@@ -127,6 +127,7 @@ impl Machine {
             apu: Apu::new(region),
             out: Resampler::with_ratio(output_rate, clock.0, clock.1),
             hp: Highpass::console(clock),
+            lp: Lowpass::console(clock),
             channel_mask: 0x1F,
             last_change: 0,
             phase: Phase::Idle,
@@ -138,6 +139,7 @@ impl Machine {
             in_init: false,
             announced: false,
             cartridge: false,
+            ppu_read: 0,
             observer: ObserverSlot::default(),
             warnings: new_warnings(),
             warned: 0,
@@ -175,6 +177,7 @@ impl Machine {
         let a = &mut self.apu;
         a.input = a.mix(self.channel_mask);
         a.cap = a.input;
+        a.lowpassed = 0.0;
         a.hpf_time = 0;
         a.next_hpf = NEVER;
         self.out.reset();

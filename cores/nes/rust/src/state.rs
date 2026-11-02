@@ -161,6 +161,8 @@ pub struct Apu {
     pub input: f64,
     /// The high-pass filter's capacitor.
     pub cap: f64,
+    /// The output of the low-pass filter after the high-pass filter.
+    pub lowpassed: f64,
     /// The cycle up to which the capacitor is current.
     pub hpf_time: u64,
     /// The next cycle at which the filter's output is recomputed.
@@ -213,6 +215,8 @@ pub struct Machine {
     pub(crate) out: Resampler,
     /// The high-pass filter's cutoff. A player's choice, outside the snapshot.
     pub(crate) hp: crate::apu::Highpass,
+    /// The console's low-pass filter, which follows the high-pass filter.
+    pub(crate) lp: crate::apu::Lowpass,
     /// The channel mask: bit n is channel n.
     pub(crate) channel_mask: u8,
     pub(crate) last_change: u64,
@@ -231,6 +235,8 @@ pub struct Machine {
     /// as a screen that is always in its vertical blank and 0x6000 holds the
     /// program's own memory.
     pub(crate) cartridge: bool,
+    /// The frame in which a test cartridge last read the screen's status.
+    pub(crate) ppu_read: u64,
 
     pub(crate) observer: ObserverSlot,
     pub(crate) warnings: Vec<u8>,

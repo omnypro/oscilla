@@ -333,3 +333,18 @@ fn an_indirect_jump_through_the_last_address_wraps_inside_its_page() {
     steps(&mut m, 1);
     assert_eq!(m.cpu_state().0, 0xEA34);
 }
+
+#[test]
+fn lxa_loads_both_registers_with_the_byte() {
+    let mut m = cpu(&[0xAB, 0x5A]);
+    steps(&mut m, 1);
+    assert_eq!((m.cpu_state().1, m.cpu_state().2), (0x5A, 0x5A));
+}
+
+#[test]
+fn shy_stores_y_anded_with_the_high_byte_plus_one() {
+    // SHY $0200,X with Y = $FF and X = 1 stores $FF & $03 at $0201.
+    let mut m = cpu(&[0xA0, 0xFF, 0xA2, 0x01, 0x9C, 0x00, 0x02]);
+    steps(&mut m, 3);
+    assert_eq!(m.peek(0x0201), 0x03);
+}

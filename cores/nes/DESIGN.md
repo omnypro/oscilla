@@ -33,8 +33,9 @@ decoder turns an opcode into an operation and an addressing mode, and the
 accesses of each mode follow the documentation: the extra read of a page
 crossing, the always-taken extra cycle of a store, the wrap inside the zero
 page and the missing carry of an indirect jump. The stable undocumented
-opcodes run. The ones with analog results are skipped: the core reads their
-operand, does nothing else and records a warning. BRK and the opcodes that
+opcodes run, and so do the three unstable ones that the public test ROMs
+check, with the usual results. The others with analog results are skipped: the
+core reads their operand, does nothing else and records a warning. BRK and the opcodes that
 lock the CPU stop the routine and record a warning.
 
 There are no interrupts. The flags that would raise one stay readable, so a
@@ -106,11 +107,13 @@ bits removes channels from the sum. The levels it leaves out stay visible
 through `channel_levels`.
 
 A first-order high-pass filter follows the mixer, with its corner at 90 Hz as
-the console has it. It runs on the sound unit's events. Between events the
+the console has it, and a first-order low-pass filter at 14 kHz follows that. It runs on the sound unit's events. Between events the
 level is constant, and the filter's state moves by a factor that a table gives
 for each count of cycles. A tick every few dozen cycles keeps its output
-current, and the ticks stop when the output has settled. The capacitor starts
-at the level of the idle channels, so a song does not start with a thump.
+current, and the ticks stop when the output has settled. After a change of the
+mix the output moves toward its new level over a few dozen cycles, so the
+filter ticks every 16 cycles until it arrives. The capacitor starts at the
+level of the idle channels, so a song does not start with a thump.
 
 A player can move the corner to any value from 1 to 1000 Hz. The factor per
 cycle is then exp(-2 pi f / clock), summed from its series so that only basic
@@ -121,7 +124,9 @@ channel mask.
 
 `audio/resample` turns the stream of level changes into samples at the
 caller's rate. Each change is a band-limited step at its exact cycle. One
-mixer unit is 11/16 of the 16-bit range, and float output uses the same scale.
+mixer unit is 29/32 of the 16-bit range, and float output uses the same scale.
+The loudest drums, made of delta-channel steps, reach past full scale, and the
+host scales the output if it needs headroom.
 
 ## Arithmetic
 

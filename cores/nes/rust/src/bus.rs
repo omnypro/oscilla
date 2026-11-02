@@ -38,10 +38,10 @@ impl Machine {
         self.image.get(offset).copied().unwrap_or(0)
     }
 
-    /// The screen register of a test cartridge: it is in its vertical blank
-    /// half of the time, so that a program that waits for either edge goes on.
+    /// The screen status of a test cartridge: the vertical blank flag is set
+    /// once in each frame of 29781 cycles and cleared by a read.
     fn ppu_status(&self) -> u8 {
-        if (self.now / 29781).is_multiple_of(2) {
+        if self.now / 29781 + 1 > self.ppu_read {
             0x80
         } else {
             0
@@ -85,7 +85,9 @@ impl Machine {
             0x0000..=0x1FFF => self.ram[usize::from(address & 0x7FF)],
             0x2000..=0x3FFF => {
                 if self.cartridge && address & 7 == 2 {
-                    self.ppu_status()
+                    let v = self.ppu_status();
+                    self.ppu_read = self.now / 29781 + 1;
+                    v
                 } else {
                     self.bus
                 }

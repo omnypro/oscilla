@@ -90,6 +90,11 @@ pub const MAX_HIGHPASS_HZ: f64 = 1000.0;
 const HPF_STEP: f64 = 0.0107;
 const HPF_TICK_MIN: u64 = 16;
 const HPF_TICK_MAX: u64 = 256;
+/// The corner of the console's output low-pass filter.
+pub const CONSOLE_LOWPASS_HZ: f64 = 14000.0;
+/// Cycles between recomputations of the output while the low-pass filter is
+/// still settling.
+const LPF_TICK: u64 = 16;
 /// Level units per mixer unit at the resampler's input.
 pub(crate) const LEVEL_SCALE: f64 = 65536.0;
 
@@ -139,6 +144,41 @@ impl Highpass {
         let full = self.table[self.tick as usize];
         for _ in 0..n / self.tick {
             d *= full;
+            if d < 1e-18 {
+                return 0.0;
+            }
+        }
+        d
+    }
+}
+
+/// The first-order low-pass filter after the high-pass filter. Its factors
+/// come from the same series and the same repeated multiplication.
+#[derive(Clone)]
+pub(crate) struct Lowpass {
+    table: [f64; 65],
+}
+
+impl Lowpass {
+    pub(crate) fn console(clock: (u64, u64)) -> Lowpass {
+        let x = 2.0 * std::f64::consts::PI * CONSOLE_LOWPASS_HZ / (clock.0 as f64 / clock.1 as f64);
+        let x2 = x * x;
+        let x3 = x2 * x;
+        let x4 = x2 * x2;
+        let x5 = x4 * x;
+        let keep = 1.0 - x + x2 / 2.0 - x3 / 6.0 + x4 / 24.0 - x5 / 120.0;
+        let mut table = [1.0; 65];
+        for i in 1..65 {
+            table[i] = table[i - 1] * keep;
+        }
+        Lowpass { table }
+    }
+
+    /// The share of an old error that remains after n cycles.
+    fn decay(&self, n: u64) -> f64 {
+        let mut d = self.table[(n % 64) as usize];
+        for _ in 0..n / 64 {
+            d *= self.table[64];
             if d < 1e-18 {
                 return 0.0;
             }
@@ -339,6 +379,7 @@ impl Apu {
             time: 0,
             input: 0.0,
             cap: 0.0,
+            lowpassed: 0.0,
             hpf_time: 0,
             next_hpf: NEVER,
             stall: 0,
@@ -570,13 +611,20 @@ impl Machine {
         let n = te - a.hpf_time;
         let d = self.hp.decay(n);
         a.cap = a.input + (a.cap - a.input) * d;
+        // The high-pass output moved from its old value to this one over the
+        // interval, and the low-pass filter follows it.
+        let high = a.input - a.cap;
+        a.lowpassed = high + (a.lowpassed - high) * self.lp.decay(n);
         a.hpf_time = te;
         a.input = a.mix(self.channel_mask);
-        let diff = a.input - a.cap;
-        let level = (diff * LEVEL_SCALE + 0.5).floor() as i32;
-        // The output stays at its level when the capacitor has caught up, so
+        let high = a.input - a.cap;
+        let level = (a.lowpassed * LEVEL_SCALE + 0.5).floor() as i32;
+        // The output stays at its level when both filters have caught up, so
         // there is nothing to recompute until the mix changes again.
-        a.next_hpf = if diff.abs() * LEVEL_SCALE < 0.25 {
+        let settling = (high - a.lowpassed).abs() * LEVEL_SCALE;
+        a.next_hpf = if settling >= 1.0 {
+            te + LPF_TICK.min(self.hp.tick)
+        } else if high.abs() * LEVEL_SCALE < 0.25 && a.lowpassed.abs() * LEVEL_SCALE < 0.25 {
             NEVER
         } else {
             te + self.hp.tick

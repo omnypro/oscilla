@@ -87,10 +87,14 @@ header. `--bench` renders without output and prints the time it took.
   drivers. A change to the sound or to any trace changes a hash.
 - `highpass`: the bass cutoff's range, default, decay time and behavior across
   a change, a reset and a restore.
-- `cartridges`: public test cartridges for the CPU. They are not in the
-  repository. `OSCILLA_NES_TESTS` names a folder that holds them and a
-  `manifest.txt` that lists each one with a cycle limit, and optionally the
-  path of a log of the CPU's state. The test skips without the variable.
+- `cartridges`: public test cartridges for the CPU and the sound unit. They are
+  not in the repository. `OSCILLA_NES_TESTS` names a folder that holds them and
+  a `manifest.txt` that lists each one with a cycle limit, and optionally the
+  path of a log of the CPU's state. The CPU test with a log matches every
+  line, and the cartridges that report at 0x6000 pass: the instruction tests,
+  the instruction timing tests and the sound unit tests for the length
+  counters, the frame counter's flag, jitter and the delta channel. The test
+  skips without the variable.
 
 ## Compatibility
 
@@ -105,8 +109,9 @@ frame counter's flag can poll it, and one that enables interrupts never
 receives them), the display, input, the undocumented opcodes whose results depend on the
 chip's analog behavior (the core skips them and warns), and the exact timing
 of a sample read inside an instruction (a read costs the CPU four cycles). The
-output keeps the console's 90 Hz high-pass filter and has no low-pass stage.
-`cnes_set_highpass_hz` moves the high-pass corner.
+output has the console's 90 Hz high-pass filter and its 14 kHz low-pass filter.
+`cnes_set_highpass_hz` moves the high-pass corner. The loudest drums reach past
+full scale, and a host that needs headroom scales the output.
 
 ## References
 

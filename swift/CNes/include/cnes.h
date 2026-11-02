@@ -122,7 +122,10 @@ void cnes_reset(cnes_machine *machine);
 int cnes_song(const cnes_machine *machine);
 
 /* Runs the machine until `frames` stereo frames exist and writes them,
- * interleaved left then right. Always fills the whole buffer. */
+ * interleaved left then right. Always fills the whole buffer. The mix is
+ * scaled to match a reference player, and the loudest drums of some songs pass
+ * full scale: the 16-bit output clamps there, and the float output goes past
+ * 1.0. A host that needs headroom scales the samples. */
 void cnes_render_s16(cnes_machine *machine, int16_t *out, size_t frames);
 void cnes_render_f32(cnes_machine *machine, float *out, size_t frames);
 

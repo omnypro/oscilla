@@ -440,14 +440,41 @@ fn reads_of_write_only_registers_return_the_bus() {
     assert_eq!(m.peek(0), 0x40);
 }
 
+/// The strength of the tone at `hz` in a mono stretch of samples.
+fn tone(samples: &[f64], hz: f64) -> f64 {
+    let w = 2.0 * std::f64::consts::PI * hz / 48000.0;
+    let (mut re, mut im) = (0.0, 0.0);
+    for (i, s) in samples.iter().enumerate() {
+        re += s * (w * i as f64).cos();
+        im += s * (w * i as f64).sin();
+    }
+    2.0 * (re * re + im * im).sqrt() / samples.len() as f64
+}
+
+fn fundamental(period: u8) -> f64 {
+    let mut m = with(&[
+        (0x4015, 1),
+        (0x4000, 0xBF),
+        (0x4002, period),
+        (0x4003, 0x08),
+    ]);
+    let out = render(&mut m, 24000);
+    let mono: Vec<f64> = out[2 * 12000..]
+        .iter()
+        .step_by(2)
+        .map(|&v| f64::from(v))
+        .collect();
+    let hz = 1_789_772.7272727273 / (16.0 * (f64::from(period) + 1.0));
+    tone(&mono, hz)
+}
+
 #[test]
-fn the_loudest_register_write_does_not_clip() {
-    // A direct load of 127 is the largest step a driver can make with one store.
-    let mut m = with(&[(0x4011, 0x7F)]);
-    let out = render(&mut m, 4800);
-    let peak = out.iter().map(|&v| i32::from(v).abs()).max().unwrap();
-    assert!(peak > 10_000 && peak < 32_000, "{peak}");
-    let mut f = vec![0f32; 2 * 4800];
-    with(&[(0x4011, 0x7F)]).render_f32(&mut f);
-    assert!(f.iter().all(|v| v.abs() < 1.0));
+fn the_console_low_pass_takes_the_top_off_the_highest_tones() {
+    // A square wave at 10 kHz sits below the 14 kHz corner by 0.73 of an octave,
+    // so its fundamental keeps 0.81 of the strength that a square wave at
+    // 1.5 kHz has.
+    let high = fundamental(10);
+    let low = fundamental(73);
+    let ratio = high / low;
+    assert!((ratio - 0.81).abs() < 0.04, "{ratio}");
 }
