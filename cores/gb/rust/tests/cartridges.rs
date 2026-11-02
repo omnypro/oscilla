@@ -1,7 +1,9 @@
 //! Public test cartridges for the CPU, the timer and the sound unit. They are
 //! not part of the repository: point `OSCILLA_GB_TESTS` at a folder that holds
-//! them. A cartridge reports on the serial port and ends its text with
-//! "Passed" or "Failed".
+//! them and a `manifest.txt` that lists them, one per line, as a path relative
+//! to the folder and a limit in cycles. A cartridge reports on the serial port
+//! or in cart RAM and ends its text with "Passed" or "Failed". A line that
+//! starts with `#` is a comment.
 
 use oscilla_gb::Machine;
 use std::path::{Path, PathBuf};
@@ -49,82 +51,27 @@ fn run(rom: &Path, limit: u64) -> String {
     String::from_utf8_lossy(m.serial()).into_owned()
 }
 
-fn check(paths: &[&str], limit: u64) {
+#[test]
+fn the_listed_cartridges_pass() {
     let Some(dir) = folder() else {
         eprintln!("OSCILLA_GB_TESTS is not set; skipping");
         return;
     };
+    let manifest = std::fs::read_to_string(dir.join("manifest.txt")).unwrap();
     let mut failures = Vec::new();
-    for p in paths {
-        let text = run(&dir.join(p), limit);
-        eprintln!("{p}: {}", text.trim().replace('\n', " | "));
-        if !text.contains("Passed") {
-            failures.push(format!("{p}:\n{text}"));
+    let mut ran = 0;
+    for line in manifest.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
         }
+        let (path, limit) = line.rsplit_once(' ').expect("path and cycle limit");
+        let text = run(&dir.join(path), limit.parse().expect("a cycle limit"));
+        eprintln!("{path}: {}", text.trim().replace('\n', " | "));
+        if !text.contains("Passed") {
+            failures.push(format!("{path}:\n{text}"));
+        }
+        ran += 1;
     }
+    assert!(ran > 0, "the manifest lists no cartridge");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-#[test]
-fn the_cpu_instruction_tests_pass() {
-    let names = [
-        "01-special",
-        "02-interrupts",
-        "03-op sp,hl",
-        "04-op r,imm",
-        "05-op rp",
-        "06-ld r,r",
-        "07-jr,jp,call,ret,rst",
-        "08-misc instrs",
-        "09-op r,r",
-        "10-bit ops",
-        "11-op a,(hl)",
-    ];
-    let paths: Vec<String> = names
-        .iter()
-        .map(|n| format!("cpu_instrs/individual/{n}.gb"))
-        .collect();
-    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-    check(&refs, 400_000_000);
-}
-
-#[test]
-fn the_timing_tests_pass() {
-    check(&["instr_timing/instr_timing.gb"], 100_000_000);
-}
-
-/// The cartridges about wave RAM access while the channel plays (9, 10 and 12)
-/// describe corruption and blocked access that the core does not emulate: a
-/// sound driver gets plain wave RAM.
-#[test]
-fn the_sound_tests_pass() {
-    let names = [
-        "01-registers",
-        "02-len ctr",
-        "03-trigger",
-        "04-sweep",
-        "05-sweep details",
-        "06-overflow on trigger",
-        "07-len sweep period sync",
-        "08-len ctr during power",
-        "11-regs after power",
-    ];
-    let paths: Vec<String> = names
-        .iter()
-        .map(|n| format!("dmg_sound/rom_singles/{n}.gb"))
-        .collect();
-    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-    check(&refs, 400_000_000);
-}
-
-#[test]
-fn the_memory_timing_tests_pass() {
-    check(
-        &[
-            "mem_timing/individual/01-read_timing.gb",
-            "mem_timing/individual/02-write_timing.gb",
-            "mem_timing/individual/03-modify_timing.gb",
-        ],
-        100_000_000,
-    );
 }

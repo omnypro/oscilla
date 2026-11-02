@@ -81,9 +81,12 @@ header. `--bench` renders without output and prints the time it took.
   routines that misbehave, snapshots and the end state.
 - `goldens`: a hash of the samples and of the stores for each of 64 generated
   drivers. A change to the sound or to any trace changes a hash.
+- `highpass`: the bass cutoff's range, default, decay time and behavior across
+  a change, a reset and a restore.
 - `cartridges`: public test cartridges for the CPU, memory timing and sound
   unit. They are not in the repository. `OSCILLA_GB_TESTS` names a folder that
-  holds them, and the tests skip without it.
+  holds them and a `manifest.txt` that lists each one with a cycle limit. The
+  test skips without the variable.
 
 ## Compatibility
 

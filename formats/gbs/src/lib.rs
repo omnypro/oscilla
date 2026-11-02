@@ -3,7 +3,7 @@
 //! the initial stack pointer and the timer that sets the rate of play calls.
 //! Cores run the program in their own way.
 
-/// A file of this size or larger is refused. The format has at most 255 banks
+/// A file larger than this is refused. The format has at most 255 banks
 /// of 16 KiB.
 pub const MAX_FILE: usize = 4 << 20;
 

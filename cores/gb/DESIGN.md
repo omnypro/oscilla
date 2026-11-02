@@ -9,8 +9,8 @@ would make. It has no display, no input and no link port.
 
 A `Machine` holds all state: the CPU, 64 KiB of memory, the timer, the sound
 unit and the output buffer. It allocates when it is created. Rendering
-allocates only to record a warning. Use one machine from one thread at a
-time. Rendering is deterministic: the same file and song produce the same
+allocates nothing. Use one machine from one thread at a time. Rendering is
+deterministic: the same file and song produce the same
 samples on every run, and `reset` repeats them. No step calls the platform's
 math library (see Arithmetic).
 
