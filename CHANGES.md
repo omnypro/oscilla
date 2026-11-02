@@ -1,5 +1,14 @@
 # Changes
 
+## 0.3.1
+
+- The VRC6 expansion chip: two pulse channels and a saw, played for files that
+  ask for it. The mask has bits 5 to 7 for them, and
+  `cnes_expansion_levels_get` shows their levels.
+- A triangle step that fell on the same cycle as a frame counter event is no
+  longer lost.
+- The other expansion chips are not played yet.
+
 ## 0.3.0
 
 - NES core in Rust: a 6502 CPU, the 2A03 sound unit with the console's
