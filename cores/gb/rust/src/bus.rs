@@ -194,7 +194,8 @@ impl Machine {
                 self.mem[0xFF02] = v;
                 if v & 0x81 == 0x81 {
                     let byte = self.mem[0xFF01];
-                    if self.serial.len() < 1 << 20 {
+                    // Only a cartridge image reads its serial output.
+                    if self.interrupts && self.serial.len() < 1 << 20 {
                         self.serial.push(byte);
                     }
                     self.mem[0xFF02] = v & 0x7F;

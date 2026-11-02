@@ -48,6 +48,11 @@ fn decay_table() -> &'static [f64] {
     })
 }
 
+/// Builds the decay table now, so that rendering allocates nothing.
+pub(crate) fn warm_decay_table() {
+    decay_table();
+}
+
 fn decay(n: u64) -> f64 {
     let t = decay_table();
     let mut d = t[(n % HPF_TICK) as usize];

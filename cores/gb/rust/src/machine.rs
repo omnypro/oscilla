@@ -35,6 +35,7 @@ impl Machine {
         if !(8000..=192000).contains(&output_rate) {
             return None;
         }
+        crate::apu::warm_decay_table();
         let mut m = Machine::blank(Arc::from(gbs.data.as_slice()), gbs.load, output_rate);
         m.init = gbs.init;
         m.play = gbs.play;
