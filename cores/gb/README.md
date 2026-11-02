@@ -20,7 +20,7 @@ routines.
 
 The GBS header reader is the `oscilla-gbs` crate in `formats/gbs`. The
 resampler is the `oscilla-resample` crate in `audio/resample`. The C header is
-`swift/CGb/include/cgb.h` at the root of the repository.
+`swift/CGb/include/cgb.h`, a path from the root of the repository.
 
 ## API
 

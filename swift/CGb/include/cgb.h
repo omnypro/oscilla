@@ -33,9 +33,10 @@ typedef enum {
 } cgb_status;
 
 /*
- * Parses a .gbs file. `path` and `out` must not be NULL. On failure *out is
- * NULL and, when `error` is given, it holds a sentence that says why. A file
- * larger than 4 MiB is refused without being read in full.
+ * Parses a .gbs file. A NULL `path` or `out` returns CGB_ERR_IO. On failure *out
+ * is NULL and, when `error` is given, it holds a sentence that says why. The
+ * path must name a regular file. A file larger than 4 MiB is refused without
+ * being read in full.
  */
 cgb_status cgb_image_load_gbs(const char *path, cgb_image **out,
                               char *error, size_t error_size);
@@ -116,7 +117,8 @@ uint64_t cgb_frames(const cgb_machine *machine);
  * Callbacks for tracing what the driver does. They run on the rendering
  * thread, inside cgb_render_*, in program order. A callback may call
  * cgb_cycles, which returns the cycle of the event. Any other call that takes
- * the machine does nothing there and returns zero or NULL.
+ * the machine does nothing there and returns zero, NULL or an empty list
+ * (cgb_warnings); cgb_snapshot_restore returns 3.
  *
  * sound_write sees every store to 0xFF10..0xFF3F (the sound registers and
  * wave RAM), whether or not the unit accepts it: the address and the value as
@@ -161,7 +163,7 @@ const char *cgb_warnings(const cgb_machine *machine);
 
 /*
  * A copy of everything a machine is: the CPU, memory, timer, sound unit and
- * the sound that has not been handed out yet. It holds about 400 KB. A
+ * the sound that has not been handed out yet. It holds about 330 KB. A
  * snapshot restores into a machine that plays the same image at the same
  * output rate, and from there the same calls make the same sound. The
  * observer and the channel mask belong to the listener and are not part of
@@ -171,8 +173,8 @@ typedef struct cgb_snapshot cgb_snapshot;
 
 cgb_snapshot *cgb_snapshot_take(const cgb_machine *machine);
 
-/* 0 on success, 1 when the output rate differs, 2 when the image differs, 3
- * when called from an observer callback. */
+/* 0 on success, 1 when the output rate differs, 2 when the image differs (or
+ * the snapshot is NULL), 3 when called from an observer callback. */
 int cgb_snapshot_restore(cgb_machine *machine, const cgb_snapshot *snapshot);
 
 size_t cgb_snapshot_size(const cgb_snapshot *snapshot);

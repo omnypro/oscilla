@@ -55,7 +55,7 @@ struct HooksTests {
         _ = Support.render(m, frames: 3000)
         let snapshot = try #require(cgb_snapshot_take(m))
         defer { cgb_snapshot_free(snapshot) }
-        #expect(cgb_snapshot_size(snapshot) > 300_000)
+        #expect((300_000...360_000).contains(cgb_snapshot_size(snapshot)))
         let first = Support.render(m, frames: 9600)
         #expect(cgb_snapshot_restore(m, snapshot) == 0)
         #expect(Support.render(m, frames: 9600) == first)
@@ -89,9 +89,13 @@ struct HooksTests {
         cgb_reset(m)
         #expect(cgb_channel_mask(m) == 0b1101)
         var levels = [Int32](repeating: 0, count: 4)
-        cgb_run_cycles(m, 100_000)
-        cgb_channel_levels_get(m, &levels)
-        #expect(levels[1] != 0 || levels.allSatisfy { $0 >= 0 }, "a muted channel still has a level")
+        var loudest: Int32 = 0
+        for _ in 0..<64 {
+            cgb_run_cycles(m, 4001)
+            cgb_channel_levels_get(m, &levels)
+            loudest = max(loudest, levels[1])
+        }
+        #expect(loudest == 15, "a muted channel still shows its level")
     }
 
     @Test func theChannelLevelsAreFourNumbersFromZeroToFifteen() throws {

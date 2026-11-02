@@ -61,7 +61,9 @@ fn program(seed: u64) -> Vec<u8> {
     }
     // The play routine counts calls in HRAM and moves a pitch with the count.
     let (low, high) = (0x13 + 5 * r.below(2) as u8, 0x14);
-    let mut play = vec![0xF0, 0x80, 0x3C, 0xE0, 0x80, 0xE0, low, 0xE6, 0x07, 0xF6, 0x80, 0xE0];
+    let mut play = vec![
+        0xF0, 0x80, 0x3C, 0xE0, 0x80, 0xE0, low, 0xE6, 0x07, 0xF6, 0x80, 0xE0,
+    ];
     play.push(if low == 0x13 { high } else { 0x19 });
     for _ in 0..r.below(6) {
         play.extend(random_store(&mut r));
@@ -126,7 +128,11 @@ fn the_digests_match() {
 #[test]
 fn the_programs_make_sound_and_differ() {
     let digests: std::collections::HashSet<_> = (0..SEEDS).map(|s| run(s).0).collect();
-    assert!(digests.len() as u64 > SEEDS - 4, "{} distinct", digests.len());
+    assert!(
+        digests.len() as u64 > SEEDS - 4,
+        "{} distinct",
+        digests.len()
+    );
     let loud = (0..SEEDS)
         .filter(|&s| {
             let gbs = Gbs::parse(&program(s)).unwrap();

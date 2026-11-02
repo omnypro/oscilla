@@ -43,7 +43,7 @@ static void put32(unsigned char *p, uint32_t v) {
     p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24);
 }
 
-static void wav_header(FILE *f, uint32_t frames, uint32_t rate) {
+static int wav_header(FILE *f, uint32_t frames, uint32_t rate) {
     unsigned char h[44];
     uint32_t bytes = frames * 4;
     memcpy(h, "RIFF", 4); put32(h + 4, 36 + bytes);
@@ -52,7 +52,7 @@ static void wav_header(FILE *f, uint32_t frames, uint32_t rate) {
     put32(h + 24, rate); put32(h + 28, rate * 4);
     h[32] = 4; h[33] = 0; h[34] = 16; h[35] = 0;
     memcpy(h + 36, "data", 4); put32(h + 40, bytes);
-    fwrite(h, 1, 44, f);
+    return fwrite(h, 1, 44, f) == 44;
 }
 
 static double now_seconds(void) {
@@ -104,6 +104,12 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* A WAV file holds at most 4 GiB. */
+    if (!(seconds >= 0) || seconds * rate > 1e9) {
+        fprintf(stderr, "the length must be between 0 and 1e9 frames\n");
+        cgb_free(m);
+        return 2;
+    }
     size_t total = (size_t)(seconds * rate);
     size_t chunk = 4096;
     int16_t *buf = malloc(chunk * 2 * sizeof *buf);
@@ -132,15 +138,21 @@ int main(int argc, char **argv) {
     }
     FILE *wav = fopen(out_path, "wb");
     if (!wav) { fprintf(stderr, "cannot write %s\n", out_path); return 1; }
-    wav_header(wav, (uint32_t)total, (uint32_t)rate);
+    int ok = wav_header(wav, (uint32_t)total, (uint32_t)rate);
     for (size_t done = 0; done < total;) {
         size_t n = total - done < chunk ? total - done : chunk;
         cgb_render_s16(m, buf, n);
-        fwrite(buf, 4, n, wav);
+        ok &= fwrite(buf, 4, n, wav) == n;
         done += n;
     }
-    fclose(wav);
-    if (t.writes) fclose(t.writes);
+    ok &= fclose(wav) == 0;
+    if (t.writes) ok &= fclose(t.writes) == 0;
+    if (!ok) {
+        fprintf(stderr, "writing failed\n");
+        free(buf);
+        cgb_free(m);
+        return 1;
+    }
     const char *warnings = cgb_warnings(m);
     if (warnings[0]) fprintf(stderr, "%s", warnings);
     free(buf);

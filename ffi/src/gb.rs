@@ -55,6 +55,17 @@ fn open(path: &[u8]) -> std::io::Result<std::fs::File> {
     }
 }
 
+#[cfg(unix)]
+fn is_regular_file(path: &[u8]) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    std::fs::metadata(std::ffi::OsStr::from_bytes(path)).is_ok_and(|m| m.is_file())
+}
+
+#[cfg(not(unix))]
+fn is_regular_file(path: &[u8]) -> bool {
+    std::str::from_utf8(path).is_ok_and(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file()))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgb_image_load_gbs(
     path: *const c_char,
@@ -71,6 +82,11 @@ pub unsafe extern "C" fn cgb_image_load_gbs(
         return IO;
     }
     let path = unsafe { CStr::from_ptr(path) }.to_bytes();
+    // A pipe or a device would block or never end, so only a regular file loads.
+    if !is_regular_file(path) {
+        write_error(error, error_size, b"Not a regular file.");
+        return IO;
+    }
     let mut bytes = Vec::new();
     // Reads one byte more than the largest file, so that a larger one fails
     // the size check and no file allocates without a limit.

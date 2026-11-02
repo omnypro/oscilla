@@ -20,7 +20,7 @@ enum Support {
     /// A GBS file whose init and play routines are `init` and `play`. Each
     /// ends with RET.
     static func gbs(init initCode: [UInt8], play: [UInt8] = [], songs: UInt8 = 4,
-                    tma: UInt8 = 0, tac: UInt8 = 0) -> [UInt8] {
+                    first: UInt8 = 1, tma: UInt8 = 0, tac: UInt8 = 0) -> [UInt8] {
         var data = [UInt8](repeating: 0, count: Self.play - load)
         data.replaceSubrange(0..<initCode.count, with: initCode)
         data[initCode.count] = 0xC9
@@ -29,7 +29,7 @@ enum Support {
         var file = [UInt8](repeating: 0, count: 0x70)
         file.replaceSubrange(0..<4, with: Array("GBS".utf8) + [1])
         file[4] = songs
-        file[5] = 1
+        file[5] = first
         for (at, v) in [(6, load), (8, load), (10, Self.play), (12, 0xDFFF)] {
             file[at] = UInt8(v & 0xFF)
             file[at + 1] = UInt8(v >> 8)

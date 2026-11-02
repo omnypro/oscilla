@@ -39,8 +39,10 @@ address, as the format asks.
 `bus.rs` maps ROM at 0x0000 to 0x7FFF with the bank register that a write to
 0x2000..0x3FFF sets (0 selects 1). The data of the file lies at the load
 address, bytes before it read as 0, and bytes past its end read as 0. RAM
-covers 0x8000 to 0xDFFF and 0xFE00 to 0xFFFE. The echo area mirrors work RAM.
-Writes to the RAM banking registers are ignored.
+covers 0x8000 to 0xDFFF, 0xFE00 to 0xFE9F and 0xFF80 to 0xFFFE. The echo area
+mirrors work RAM, and the unusable area reads 0xFF. The timer, interrupt and
+sound registers sit in 0xFF00 to 0xFF3F, and the other I/O addresses hold what
+a driver stores there. Writes to the RAM banking registers are ignored.
 
 ## Timer
 
