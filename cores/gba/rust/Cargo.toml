@@ -6,3 +6,4 @@ publish.workspace = true
 
 [dependencies]
 oscilla-psf.workspace = true
+oscilla-resample.workspace = true

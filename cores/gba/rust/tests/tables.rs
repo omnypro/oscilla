@@ -12,8 +12,3 @@ fn the_sincos_table_matches_libm() {
         assert_eq!((s, c), oscilla_gba::sincos14_table(i << 8), "angle {i}");
     }
 }
-
-#[test]
-fn the_kernel_table_matches_libm() {
-    assert_eq!(oscilla_gba::reference_kernel(), oscilla_gba::kernel_table());
-}

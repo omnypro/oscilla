@@ -1,8 +1,8 @@
 //! The public machine: creation, reset, rendering and inspection.
 
 use crate::image::Image;
-use crate::resample;
 use crate::state::*;
+use oscilla_resample::{OUT_RING, Resampler};
 use std::sync::Arc;
 
 /// The warning list holds at most 2048 bytes and a closing NUL. Its room is
@@ -66,7 +66,7 @@ impl Machine {
             dma: Default::default(),
             timer: Default::default(),
             apu: ApuState::default(),
-            out: Resampler::new(output_rate),
+            out: Resampler::new(output_rate, 24),
             channel_mask: 0x3F,
             last_change: 0,
             observer: ObserverSlot::default(),
@@ -94,7 +94,7 @@ impl Machine {
     fn produce(&mut self, frames: usize) {
         while self.out_available() < frames {
             let missing = (frames - self.out_available()) as u64;
-            let cycles = missing * u64::from(CLOCK_HZ) / self.out.rate as u64 + 64;
+            let cycles = missing * u64::from(CLOCK_HZ) / self.out.rate() as u64 + 64;
             self.sys_run_until(self.now + cycles);
             self.out_finalize(self.now);
         }
@@ -130,7 +130,7 @@ impl Machine {
         let target = self.now.saturating_add(cycles);
         while self.now < target {
             let mut step = target - self.now;
-            let slice = (OUT_RING as u64 / 4) * u64::from(CLOCK_HZ) / self.out.rate as u64;
+            let slice = (OUT_RING as u64 / 4) * u64::from(CLOCK_HZ) / self.out.rate() as u64;
             if step > slice {
                 step = slice;
             }
@@ -197,12 +197,6 @@ impl Machine {
     }
 }
 
-// Kept so the kernel is built before the first sample is rendered.
-#[allow(dead_code)]
-fn _warm_kernel() {
-    let _ = resample::kernel();
-}
-
 // ---- Snapshots, channels and the end of a song -------------------------
 
 /// A copy of everything a machine is, apart from the observer and the channel
@@ -221,7 +215,7 @@ impl Snapshot {
             + crate::state::PAL_SIZE
             + crate::state::VRAM_SIZE
             + crate::state::OAM_SIZE
-            + self.0.out.buf.len() * 8
+            + self.0.out.heap_bytes()
     }
 }
 
@@ -264,7 +258,7 @@ impl Machine {
     /// come from a machine with the same image and output rate.
     pub fn restore(&mut self, snapshot: &Snapshot) -> Result<(), RestoreError> {
         let s = &snapshot.0;
-        if s.out.rate != self.out.rate {
+        if s.out.rate() != self.out.rate() {
             return Err(RestoreError::Rate);
         }
         let same_image = (Arc::ptr_eq(&s.rom, &self.rom) || s.rom == self.rom)

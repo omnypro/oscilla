@@ -17,13 +17,5 @@ fn print_tables() {
         println!("    ({s}, {c}),");
     }
     println!("];");
-    println!();
-    println!("/// The resampler's step kernel: 256 phases of 17 taps.");
-    println!("pub(crate) static KERNEL: [i64; 4352] = [");
-    for row in oscilla_gba::reference_kernel().chunks(8) {
-        let cells: Vec<String> = row.iter().map(|v| v.to_string()).collect();
-        println!("    {},", cells.join(", "));
-    }
-    println!("];");
     println!("-----END TABLES-----");
 }

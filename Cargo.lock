@@ -55,6 +55,7 @@ name = "oscilla-gba"
 version = "0.0.0"
 dependencies = [
  "oscilla-psf",
+ "oscilla-resample",
 ]
 
 [[package]]
@@ -63,6 +64,10 @@ version = "0.0.0"
 dependencies = [
  "flate2",
 ]
+
+[[package]]
+name = "oscilla-resample"
+version = "0.0.0"
 
 [[package]]
 name = "simd-adler32"

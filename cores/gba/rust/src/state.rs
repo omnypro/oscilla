@@ -1,6 +1,7 @@
 //! The machine's data: everything that decides what the machine does next,
 //! grouped by the hardware unit that owns each field.
 
+use oscilla_resample::Resampler;
 use std::sync::Arc;
 
 pub const LINE_CYCLES: u64 = 1232;
@@ -46,12 +47,6 @@ pub enum Source {
     Dma,
     Bios,
 }
-
-pub const BLEP_HALF: usize = 8;
-pub const BLEP_TAPS: usize = 2 * BLEP_HALF + 1;
-pub const BLEP_PHASES: usize = 256;
-pub const BLEP_SHIFT: u32 = 15;
-pub const OUT_RING: usize = 16384;
 
 /// The native clock: 16,777,216 cycles per second.
 pub const CLOCK_HZ: u32 = 16_777_216;
@@ -145,17 +140,6 @@ pub struct ApuState {
     pub fifo: [FifoState; 2],
     pub last_level: [i32; 2],
     pub sample_shift: i32,
-}
-
-#[derive(Clone)]
-pub struct Resampler {
-    pub rate: i32,
-    /// Two rings of OUT_RING frames, left then right.
-    pub buf: Vec<i64>,
-    pub integ: [i64; 2],
-    pub read_pos: u64,
-    pub avail_pos: u64,
-    pub level: [i32; 2],
 }
 
 /// Watches what the game does to the sound hardware. Callbacks run on the
