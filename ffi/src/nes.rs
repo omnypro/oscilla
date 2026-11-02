@@ -521,11 +521,20 @@ pub unsafe extern "C" fn cnes_channel_levels_get(machine: *const CMachine, out: 
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_expansion_levels_get(machine: *const CMachine, out: *mut i32) {
+    if out.is_null() || unsafe { in_callback(machine) } {
+        return;
+    }
+    let l = unsafe { &(*machine).machine }.expansion_levels();
+    unsafe { ptr::copy_nonoverlapping(l.as_ptr(), out, 8) };
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cnes_set_channel_mask(machine: *mut CMachine, mask: u32) {
     if unsafe { in_callback(machine) } {
         return;
     }
-    unsafe { &mut (*machine).machine }.set_channel_mask((mask & 0x1F) as u8);
+    unsafe { &mut (*machine).machine }.set_channel_mask((mask & 0xFF) as u8);
 }
 
 #[unsafe(no_mangle)]

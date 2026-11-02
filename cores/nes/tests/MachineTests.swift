@@ -139,10 +139,12 @@ struct MachineTests {
 
     @Test func expansionSoundIsReported() throws {
         let plain = try #require(Support.machine(init: Support.note))
-        let chip = try #require(Support.machine(init: Support.note, chips: 1))
-        defer { cnes_free(plain); cnes_free(chip) }
+        let vrc6 = try #require(Support.machine(init: Support.note, chips: 1))
+        let other = try #require(Support.machine(init: Support.note, chips: 4))
+        defer { cnes_free(plain); cnes_free(vrc6); cnes_free(other) }
         #expect(String(cString: cnes_warnings(plain)).isEmpty)
-        #expect(String(cString: cnes_warnings(chip)).contains("expansion"))
+        #expect(String(cString: cnes_warnings(vrc6)).isEmpty, "the VRC6 is played")
+        #expect(String(cString: cnes_warnings(other)).contains("expansion"))
     }
 
     @Test func theEndStateTellsAnEmptyUnitFromAPlayingOne() throws {
@@ -198,7 +200,7 @@ struct RefusalTests {
         #expect(probe.restore == 3)
         #expect(probe.selected == 0)
         #expect(probe.channelMask == 0, "the mask call returned a neutral value")
-        #expect(cnes_channel_mask(m) == 0x1F, "the mask did not change")
+        #expect(cnes_channel_mask(m) == 0xFF, "the mask did not change")
         #expect(cnes_song(m) == 0)
         cnes_run_cycles(m, 1000)
         #expect(cnes_cycles(m) >= 2000, "the machine is intact and still running")

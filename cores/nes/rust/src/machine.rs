@@ -128,7 +128,7 @@ impl Machine {
             out: Resampler::with_ratio(output_rate, clock.0, clock.1),
             hp: Highpass::console(clock),
             lp: Lowpass::console(clock),
-            channel_mask: 0x1F,
+            channel_mask: 0xFF,
             last_change: 0,
             phase: Phase::Idle,
             song: 0,
@@ -504,13 +504,27 @@ impl Machine {
         self.apu.levels().map(i32::from)
     }
 
+    /// What each expansion channel puts out now, before the mixer. A file with
+    /// the VRC6 shows its two pulse channels (0 to 15) and its saw (0 to 31);
+    /// the other entries are 0.
+    pub fn expansion_levels(&self) -> [i32; 8] {
+        let mut out = [0; 8];
+        if self.chips & oscilla_nsf::chips::VRC6 != 0 {
+            for (slot, level) in out.iter_mut().zip(self.apu.expansion_levels()) {
+                *slot = i32::from(level);
+            }
+        }
+        out
+    }
+
     /// Chooses the channels that reach the mix; bit n is channel n: pulse 1,
-    /// pulse 2, triangle, noise, delta. All five are on by default.
+    /// pulse 2, triangle, noise, delta, then the VRC6's pulse 1, pulse 2 and
+    /// saw. All eight are on by default.
     pub fn set_channel_mask(&mut self, mask: u8) {
-        if mask & 0x1F == self.channel_mask {
+        if mask == self.channel_mask {
             return;
         }
-        self.channel_mask = mask & 0x1F;
+        self.channel_mask = mask;
         let t = self.now;
         self.apu_advance(t);
         self.apu_emit(t);

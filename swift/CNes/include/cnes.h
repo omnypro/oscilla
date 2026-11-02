@@ -22,9 +22,10 @@ extern "C" {
  * and never while it renders. With the same image, song, region and calls, a
  * machine produces the same output on every run.
  *
- * The machine plays the 2A03's five channels: two pulse channels, the
- * triangle, the noise channel and the delta channel. A file that asks for
- * expansion sound gets the five channels only, and cnes_warnings says so.
+ * The machine plays the 2A03's five channels (two pulse channels, the
+ * triangle, the noise channel and the delta channel) and the three channels of
+ * the VRC6 expansion chip. A file that asks for other expansion sound gets the
+ * channels it can play, and cnes_warnings says so.
  */
 
 /* ---- Images ------------------------------------------------------------ */
@@ -64,7 +65,7 @@ typedef struct {
     uint8_t region_bits;  /* bit 0: PAL; bit 1: the file works on both */
     uint8_t chips;        /* expansion sound the file asks for, one bit per chip:
                              1 VRC6, 2 VRC7, 4 FDS, 8 MMC5, 16 N163, 32 Sunsoft 5B,
-                             64 VT02 */
+                             64 VT02. The core plays the VRC6 only. */
 } cnes_header;
 
 void cnes_image_header(const cnes_image *image, cnes_header *out);
@@ -179,7 +180,7 @@ uint32_t cnes_peek(const cnes_machine *machine, uint32_t address);
 /*
  * Things the machine met and does not support (a routine that did not
  * return, an opcode that locks the CPU or that the core does not run, BRK,
- * expansion sound), as a NUL-terminated list of short sentences, one per line.
+ * expansion sound other than the VRC6), as a NUL-terminated list of short sentences, one per line.
  * The machine reports each kind once and never prints.
  */
 const char *cnes_warnings(const cnes_machine *machine);
@@ -213,8 +214,18 @@ void cnes_snapshot_free(cnes_snapshot *snapshot);
  */
 void cnes_channel_levels_get(const cnes_machine *machine, int32_t out[5]);
 
+/*
+ * What each channel of the expansion chip puts out now, before the mixer. A
+ * file that asks for the VRC6 shows its pulse 1 and pulse 2 (0 to 15) and its
+ * saw (0 to 31) in the first three entries. The other entries, and all of them
+ * for a file without the chip, are 0. A muted channel still shows its level.
+ */
+void cnes_expansion_levels_get(const cnes_machine *machine, int32_t out[8]);
+
 /* Chooses the channels that reach the mix. Bit n is channel n in the order
- * above. All five are on at the start, and a reset leaves the choice alone. */
+ * above for bits 0 to 4. Bits 5 to 7 are the first three entries of
+ * cnes_expansion_levels_get. All eight are on at the start, and a reset leaves
+ * the choice alone. Only eight bits count. */
 void cnes_set_channel_mask(cnes_machine *machine, uint32_t mask);
 uint32_t cnes_channel_mask(const cnes_machine *machine);
 

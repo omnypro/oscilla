@@ -7,7 +7,7 @@
 //! Regenerate `goldens/nes.txt` with
 //! `cargo test -p oscilla-nes --release --test goldens -- --ignored --nocapture print`
 //! and keep the lines between the markers. The cutoff block goes in
-//! `goldens/nes-highpass.txt`.
+//! `goldens/nes-highpass.txt`, and the VRC6 block in `goldens/nes-vrc6.txt`.
 
 mod common;
 
@@ -74,6 +74,66 @@ fn program(seed: u64) -> Vec<u8> {
     file_with(&init, &play, us, region, [0; 8], Some((0x4000, &sample)))
 }
 
+/// A store to a VRC6 register, with the enable bits set most of the time.
+fn random_vrc6_store(r: &mut Rng) -> Vec<u8> {
+    let reg = [
+        0x9000u16, 0x9001, 0x9002, 0xA000, 0xA001, 0xA002, 0xB000, 0xB001, 0xB002, 0x9003,
+    ][r.below(10) as usize];
+    let mut v = r.byte();
+    if matches!(reg, 0x9002 | 0xA002 | 0xB002) && r.below(4) != 0 {
+        v |= 0x80;
+    }
+    if reg == 0x9003 {
+        v &= 0x03;
+    }
+    set(reg, v)
+}
+
+/// A file that asks for the VRC6 and drives it and the 2A03 together.
+fn vrc6_program(seed: u64) -> Vec<u8> {
+    let mut r = Rng(seed ^ 0x5EED);
+    let mut init = set(0x4015, 0x1F);
+    for _ in 0..10 + r.below(10) {
+        init.extend(random_store(&mut r));
+    }
+    for _ in 0..20 + r.below(20) {
+        init.extend(random_vrc6_store(&mut r));
+    }
+    let target = [0x9001u16, 0xA001, 0xB001][r.below(3) as usize];
+    let mut play = vec![
+        0xE6,
+        0x00,
+        0xA5,
+        0x00,
+        0x8D,
+        target as u8,
+        (target >> 8) as u8,
+    ];
+    for _ in 0..r.below(6) {
+        play.extend(random_vrc6_store(&mut r));
+    }
+    let mut f = file_with(&init, &play, 16666, r.below(2) as u8, [0; 8], None);
+    f[0x7B] = oscilla_nsf::chips::VRC6;
+    f
+}
+
+fn run_vrc6(seed: u64) -> (u64, u64) {
+    let nsf = Nsf::parse(&vrc6_program(seed)).unwrap();
+    let mut m = Machine::new(&nsf, 48000).unwrap();
+    let seen = watch(&mut m);
+    let out = render(&mut m, 96000);
+    let s = seen.borrow();
+    let writes = fnv(s.writes.iter().flat_map(|(c, a, v)| {
+        c.to_le_bytes()
+            .into_iter()
+            .chain(a.to_le_bytes())
+            .chain([*v])
+    }));
+    (digest(&out), writes)
+}
+
+const VRC6_SEEDS: u64 = 16;
+
 fn run(seed: u64) -> (u64, u64) {
     run_with(seed, None)
 }
@@ -125,6 +185,34 @@ fn the_digests_match() {
     let mut bad = Vec::new();
     for (seed, audio, writes) in want {
         let got = run(seed);
+        if got != (audio, writes) {
+            bad.push(format!(
+                "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
+                got.0, got.1
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn the_digests_with_the_vrc6_match() {
+    let want: Vec<(u64, u64, u64)> = include_str!("goldens/nes-vrc6.txt")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            (
+                p[0].parse().unwrap(),
+                u64::from_str_radix(p[1], 16).unwrap(),
+                u64::from_str_radix(p[2], 16).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(want.len() as u64, VRC6_SEEDS);
+    let mut bad = Vec::new();
+    for (seed, audio, writes) in want {
+        let got = run_vrc6(seed);
         if got != (audio, writes) {
             bad.push(format!(
                 "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
@@ -200,6 +288,12 @@ fn print() {
         println!("{seed} {audio:016x} {writes:016x}");
     }
     println!("-----END GOLDENS-----");
+    println!("-----BEGIN VRC6 GOLDENS-----");
+    for seed in 0..VRC6_SEEDS {
+        let (audio, writes) = run_vrc6(seed);
+        println!("{seed} {audio:016x} {writes:016x}");
+    }
+    println!("-----END VRC6 GOLDENS-----");
     println!("-----BEGIN CUTOFF GOLDENS-----");
     for seed in 0..CUTOFF_SEEDS {
         for hz in CUTOFFS {

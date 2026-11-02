@@ -478,3 +478,16 @@ fn the_console_low_pass_takes_the_top_off_the_highest_tones() {
     let ratio = high / low;
     assert!((ratio - 0.81).abs() < 0.04, "{ratio}");
 }
+
+#[test]
+fn a_step_that_lands_on_a_frame_event_is_not_lost() {
+    // At period 0 the triangle steps on every cycle, so a step coincides with
+    // each event of the frame counter. After a whole number of 32-step turns
+    // the level is where it was.
+    let mut m = with(&[(0x4015, 4), (0x4008, 0xFF), (0x400A, 0), (0x400B, 0x08)]);
+    m.run_cycles(10_000);
+    let a = m.channel_levels()[2];
+    m.run_cycles(32 * 600);
+    assert!(m.cycles() < 29_500);
+    assert_eq!(m.channel_levels()[2], a);
+}

@@ -132,6 +132,14 @@ impl Machine {
                     self.apu_write(address, v);
                 }
             }
+            0x9000..=0xBFFF if self.chips & oscilla_nsf::chips::VRC6 != 0 => {
+                self.sync_apu();
+                let t = self.now;
+                if let Some(o) = self.observer.0.as_mut() {
+                    o.sound_write(t, address, v);
+                }
+                self.vrc6_write(address, v);
+            }
             0x5FF8..=0x5FFF if self.banked => {
                 self.banks[usize::from(address - 0x5FF8)] = v;
             }

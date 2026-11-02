@@ -146,12 +146,49 @@ pub struct FrameCounter {
     pub immediate: bool,
 }
 
+#[derive(Clone, Default)]
+pub struct Vrc6Pulse {
+    pub mode: bool,
+    pub duty: u8,
+    pub volume: u8,
+    pub period: u16,
+    pub enabled: bool,
+    /// The step of the duty sequence, counting down from 15.
+    pub counter: u8,
+    /// The cycle of the next timer expiry. While the channel is silent the
+    /// value may lie in the past: `settle` brings it forward before any change.
+    pub next_step: u64,
+}
+
+#[derive(Clone, Default)]
+pub struct Vrc6Saw {
+    pub rate: u8,
+    pub period: u16,
+    pub enabled: bool,
+    pub acc: u8,
+    /// Which of the seven accumulator clocks of a cycle comes next, 0 to 6.
+    pub step: u8,
+    pub next_step: u64,
+}
+
+/// The sound of the VRC6 expansion chip.
+#[derive(Clone, Default)]
+pub struct Vrc6 {
+    pub pulse: [Vrc6Pulse; 2],
+    pub saw: Vrc6Saw,
+    /// All oscillators stand still.
+    pub halted: bool,
+    /// How far the periods shift right: 0, 4 or 8.
+    pub shift: u8,
+}
+
 #[derive(Clone)]
 pub struct Apu {
     pub pulse: [Pulse; 2],
     pub tri: Triangle,
     pub noise: Noise,
     pub dmc: Dmc,
+    pub vrc6: Vrc6,
     /// The enable bits of $4015, bit n for channel n.
     pub enabled: u8,
     pub frame: FrameCounter,

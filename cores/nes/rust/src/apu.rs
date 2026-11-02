@@ -187,9 +187,16 @@ impl Lowpass {
     }
 }
 
+/// The share of a 2A03 pulse channel's full-volume level that a VRC6 pulse
+/// channel has. The documentation calls them roughly equal, and this is the
+/// value that gives the loudness of a reference player on a VRC6 file.
+const VRC6_GAIN: f64 = 0.9;
+
 struct Mixer {
     pulse: [f64; 31],
     tnd: [f64; 203],
+    /// One step of the VRC6's linear DAC.
+    vrc6: f64,
 }
 
 fn mixer() -> &'static Mixer {
@@ -198,6 +205,7 @@ fn mixer() -> &'static Mixer {
         let mut m = Mixer {
             pulse: [0.0; 31],
             tnd: [0.0; 203],
+            vrc6: 0.0,
         };
         for (n, slot) in m.pulse.iter_mut().enumerate().skip(1) {
             *slot = 95.52 / (8128.0 / n as f64 + 100.0);
@@ -205,6 +213,7 @@ fn mixer() -> &'static Mixer {
         for (n, slot) in m.tnd.iter_mut().enumerate().skip(1) {
             *slot = 163.67 / (24329.0 / n as f64 + 100.0);
         }
+        m.vrc6 = m.pulse[15] / 15.0 * VRC6_GAIN;
         m
     })
 }
@@ -291,9 +300,10 @@ impl Pulse {
         2 * (u64::from(self.period) + 1)
     }
 
-    /// Brings a stale timer past `t`, with the sequencer where it would be.
-    fn settle(&mut self, t: u64) {
-        if self.next_step <= t {
+    /// Brings a stale timer past `t`, with the sequencer where it would be. A
+    /// channel that is sounding keeps its pending step.
+    fn settle(&mut self, t: u64, channel: usize) {
+        if self.next_step <= t && self.silent(channel) {
             let p = self.period_cycles();
             let k = (t - self.next_step) / p + 1;
             self.pos = self.pos.wrapping_sub((k % 8) as u8) & 7;
@@ -318,13 +328,77 @@ impl Pulse {
     }
 }
 
+impl Vrc6Pulse {
+    fn silent(&self) -> bool {
+        !self.enabled || self.volume == 0
+    }
+
+    pub(crate) fn output(&self) -> u8 {
+        if self.enabled && (self.mode || self.counter <= self.duty) {
+            self.volume
+        } else {
+            0
+        }
+    }
+
+    fn period_cycles(&self, shift: u8) -> u64 {
+        u64::from(self.period >> shift) + 1
+    }
+
+    /// Brings a stale timer past `t`, with the duty counter where it would be.
+    fn settle(&mut self, t: u64, shift: u8) {
+        if self.next_step <= t && self.silent() {
+            let p = self.period_cycles(shift);
+            let k = (t - self.next_step) / p + 1;
+            self.counter = ((u64::from(self.counter) + 16 - k % 16) % 16) as u8;
+            self.next_step += k * p;
+        }
+    }
+}
+
+impl Vrc6Saw {
+    /// A silent saw has no sound whatever the accumulator clock does.
+    fn silent(&self) -> bool {
+        !self.enabled || (self.rate == 0 && self.acc == 0)
+    }
+
+    pub(crate) fn output(&self) -> u8 {
+        if self.enabled { self.acc >> 3 } else { 0 }
+    }
+
+    /// The accumulator clocks every second timer expiry.
+    fn period_cycles(&self, shift: u8) -> u64 {
+        2 * (u64::from(self.period >> shift) + 1)
+    }
+
+    /// One accumulator clock: six additions of the rate, then a reset.
+    fn step_once(&mut self) {
+        if self.step == 6 {
+            self.acc = 0;
+            self.step = 0;
+        } else {
+            self.acc = self.acc.wrapping_add(self.rate);
+            self.step += 1;
+        }
+    }
+
+    fn settle(&mut self, t: u64, shift: u8) {
+        if self.next_step <= t && self.silent() {
+            let p = self.period_cycles(shift);
+            let k = (t - self.next_step) / p + 1;
+            self.step = ((u64::from(self.step) + k) % 7) as u8;
+            self.next_step += k * p;
+        }
+    }
+}
+
 impl Triangle {
     fn gated(&self) -> bool {
         self.linear == 0 || self.len == 0
     }
 
     fn settle(&mut self, t: u64) {
-        if self.next_step <= t {
+        if self.next_step <= t && self.gated() {
             let p = u64::from(self.period) + 1;
             self.next_step += ((t - self.next_step) / p + 1) * p;
         }
@@ -374,6 +448,7 @@ impl Apu {
                 bits: 8,
                 ..Dmc::default()
             },
+            vrc6: Vrc6::default(),
             enabled: 0,
             frame: FrameCounter::default(),
             time: 0,
@@ -390,15 +465,25 @@ impl Apu {
         a.tri.next_step = 1;
         a.noise.next_step = noise_period(region, 0);
         a.dmc.next_step = dmc_period(region, 0);
+        a.vrc6.pulse[0].next_step = 1;
+        a.vrc6.pulse[1].next_step = 1;
+        a.vrc6.saw.next_step = 2;
+        a.vrc6.pulse[0].counter = 15;
+        a.vrc6.pulse[1].counter = 15;
         a.frame.next = sequence(region, false)[0].0;
         a
     }
 
     fn settle(&mut self, t: u64) {
-        for p in &mut self.pulse {
-            p.settle(t);
+        for (i, p) in self.pulse.iter_mut().enumerate() {
+            p.settle(t, i);
         }
         self.tri.settle(t);
+        let shift = self.vrc6.shift;
+        for p in &mut self.vrc6.pulse {
+            p.settle(t, shift);
+        }
+        self.vrc6.saw.settle(t, shift);
     }
 
     /// The five levels before the mixer: pulse 1, pulse 2, triangle, noise
@@ -424,7 +509,19 @@ impl Apu {
             }
         };
         let m = mixer();
-        m.pulse[on(0) + on(1)] + m.tnd[3 * on(2) + 2 * on(3) + on(4)]
+        let v = &self.vrc6;
+        let bit = |n: u8| usize::from(mask >> n & 1);
+        let steps = bit(5) * usize::from(v.pulse[0].output())
+            + bit(6) * usize::from(v.pulse[1].output())
+            + bit(7) * usize::from(v.saw.output());
+        m.pulse[on(0) + on(1)] + m.tnd[3 * on(2) + 2 * on(3) + on(4)] + steps as f64 * m.vrc6
+    }
+
+    /// The levels of the expansion channels before the mixer: the two pulse
+    /// channels (0 to 15) and the saw (0 to 31).
+    pub(crate) fn expansion_levels(&self) -> [u8; 3] {
+        let v = &self.vrc6;
+        [v.pulse[0].output(), v.pulse[1].output(), v.saw.output()]
     }
 
     fn quarter_clock(&mut self) {
@@ -480,6 +577,21 @@ impl Machine {
                 a.noise.next_step,
                 a.dmc.next_step,
                 a.next_hpf,
+                if a.vrc6.halted || a.vrc6.pulse[0].silent() {
+                    NEVER
+                } else {
+                    a.vrc6.pulse[0].next_step
+                },
+                if a.vrc6.halted || a.vrc6.pulse[1].silent() {
+                    NEVER
+                } else {
+                    a.vrc6.pulse[1].next_step
+                },
+                if a.vrc6.halted || a.vrc6.saw.silent() {
+                    NEVER
+                } else {
+                    a.vrc6.saw.next_step
+                },
             ];
             for (i, at) in candidates.into_iter().enumerate() {
                 if at < te {
@@ -510,6 +622,19 @@ impl Machine {
                     n.next_step += noise_period(region, n.period_index);
                 }
                 5 => self.dmc_step(),
+                7 | 8 => {
+                    let v = &mut self.apu.vrc6;
+                    let shift = v.shift;
+                    let p = &mut v.pulse[usize::from(which - 7)];
+                    p.counter = p.counter.checked_sub(1).unwrap_or(15);
+                    p.next_step += p.period_cycles(shift);
+                }
+                9 => {
+                    let v = &mut self.apu.vrc6;
+                    let shift = v.shift;
+                    v.saw.step_once();
+                    v.saw.next_step += v.saw.period_cycles(shift);
+                }
                 _ => {}
             }
             self.apu_emit(te);
@@ -802,7 +927,7 @@ impl Machine {
     /// Notes the expansion chips that a file asks for and the core does not
     /// play.
     pub(crate) fn warn_chips(&mut self) {
-        if self.chips != 0 {
+        if self.chips & !oscilla_nsf::chips::VRC6 != 0 {
             self.warn(
                 WARN_CHIP,
                 "The file asks for expansion sound that the core does not play.",
@@ -819,5 +944,63 @@ impl Machine {
                 "The file uses interrupts or a non-returning init, which the core does not run.",
             );
         }
+    }
+
+    /// A store to the VRC6's registers.
+    pub(crate) fn vrc6_write(&mut self, address: u16, v: u8) {
+        self.sync_apu();
+        let t = self.now;
+        self.apu.settle(t);
+        let x = &mut self.apu.vrc6;
+        match address & 0xF003 {
+            a @ (0x9000 | 0xA000) => {
+                let p = &mut x.pulse[usize::from(a >> 12 & 1 ^ 1)];
+                p.mode = v & 0x80 != 0;
+                p.duty = v >> 4 & 7;
+                p.volume = v & 15;
+            }
+            a @ (0x9001 | 0xA001) => {
+                let p = &mut x.pulse[usize::from(a >> 12 & 1 ^ 1)];
+                p.period = p.period & 0xF00 | u16::from(v);
+            }
+            a @ (0x9002 | 0xA002) => {
+                let p = &mut x.pulse[usize::from(a >> 12 & 1 ^ 1)];
+                p.period = p.period & 0xFF | u16::from(v & 15) << 8;
+                p.enabled = v & 0x80 != 0;
+                if !p.enabled {
+                    p.counter = 15;
+                }
+            }
+            0x9003 => {
+                let was = x.halted;
+                x.halted = v & 1 != 0;
+                x.shift = if v & 4 != 0 {
+                    8
+                } else if v & 2 != 0 {
+                    4
+                } else {
+                    0
+                };
+                if was && !x.halted {
+                    // The oscillators go on from where they stood.
+                    let shift = x.shift;
+                    for p in &mut x.pulse {
+                        p.next_step = t + p.period_cycles(shift);
+                    }
+                    x.saw.next_step = t + x.saw.period_cycles(shift);
+                }
+            }
+            0xB000 => x.saw.rate = v & 0x3F,
+            0xB001 => x.saw.period = x.saw.period & 0xF00 | u16::from(v),
+            0xB002 => {
+                x.saw.period = x.saw.period & 0xFF | u16::from(v & 15) << 8;
+                x.saw.enabled = v & 0x80 != 0;
+                if !x.saw.enabled {
+                    x.saw.acc = 0;
+                }
+            }
+            _ => {}
+        }
+        self.apu_emit(t);
     }
 }

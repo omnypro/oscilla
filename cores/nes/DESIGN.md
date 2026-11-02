@@ -98,6 +98,24 @@ The delta channel reads its sample from the program. Each read takes four
 cycles from the CPU. The sound unit counts them and the CPU pays them at the
 next register access or at the end of a render, so the cycles are not lost.
 
+## Expansion sound
+
+The VRC6 has two pulse channels and a saw, and a file that asks for it in the
+chip byte of its header gets them. Stores to 0x9000 through 0xB003 reach the
+chip, and in any other file they do nothing. Each pulse channel counts a
+16-step sequence down, one step for each period of its timer (the 12-bit
+period plus one cycles) and outputs its volume while the step is at or below
+its duty, or always in its mode. The saw adds its rate to an accumulator on
+every second timer expiry, six times and then a reset, and outputs the top
+five bits. A write to 0x9003 halts all three or shifts their periods right by
+4 or 8 bits. Clearing a channel's enable bit silences it and, for a pulse,
+restarts the sequence.
+
+The chip's DAC is linear. Each step of it adds 0.9 of one fifteenth of a 2A03
+pulse channel at full volume to the mix, and the mask's bits 5 to 7 take the
+three channels out of it. A channel that cannot change the output (disabled or
+at volume 0) settles its timer arithmetically, like a silent 2A03 channel.
+
 ## Output
 
 The mixer is the pair of lookup tables of the documentation, built at startup

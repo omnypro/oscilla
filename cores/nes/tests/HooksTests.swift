@@ -101,7 +101,7 @@ struct HooksTests {
     @Test func theChannelMaskSilencesAChannelAndSurvivesAReset() throws {
         let m = try #require(Support.machine(init: Support.note))
         defer { cnes_free(m) }
-        #expect(cnes_channel_mask(m) == 0x1F)
+        #expect(cnes_channel_mask(m) == 0xFF)
         cnes_set_channel_mask(m, 0b11110)
         _ = Support.render(m, frames: 48000)
         let tail = Support.render(m, frames: 9600)
@@ -117,7 +117,7 @@ struct HooksTests {
         }
         #expect(loudest == 15, "a muted channel still shows its level")
         cnes_set_channel_mask(m, 0xFFFF_FFFF)
-        #expect(cnes_channel_mask(m) == 0x1F, "only five bits count")
+        #expect(cnes_channel_mask(m) == 0xFF, "only eight bits count")
     }
 
     @Test func theBassCutoffStartsAtTheConsoleAndAcceptsOnlyItsRange() throws {
@@ -192,5 +192,41 @@ struct HooksTests {
         #expect(loudest[2] > 8 && loudest[2] <= 15)
         #expect(loudest[3] == 15)
         #expect(levels[4] == 0x40, "a store to the delta channel's level register shows at once")
+    }
+
+    @Test func theExpansionChannelsShowTheirLevelsAndAnswerToTheMask() throws {
+        let setup = Support.store(0x9000, 0x7F) + Support.store(0x9001, 0xFF) + Support.store(0x9002, 0x80)
+            + Support.store(0xB000, 0x08) + Support.store(0xB001, 0x40) + Support.store(0xB002, 0x80)
+        let m = try #require(Support.machine(init: setup, chips: 1))
+        defer { cnes_free(m) }
+        var levels = [Int32](repeating: -1, count: 8)
+        var loudest = [Int32](repeating: 0, count: 8)
+        for _ in 0..<400 {
+            cnes_run_cycles(m, 997)
+            cnes_expansion_levels_get(m, &levels)
+            for i in 0..<8 { loudest[i] = max(loudest[i], levels[i]) }
+        }
+        #expect(loudest[0] == 15, "pulse 1 plays at full volume")
+        #expect(loudest[1] == 0, "pulse 2 was never started")
+        #expect((1...31).contains(loudest[2]), "the saw climbs")
+        #expect(loudest[3...].allSatisfy { $0 == 0 })
+        let loud = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
+        #expect(loud > 1000)
+        cnes_set_channel_mask(m, 0x1F)
+        _ = Support.render(m, frames: 48000)
+        let quiet = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
+        #expect(quiet < 50, "the expansion bits mute the chip")
+        cnes_expansion_levels_get(m, &levels)
+        #expect(levels[0] > 0 || levels[2] > 0 || loudest[0] == 15, "a muted channel still shows its level")
+        cnes_expansion_levels_get(m, nil)
+    }
+
+    @Test func aFileWithoutTheChipShowsNoExpansionLevels() throws {
+        let m = try #require(Support.machine(init: Support.store(0x9000, 0x7F) + Support.store(0x9002, 0x80)))
+        defer { cnes_free(m) }
+        cnes_run_cycles(m, 10_000)
+        var levels = [Int32](repeating: -1, count: 8)
+        cnes_expansion_levels_get(m, &levels)
+        #expect(levels.allSatisfy { $0 == 0 })
     }
 }
