@@ -144,6 +144,12 @@ impl Machine {
         self.apu.r[0x02] = 0xF3;
         self.apu.r[0x14] = 0x77;
         self.apu.r[0x15] = 0xF3;
+        // The filter has settled on the level of the idle DACs, as it has by
+        // the time a cartridge starts.
+        let (input, gate) = self.apu.mix_all(self.channel_mask);
+        self.apu.input = input;
+        self.apu.gate = gate;
+        self.apu.cap = [f64::from(input[0]), f64::from(input[1])];
         self.out.reset();
         self.last_change = 0;
         self.phase = Phase::Idle;

@@ -180,6 +180,10 @@ impl Apu {
 
     /// The mixed level before the filter, left and right, and whether any DAC
     /// is on.
+    pub(crate) fn mix_all(&self, mask: u8) -> ([i32; 2], bool) {
+        self.mix(mask)
+    }
+
     fn mix(&self, mask: u8) -> ([i32; 2], bool) {
         if !self.on {
             return ([0, 0], false);
