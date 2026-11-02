@@ -1,5 +1,11 @@
 # Changes
 
+## 0.1.1
+
+- Release assets include static libraries for Windows (`x86_64-pc-windows-msvc`)
+  and Linux (`x86_64-unknown-linux-gnu`). 0.1.0 shipped without them.
+- The source is the same as 0.1.0.
+
 ## 0.1.0
 
 - GBA core in Rust: ARM and Thumb CPU, bus, timers, DMA, interrupts, sound
