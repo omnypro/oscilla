@@ -9,6 +9,7 @@ pub(crate) const WARN_LOCK: u32 = 2;
 pub(crate) const WARN_BRK: u32 = 4;
 pub(crate) const WARN_UNSTABLE: u32 = 8;
 pub(crate) const WARN_CHIP: u32 = 16;
+pub(crate) const WARN_FLAGS: u32 = 32;
 
 impl Machine {
     pub(crate) fn warn(&mut self, bit: u32, text: &str) {
@@ -69,8 +70,17 @@ impl Machine {
         }
     }
 
+    /// Brings the sound unit up to date when the delta channel may read a
+    /// sample byte, so that the CPU loses the cycles at the time of the read.
+    fn settle_sample_reads(&mut self) {
+        if self.apu.dmc.remaining > 0 && self.now >= self.apu.dmc.next_step {
+            self.sync_apu();
+        }
+    }
+
     /// A read bus cycle.
     pub(crate) fn read(&mut self, address: u16) -> u8 {
+        self.settle_sample_reads();
         let v = match address {
             0x0000..=0x1FFF => self.ram[usize::from(address & 0x7FF)],
             0x2000..=0x3FFF => {
@@ -104,6 +114,7 @@ impl Machine {
 
     /// A write bus cycle.
     pub(crate) fn write(&mut self, address: u16, v: u8) {
+        self.settle_sample_reads();
         self.bus = v;
         match address {
             0x0000..=0x1FFF => self.ram[usize::from(address & 0x7FF)] = v,

@@ -64,6 +64,16 @@ pub mod chips {
     pub const VT02: u8 = 64;
 }
 
+/// The feature bits of a version 2 header.
+pub mod nsf2 {
+    /// Interrupt support: a vector overlay and a timer.
+    pub const IRQ: u8 = 16;
+    /// Init may run forever, and the play routine runs from an interrupt.
+    pub const NON_RETURNING_INIT: u8 = 32;
+    /// The play routine is never called.
+    pub const NO_PLAY: u8 = 64;
+}
+
 /// A parsed file. The data is the program bytes after the header. They belong
 /// at the load address, or in banks when the header names any.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +95,9 @@ pub struct Nsf {
     pub region_bits: u8,
     /// The expansion chips, as `chips` bits.
     pub chips: u8,
+    /// The version 2 feature bits of the header (0 for version 1): see
+    /// `nsf2`.
+    pub flags: u8,
     title: [u8; TEXT],
     author: [u8; TEXT],
     copyright: [u8; TEXT],
@@ -153,6 +166,7 @@ impl Nsf {
             banks,
             region_bits: file[0x7A],
             chips: file[0x7B],
+            flags: if version == 2 { file[0x7C] } else { 0 },
             title: field(0x0E),
             author: field(0x2E),
             copyright: field(0x4E),
@@ -270,6 +284,15 @@ mod tests {
         f[0x6F] = 0;
         let g = Nsf::parse(&f).unwrap();
         assert_eq!(g.play_interval_us(Region::Ntsc), 16639);
+    }
+
+    #[test]
+    fn the_feature_bits_are_read_from_version_2_only() {
+        let mut f = file(1, 1, 0x8000, [0; 8], 0);
+        f[0x7C] = nsf2::NO_PLAY;
+        assert_eq!(Nsf::parse(&f).unwrap().flags, 0);
+        f[5] = 2;
+        assert_eq!(Nsf::parse(&f).unwrap().flags, nsf2::NO_PLAY);
     }
 
     #[test]

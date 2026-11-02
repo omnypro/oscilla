@@ -456,7 +456,7 @@ impl Machine {
                 if mode == Mode::Ind {
                     let lo = u16::from(self.read(addr));
                     // The high byte does not carry into the next page.
-                    let hi = u16::from(self.read(addr & 0xFF00 | (addr + 1) & 0xFF));
+                    let hi = u16::from(self.read(addr & 0xFF00 | addr.wrapping_add(1) & 0xFF));
                     self.cpu.pc = hi << 8 | lo;
                 } else {
                     self.cpu.pc = addr;

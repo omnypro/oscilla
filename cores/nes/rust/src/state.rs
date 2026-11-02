@@ -205,6 +205,8 @@ pub struct Machine {
     /// Microseconds between calls of the play routine.
     pub(crate) interval_us: u32,
     pub(crate) chips: u8,
+    /// The header's version 2 feature bits.
+    pub(crate) flags: u8,
     pub(crate) songs: u8,
     pub(crate) first_song: u8,
     pub(crate) apu: Apu,

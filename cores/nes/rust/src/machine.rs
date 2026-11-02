@@ -6,7 +6,7 @@
 //! play routine at the interval the header names. A routine ends when it
 //! returns to RETURN_ADDRESS.
 
-use crate::apu::{Highpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
+use crate::apu::{CONSOLE_HIGHPASS_HZ, Highpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 use crate::bus::WARN_STALL;
 use crate::state::*;
 use oscilla_nsf::{Nsf, Region};
@@ -27,9 +27,11 @@ fn routine_limit(clock: (u64, u64)) -> u64 {
 }
 
 /// A level unit becomes OUT_MUL / 2^OUT_SHIFT of a 16-bit step. The mixer's full
-/// scale then sits at 29/32 of a sample's range.
-const OUT_MUL: i64 = 29;
-const OUT_SHIFT: u32 = 5;
+/// scale then sits at 11/16 of a sample's range. A delta-channel step from 0 to
+/// 127 is 0.563 of a unit, and the resampler overshoots a step by 7.7 percent,
+/// so the loudest register write a driver can make still fits.
+const OUT_MUL: i64 = 11;
+const OUT_SHIFT: u32 = 4;
 
 fn ram(size: usize) -> Ram {
     vec![0u8; size].into_boxed_slice()
@@ -53,7 +55,10 @@ impl Machine {
         let (pad, banks) = if banked {
             (usize::from(nsf.load & 0xFFF), nsf.banks)
         } else {
-            (usize::from(nsf.load - 0x8000), [0, 1, 2, 3, 4, 5, 6, 7])
+            (
+                usize::from(nsf.load.saturating_sub(0x8000)),
+                [0, 1, 2, 3, 4, 5, 6, 7],
+            )
         };
         let mut image = vec![0u8; pad];
         image.extend_from_slice(&nsf.data);
@@ -62,6 +67,7 @@ impl Machine {
         m.init = nsf.init;
         m.play = nsf.play;
         m.chips = nsf.chips;
+        m.flags = nsf.flags;
         m.interval_us = nsf.play_interval_us(region);
         m.songs = nsf.songs;
         m.first_song = nsf.first_song.min(nsf.songs.saturating_sub(1));
@@ -115,6 +121,7 @@ impl Machine {
             clock,
             interval_us: 16639,
             chips: 0,
+            flags: 0,
             songs: 1,
             first_song: 0,
             apu: Apu::new(region),
@@ -184,6 +191,7 @@ impl Machine {
         self.warnings.push(0);
         self.warned = 0;
         self.warn_chips();
+        self.warn_flags();
     }
 
     /// Resets the machine and starts `song` (counted from 0). False when the
@@ -243,7 +251,9 @@ impl Machine {
         self.in_init = false;
         self.phase = Phase::Idle;
         let due = self.scheduled(self.frame + 1);
-        self.next_call = if was_init {
+        self.next_call = if self.flags & oscilla_nsf::nsf2::NO_PLAY != 0 {
+            NEVER
+        } else if was_init {
             self.now.max(due)
         } else {
             due.max(self.now)
@@ -291,6 +301,10 @@ impl Machine {
                         break;
                     }
                     self.now = self.now.max(self.next_call);
+                    // Sample reads while the CPU waits cost it nothing.
+                    let t = self.now;
+                    self.apu_advance(t);
+                    self.apu.stall = 0;
                     let (t, frame) = (self.now, self.frame);
                     if let Some(o) = self.observer.0.as_mut() {
                         o.play_call(t, frame as i64);
@@ -490,6 +504,9 @@ impl Machine {
     /// Chooses the channels that reach the mix; bit n is channel n: pulse 1,
     /// pulse 2, triangle, noise, delta. All five are on by default.
     pub fn set_channel_mask(&mut self, mask: u8) {
+        if mask & 0x1F == self.channel_mask {
+            return;
+        }
         self.channel_mask = mask & 0x1F;
         let t = self.now;
         self.apu_advance(t);
@@ -509,13 +526,17 @@ impl Machine {
         if !(MIN_HIGHPASS_HZ..=MAX_HIGHPASS_HZ).contains(&hz) {
             return false;
         }
-        self.change_highpass(Highpass::at(hz, self.clock));
+        if hz != self.hp.hz() {
+            self.change_highpass(Highpass::at(hz, self.clock));
+        }
         true
     }
 
     /// Goes back to the console's own filter.
     pub fn use_console_highpass(&mut self) {
-        self.change_highpass(Highpass::console(self.clock));
+        if self.hp.hz() != CONSOLE_HIGHPASS_HZ {
+            self.change_highpass(Highpass::console(self.clock));
+        }
     }
 
     /// The corner of the filter in use: CONSOLE_HIGHPASS_HZ for the console's.

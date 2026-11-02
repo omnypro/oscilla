@@ -121,7 +121,7 @@ channel mask.
 
 `audio/resample` turns the stream of level changes into samples at the
 caller's rate. Each change is a band-limited step at its exact cycle. One
-mixer unit is 29/32 of the 16-bit range, and float output uses the same scale.
+mixer unit is 11/16 of the 16-bit range, and float output uses the same scale.
 
 ## Arithmetic
 

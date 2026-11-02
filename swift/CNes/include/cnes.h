@@ -63,7 +63,8 @@ typedef struct {
     uint8_t banks[8];     /* the bank in each 4 KiB window from 0x8000; all 0 for no banking */
     uint8_t region_bits;  /* bit 0: PAL; bit 1: the file works on both */
     uint8_t chips;        /* expansion sound the file asks for, one bit per chip:
-                             1 VRC6, 2 VRC7, 4 FDS, 8 MMC5, 16 N163, 32 Sunsoft 5B */
+                             1 VRC6, 2 VRC7, 4 FDS, 8 MMC5, 16 N163, 32 Sunsoft 5B,
+                             64 VT02 */
 } cnes_header;
 
 void cnes_image_header(const cnes_image *image, cnes_header *out);
@@ -140,9 +141,10 @@ uint64_t cnes_frames(const cnes_machine *machine);
  * the machine does nothing there and returns zero, NULL or an empty list
  * (cnes_warnings); cnes_snapshot_restore returns 3.
  *
- * sound_write sees every store to 0x4000..0x4017 (the sound registers, the
- * delta channel's registers and the frame counter's), whether or not the unit
- * accepts it: the address and the value as stored.
+ * sound_write sees every store to 0x4000..0x4017, whether or not the unit
+ * accepts it: the address and the value as stored. The range holds the sound
+ * registers, the delta channel's registers and the frame counter's, and also
+ * the addresses 0x4014 and 0x4016, which the unit ignores.
  *
  * play_call fires just before the machine calls a routine. `frame` is -1 for
  * the init routine and counts the play calls from 0 after it. Each play call

@@ -439,3 +439,15 @@ fn reads_of_write_only_registers_return_the_bus() {
     m.run_cycles(100);
     assert_eq!(m.peek(0), 0x40);
 }
+
+#[test]
+fn the_loudest_register_write_does_not_clip() {
+    // A direct load of 127 is the largest step a driver can make with one store.
+    let mut m = with(&[(0x4011, 0x7F)]);
+    let out = render(&mut m, 4800);
+    let peak = out.iter().map(|&v| i32::from(v).abs()).max().unwrap();
+    assert!(peak > 10_000 && peak < 32_000, "{peak}");
+    let mut f = vec![0f32; 2 * 4800];
+    with(&[(0x4011, 0x7F)]).render_f32(&mut f);
+    assert!(f.iter().all(|v| v.abs() < 1.0));
+}

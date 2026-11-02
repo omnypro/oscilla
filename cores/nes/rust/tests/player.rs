@@ -313,3 +313,86 @@ fn rendering_with_floats_matches_the_16_bit_output_in_scale() {
         assert!((f64::from(*i) / 32768.0 - f64::from(*f)).abs() < 1e-3);
     }
 }
+
+#[test]
+fn a_hand_built_file_with_a_low_load_address_makes_a_machine() {
+    let mut n = nsf(&[], &[]);
+    n.load = 0x1000;
+    assert!(Machine::new(&n, 48000).is_some());
+}
+
+#[test]
+fn version_2_features_that_the_core_does_not_run_are_reported() {
+    let mut f = file(&[], &[]);
+    f[5] = 2;
+    f[0x7C] = 32;
+    let m = Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap();
+    assert!(String::from_utf8_lossy(m.warnings_nul()).contains("non-returning"));
+}
+
+#[test]
+fn a_file_that_never_calls_play_gets_no_play_calls() {
+    let mut f = file(&[], &[0xE6, 0x00]);
+    f[5] = 2;
+    f[0x7C] = 64;
+    let mut m = Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap();
+    m.run_cycles(500_000);
+    assert_eq!(m.frames(), 0);
+    assert_eq!(m.peek(0), 0);
+}
+
+/// A looping sample at the fastest rate, so that the delta channel reads a byte
+/// every 432 cycles while the play routine stores to the sound registers.
+fn sample_player() -> Machine {
+    let data = [0x55u8; 0x100];
+    let init = [
+        set(0x4010, 0x4F),
+        set(0x4012, 0),
+        set(0x4013, 0),
+        set(0x4015, 0x1F),
+        set(0x4000, 0xBF),
+        set(0x4002, 0x80),
+        set(0x4003, 0x08),
+    ]
+    .concat();
+    let play = [0xE6, 0x00, 0xA5, 0x00, 0x8D, 0x02, 0x40];
+    let f = file_with(&init, &play, 16666, 0, [0; 8], Some((0x4000, &data)));
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}
+
+#[test]
+fn the_buffer_size_does_not_change_the_sound() {
+    let mut whole = sample_player();
+    let want = digest(&render(&mut whole, 60000));
+    for chunk in [1usize, 7, 100, 333, 4097] {
+        let mut m = sample_player();
+        let mut got = Vec::new();
+        while got.len() < 2 * 60000 {
+            let n = chunk.min(60000 - got.len() / 2);
+            got.extend(render(&mut m, n));
+        }
+        assert_eq!(digest(&got), want, "chunks of {chunk}");
+    }
+}
+
+#[test]
+fn a_sample_read_does_not_move_the_cycle_of_a_store() {
+    // Every play call stores at the same distance from its start with the
+    // delta channel reading bytes meanwhile.
+    let mut m = sample_player();
+    let seen = watch(&mut m);
+    m.run_cycles(600_000);
+    let s = seen.borrow();
+    let mut gaps = std::collections::HashSet::new();
+    for pair in s.calls.windows(2).skip(1) {
+        let start = pair[0].0;
+        let store = s
+            .writes
+            .iter()
+            .find(|w| w.0 >= start && w.1 == 0x4002)
+            .unwrap()
+            .0;
+        gaps.insert(store - start);
+    }
+    assert!(gaps.len() <= 2, "{gaps:?}");
+}

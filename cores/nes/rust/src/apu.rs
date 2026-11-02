@@ -3,7 +3,7 @@
 //! Everything runs from events, so time that no register touches costs
 //! nothing. Written from public documentation of the registers and the mixer.
 
-use crate::bus::WARN_CHIP;
+use crate::bus::{WARN_CHIP, WARN_FLAGS};
 use crate::state::*;
 use oscilla_nsf::Region;
 use std::sync::OnceLock;
@@ -468,7 +468,7 @@ impl Machine {
                     n.step();
                     n.next_step += noise_period(region, n.period_index);
                 }
-                5 => self.dmc_step(te),
+                5 => self.dmc_step(),
                 _ => {}
             }
             self.apu_emit(te);
@@ -507,7 +507,7 @@ impl Machine {
     }
 
     /// One expiry of the delta channel's timer.
-    fn dmc_step(&mut self, te: u64) {
+    fn dmc_step(&mut self) {
         let region = self.region;
         let d = &mut self.apu.dmc;
         d.next_step += dmc_period(region, d.rate_index);
@@ -531,13 +531,14 @@ impl Machine {
                 }
                 None => d.silent = true,
             }
-            self.dmc_fill(te);
+            self.dmc_fill(4);
         }
     }
 
-    /// Reads the next sample byte into an empty buffer. The read takes the
-    /// CPU's time.
-    fn dmc_fill(&mut self, _te: u64) {
+    /// Reads the next sample byte into an empty buffer. The read takes the CPU
+    /// `cost` cycles: 4 for a reload, 3 for the first read after a store to
+    /// the status register.
+    fn dmc_fill(&mut self, cost: u64) {
         let d = &self.apu.dmc;
         if d.buffer.is_some() || d.remaining == 0 {
             return;
@@ -559,7 +560,7 @@ impl Machine {
                 d.irq = true;
             }
         }
-        self.apu.stall += 4;
+        self.apu.stall += cost;
     }
 
     /// Recomputes the mix and the filter's output at cycle `te` and hands the
@@ -611,6 +612,10 @@ impl Machine {
         loop {
             let t = self.now;
             self.apu_advance(t);
+            if self.phase == Phase::Idle {
+                // The CPU waits, so a sample read costs it nothing.
+                self.apu.stall = 0;
+            }
             if self.apu.stall == 0 {
                 break;
             }
@@ -720,7 +725,7 @@ impl Machine {
                 } else if d.remaining == 0 {
                     d.address = d.sample_address;
                     d.remaining = d.sample_length;
-                    self.dmc_fill(t);
+                    self.dmc_fill(3);
                 }
             }
             0x4017 => {
@@ -753,6 +758,17 @@ impl Machine {
             self.warn(
                 WARN_CHIP,
                 "The file asks for expansion sound that the core does not play.",
+            );
+        }
+    }
+
+    /// Notes the version 2 features that the core does not run.
+    pub(crate) fn warn_flags(&mut self) {
+        use oscilla_nsf::nsf2;
+        if self.flags & (nsf2::IRQ | nsf2::NON_RETURNING_INIT) != 0 {
+            self.warn(
+                WARN_FLAGS,
+                "The file uses interrupts or a non-returning init, which the core does not run.",
             );
         }
     }

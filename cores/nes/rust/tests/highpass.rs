@@ -178,3 +178,37 @@ fn a_pal_machine_scales_the_cutoff_to_its_own_clock() {
     let want = (-2.0 * std::f64::consts::PI * 90.0 * k as f64 / 48000.0).exp();
     assert!((got - want).abs() < 0.01, "{got} against {want}");
 }
+
+#[test]
+fn setting_what_is_already_set_changes_nothing() {
+    let init = [
+        set(0x4015, 0x1F),
+        set(0x4000, 0xBF),
+        set(0x4002, 0x80),
+        set(0x4003, 0x08),
+    ]
+    .concat();
+    let mut a = machine(&init, &[]);
+    let mut b = machine(&init, &[]);
+    assert!(a.set_highpass_hz(200.0));
+    assert!(b.set_highpass_hz(200.0));
+    let mut out_a = Vec::new();
+    let mut out_b = Vec::new();
+    for _ in 0..20 {
+        out_a.extend(render(&mut a, 500));
+        out_b.extend(render(&mut b, 500));
+        assert!(b.set_highpass_hz(200.0));
+        b.set_channel_mask(b.channel_mask());
+    }
+    assert_eq!(digest(&out_a), digest(&out_b));
+    let mut c = machine(&init, &[]);
+    let mut d = machine(&init, &[]);
+    let mut out_c = Vec::new();
+    let mut out_d = Vec::new();
+    for _ in 0..20 {
+        out_c.extend(render(&mut c, 500));
+        out_d.extend(render(&mut d, 500));
+        d.use_console_highpass();
+    }
+    assert_eq!(digest(&out_c), digest(&out_d));
+}

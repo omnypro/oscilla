@@ -318,3 +318,18 @@ fn an_unstable_opcode_is_skipped_with_a_warning() {
     assert_eq!(m.peek(0x0000), 0x12);
     assert!(String::from_utf8_lossy(m.warnings_nul()).contains("unstable"));
 }
+
+#[test]
+fn an_indirect_jump_through_the_last_address_wraps_inside_its_page() {
+    // JMP ($FFFF) reads the low byte at $FFFF and the high byte at $FF00.
+    let mut rom = vec![0xEA; 0x4000];
+    rom[0] = 0x6C;
+    rom[1] = 0xFF;
+    rom[2] = 0xFF;
+    rom[0x3FFC] = 0x00;
+    rom[0x3FFD] = 0x80;
+    rom[0x3FFF] = 0x34;
+    let mut m = oscilla_nes::Machine::from_rom(&rom, 48000).unwrap();
+    steps(&mut m, 1);
+    assert_eq!(m.cpu_state().0, 0xEA34);
+}
