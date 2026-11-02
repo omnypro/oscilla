@@ -40,7 +40,7 @@ impl std::fmt::Display for GbsError {
 
 impl std::error::Error for GbsError {}
 
-/// A parsed file. The data is the bytes after the header, which belong at the
+/// A parsed file. The data is the bytes after the header. They belong at the
 /// load address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gbs {

@@ -10,15 +10,19 @@ asks for.
 
 - `cores/gba`: Game Boy Advance. Plays GSF and minigsf sets and bare
   cartridge images.
+- `cores/gb`: Game Boy. Plays GBS files.
 
 ## Layout
 
 - `cores/<name>/rust`: one core, as a Rust crate with no unsafe code.
 - `cores/<name>/tests`, `tools` and `DESIGN.md`: Swift tests of the C
   interface, command-line tools and design notes.
-- `formats/psf`: the PSF container that cores share.
-- `ffi`: the C interface. One static library exports every core.
-- `swift/CGba`: the C header, `cgba.h`, and the module that Swift imports.
+- `formats/psf` and `formats/gbs`: the PSF and GBS containers.
+- `audio/resample`: the band-limited rate conversion that every core uses.
+- `ffi`: the C interface. One static library exports every core, and a cargo
+  feature (`gba`, `gb`) selects each one.
+- `swift/CGba` and `swift/CGb`: the C headers, `cgba.h` and `cgb.h`, and the
+  modules that Swift imports.
 - `scripts`: the XCFramework build.
 
 ## Build and test
@@ -40,7 +44,8 @@ change to the Rust sources.
 interface. The GBA core also runs GBA test cartridges when `GBA_TESTS_DIR`
 points at a folder of them (the layout is in `TestROMTests.swift`), and a
 corpus test when `GSF_TEST_FILE` names a GSF file. Without those variables
-the two tests skip.
+the two tests skip. The Game Boy core runs public test cartridges when
+`OSCILLA_GB_TESTS` names a folder of them.
 
 ## Platforms
 
@@ -52,7 +57,8 @@ script stops when they differ.
 SwiftPM accepts only artifact bundles as binary targets on Linux, so the
 Swift package builds on Apple platforms only.
 
-The crates compile for `x86_64-pc-windows-msvc`. No traces have been compared
+The cores do not depend on each other. Each depends on the resampler and its own container
+crate, so a Rust program takes the core it needs. The crates compile for `x86_64-pc-windows-msvc`. No traces have been compared
 on Windows. A program that links the static library there also links
 `kernel32.lib`, `ntdll.lib`, `userenv.lib`, `ws2_32.lib` and `dbghelp.lib`,
 and it uses the dynamic C runtime.
