@@ -5,7 +5,7 @@
 //! song number in A, and when that returns it calls the play routine at the
 //! rate the header names. A routine ends when it returns to RETURN_ADDRESS.
 
-use crate::apu::{Highpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
+use crate::apu::{CONSOLE_HIGHPASS_HZ, Highpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 use crate::bus::WARN_STALL;
 use crate::state::*;
 use oscilla_gbs::Gbs;
@@ -421,7 +421,7 @@ impl Machine {
                 }
             }
             0xE000..=0xFDFF => self.mem[usize::from(address - 0x2000)],
-            0xFEA0..=0xFF00 => 0xFF,
+            0xFEA0..=0xFF00 | 0xFF08..=0xFF0E => 0xFF,
             0xFF04 => (self.sys(self.now) >> 8) as u8,
             0xFF05 => self.timer_at(self.now).0,
             0xFF06 => self.timer.tma,
@@ -537,7 +537,14 @@ impl Machine {
         if !(MIN_HIGHPASS_HZ..=MAX_HIGHPASS_HZ).contains(&hz) {
             return false;
         }
-        self.change_highpass(Highpass::at(hz));
+        // The console's value gives the console's filter, so a saved reading
+        // of `highpass_hz` restores exactly what it read.
+        let hp = if hz == CONSOLE_HIGHPASS_HZ {
+            Highpass::console()
+        } else {
+            Highpass::at(hz)
+        };
+        self.change_highpass(hp);
         true
     }
 

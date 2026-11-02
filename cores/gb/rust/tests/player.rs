@@ -390,3 +390,15 @@ fn a_first_song_past_the_count_is_clamped() {
     m.run_cycles(SECOND / 10);
     assert_eq!(seen.borrow().calls[0], (0, -1));
 }
+
+#[test]
+fn peek_agrees_with_the_cpu_on_unmapped_registers() {
+    // ldh a,[0xFF08]; ld [0xC000],a
+    let init = [0xF0, 0x08, 0xEA, 0x00, 0xC0];
+    let mut m = machine(&init, &[]);
+    m.run_cycles(1000);
+    assert_eq!(m.peek(0xC000), 0xFF);
+    for a in [0xFF00, 0xFF08, 0xFF0A, 0xFF0E] {
+        assert_eq!(m.peek(a), 0xFF, "{a:04X}");
+    }
+}

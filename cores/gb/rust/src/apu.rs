@@ -34,8 +34,9 @@ pub const CONSOLE_HIGHPASS_HZ: f64 = 28.04;
 /// The lowest and highest cutoff that `set_highpass_hz` accepts.
 pub const MIN_HIGHPASS_HZ: f64 = 1.0;
 pub const MAX_HIGHPASS_HZ: f64 = 1000.0;
-/// How far the capacitor moves in one tick, at most: about the console's own
-/// 1.1 percent. A higher cutoff gets a shorter tick.
+/// How far the capacitor moves in one tick: about the console's own 1.1
+/// percent. A higher cutoff gets a shorter tick, down to HPF_TICK_MIN clocks,
+/// where the step grows to 2.4 percent at 1000 Hz.
 const HPF_STEP: f64 = 0.0107;
 const HPF_TICK_MIN: u64 = 16;
 /// Level units per mixer unit at the resampler's input.

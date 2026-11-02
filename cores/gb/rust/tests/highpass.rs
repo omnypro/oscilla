@@ -159,3 +159,15 @@ fn a_snapshot_taken_with_one_cutoff_plays_on_with_another() {
     assert_eq!(digest(&from_b), digest(&render(&mut c, 9600)));
     assert_ne!(digest(&from_b), digest(&render(&mut a, 9600)));
 }
+
+#[test]
+fn the_console_value_gives_the_console_filter() {
+    let mut plain = machine(&held_level(), &[]);
+    let mut set = machine(&held_level(), &[]);
+    let read = set.highpass_hz();
+    assert!(set.set_highpass_hz(read));
+    assert_eq!(
+        digest(&render(&mut plain, 96000)),
+        digest(&render(&mut set, 96000))
+    );
+}
