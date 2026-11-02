@@ -2,7 +2,10 @@ name: Release
 
 # Run by hand from main. The job builds the XCFramework, commits the manifest
 # that points at it, signs that commit and a tag with the release key, and
-# publishes the release. Only the tag reaches the repository. The commit is
+# creates the release as a draft. The static libraries for other systems join
+# the draft, and a last job publishes it. This repository's releases are
+# immutable once published, so every asset has to be there first. Only the tag
+# reaches the repository. The commit is
 # reachable from the tag and main stays on the local-path manifest.
 
 on:
@@ -56,6 +59,7 @@ jobs:
         run: |
           awk -v v="$VERSION" '$0 == "## " v {on=1; next} /^## / {on=0} on' CHANGES.md > "$RUNNER_TEMP/notes.md"
           gh release create "v$VERSION" \
+            --draft \
             --title "$VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             "build/OscillaRust-$VERSION.xcframework.zip" \
@@ -69,6 +73,7 @@ jobs:
     needs: release
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -93,3 +98,13 @@ jobs:
         run: |
           cp "target/${{ matrix.target }}/release/${{ matrix.file }}" "oscilla-$VERSION-${{ matrix.target }}-${{ matrix.file }}"
           gh release upload "v$VERSION" "oscilla-$VERSION-${{ matrix.target }}-${{ matrix.file }}"
+
+  publish:
+    name: Publish ${{ inputs.version }}
+    needs: libraries
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Publish the draft
+        run: gh release edit "v${{ inputs.version }}" --repo "${{ github.repository }}" --draft=false
