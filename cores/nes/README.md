@@ -1,0 +1,115 @@
+# NES core
+
+A music-only NES in Rust. It plays NSF files: it runs an NES game's sound
+driver and returns the sound as interleaved stereo at the rate the caller
+chooses. Nothing is drawn, and nothing reads input.
+
+It covers the 6502 CPU, the memory map with the NSF bank registers, the 2A03's
+sound unit and the NSF player that calls the driver's init and play routines.
+Both consoles are covered: the clock, the tables and the play rate follow the
+region.
+
+## Layout
+
+- `rust/src`: `cpu.rs` (the instruction set), `bus.rs` (memory map and bank
+  registers), `apu.rs` (sound), `machine.rs` (the public type and the
+  player's schedule), `state.rs`.
+- `rust/tests`: the Rust tests.
+- `tests/`: Swift Testing suites for the C interface.
+- `DESIGN.md`: how the core works.
+- `tools/oscilla-nsf`: the command-line player described below.
+
+The NSF header reader is the `oscilla-nsf` crate in `formats/nsf`. The
+resampler is the `oscilla-resample` crate in `audio/resample`. The C header is
+`swift/CNes/include/cnes.h`, a path from the root of the repository.
+
+## API
+
+```c
+char error[256];
+cnes_image *image;
+cnes_image_load_nsf("song.nsf", &image, error, sizeof error);
+cnes_machine *m = cnes_new(image, 48000);
+cnes_image_free(image);
+cnes_select_song(m, 3);                    /* counted from 0 */
+cnes_render_s16(m, buffer, frames);        /* interleaved stereo */
+cnes_free(m);
+```
+
+A machine holds all of its state and renders the same samples on every run.
+`cnes_new` picks the console from the header. A header that names both
+consoles gets NTSC, and `cnes_new_for` takes the console from the caller.
+`cnes_set_observer` reports every store to `0x4000` through `0x4017` and every
+call of the init and play routines. Each play call is the driver's own tick, so
+a host can digest the stores per call. Rust code uses `oscilla_nes::Machine`
+directly.
+
+A player has four more groups of calls.
+
+- `cnes_snapshot_take` copies the whole machine. `cnes_snapshot_restore` puts a
+  machine with the same file, console and output rate back to that point, and
+  the same calls then render the same samples.
+- `cnes_set_channel_mask` chooses which of the five channels reach the mix.
+  `cnes_channel_levels_get` shows what each channel outputs, muted or not.
+- `cnes_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
+  plays. The default is the console's own filter at 90 Hz, and
+  `cnes_use_console_highpass` returns to it. `cnes_highpass_hz` reads the
+  cutoff in use. A reset, a song change and a snapshot restore keep the choice.
+- `cnes_end_state_get` reports a unit with no channel on and a routine that
+  never returned. `cnes_quiet_cycles` counts the cycles since the output level
+  changed.
+
+## oscilla-nsf
+
+```
+oscilla-nsf FILE.nsf [--song N] [--seconds S] [--rate HZ] [--region ntsc|pal]
+                     [--highpass HZ] [--out FILE.wav] [--writes FILE.txt]
+oscilla-nsf FILE.nsf --info
+oscilla-nsf FILE.nsf [--song N] --bench [--seconds S] [--rate HZ]
+```
+
+The first form plays song N (default 0) for S seconds (default 30) and writes
+a 16-bit stereo WAV file. `--writes` adds a text file with one line per store
+to the sound registers: the song, the play call (-1 for the init routine), the
+cycle since that call began, the address and the value. `--info` prints the
+header. `--bench` renders without output and prints the time it took.
+
+## Tests
+
+`cargo test -p oscilla-nes --release` runs these groups.
+
+- `cpu`: results, flags and the cycles of each addressing mode.
+- `sound`: one behavior of the sound unit at a time, with drivers built from
+  bytes.
+- `player`: the schedule of init and play calls, both consoles, bank
+  switching, routines that misbehave, snapshots and the end state.
+- `goldens`: a hash of the samples and of the stores for each of 64 generated
+  drivers. A change to the sound or to any trace changes a hash.
+- `highpass`: the bass cutoff's range, default, decay time and behavior across
+  a change, a reset and a restore.
+- `cartridges`: public test cartridges for the CPU. They are not in the
+  repository. `OSCILLA_NES_TESTS` names a folder that holds them and a
+  `manifest.txt` that lists each one with a cycle limit, and optionally the
+  path of a log of the CPU's state. The test skips without the variable.
+
+## Compatibility
+
+The core plays NSF versions 1 and 2, up to the program length of version 2. A
+comparison with the register-store streams of a reference player gave the same
+stores in the same order in every play call for all 117 songs of two files, one
+of them bank-switched, over 3,600 play calls each.
+
+Not emulated: the expansion chips (a file that asks for one plays its 2A03
+channels and a warning says so), interrupts (a driver that waits for the
+frame counter's flag can poll it, and one that enables interrupts never
+receives them), the display, input, the undocumented opcodes whose results depend on the
+chip's analog behavior (the core skips them and warns), and the exact timing
+of a sample read inside an instruction (a read costs the CPU four cycles). The
+output keeps the console's 90 Hz high-pass filter and has no low-pass stage.
+`cnes_set_highpass_hz` moves the high-pass corner.
+
+## References
+
+Written from public documentation.
+
+- The NESdev wiki: the APU pages, the CPU pages and the NSF specification.

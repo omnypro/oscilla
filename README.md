@@ -11,18 +11,20 @@ asks for.
 - `cores/gba`: Game Boy Advance. Plays GSF and minigsf sets and bare
   cartridge images.
 - `cores/gb`: Game Boy. Plays GBS files.
+- `cores/nes`: NES. Plays NSF files.
 
 ## Layout
 
 - `cores/<name>/rust`: one core, as a Rust crate with no unsafe code.
 - `cores/<name>/tests`, `tools` and `DESIGN.md`: Swift tests of the C
   interface, command-line tools and design notes.
-- `formats/psf` and `formats/gbs`: the PSF and GBS containers.
+- `formats/psf`, `formats/gbs` and `formats/nsf`: the PSF, GBS and NSF
+  containers.
 - `audio/resample`: the band-limited rate conversion that every core uses.
 - `ffi`: the C interface. One static library exports every core, and a cargo
-  feature (`gba`, `gb`) selects each one.
-- `swift/CGba` and `swift/CGb`: the C headers, `cgba.h` and `cgb.h`, and the
-  modules that Swift imports.
+  feature (`gba`, `gb`, `nes`) selects each one.
+- `swift/CGba`, `swift/CGb` and `swift/CNes`: the C headers, `cgba.h`, `cgb.h`
+  and `cnes.h`, and the modules that Swift imports.
 - `scripts`: the XCFramework build.
 
 ## Build and test
@@ -45,7 +47,8 @@ interface. The GBA core also runs GBA test cartridges when `GBA_TESTS_DIR`
 points at a folder of them (the layout is in `TestROMTests.swift`), and a
 corpus test when `GSF_TEST_FILE` names a GSF file. Without those variables
 the two tests skip. The Game Boy core runs public test cartridges when
-`OSCILLA_GB_TESTS` names a folder of them.
+`OSCILLA_GB_TESTS` names a folder of them, and the NES core does the same
+for `OSCILLA_NES_TESTS`.
 
 ## Platforms
 
