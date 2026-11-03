@@ -85,9 +85,13 @@ const char *cnes_image_copyright(const cnes_image *image);
  * a missing field and an empty one look the same. Each pointer lives until the
  * image is freed. A NULL image gives NULL (or -1 or 0 as noted).
  *
- * An NSF file has none of this beyond the three fields above: the ripper and
- * the comment are empty, every song name and song author is empty, the
- * playlist is empty and every time and fade is -1.
+ * An NSF file has none of this beyond the three fields above, unless it is a
+ * version 2 file that carries NSFe chunks after its program. Without them the
+ * ripper and the comment are empty, every song name and song author is empty,
+ * the playlist is empty and every time and fade is -1. These calls read the
+ * same data for an NSF file with chunks as for an NSFe file, so a player
+ * should not choose between them with cnes_image_is_nsfe. That call tells
+ * only the container.
  *
  * `song` counts from 0. cnes_image_song_title and cnes_image_song_author
  * return NULL for a song outside the file.

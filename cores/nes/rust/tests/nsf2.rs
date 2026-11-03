@@ -346,3 +346,58 @@ fn the_observer_sees_the_sound_stores_of_interrupt_routines() {
     );
     assert_eq!(s.calls[0].1, -1);
 }
+
+#[test]
+fn the_delta_channel_interrupt_reaches_the_cpu_while_the_cpu_waits() {
+    // A sample of 17 bytes at the fastest rate ends about 7000 cycles into the
+    // song, long after the init routine returned. The routine counts it and
+    // turns the interrupt off.
+    let init = [
+        set_vector(),
+        set(0x4010, 0x8F),
+        set(0x4012, 0x00),
+        set(0x4013, 0x01),
+        set(0x4015, 0x1F),
+        CLI.to_vec(),
+    ]
+    .concat();
+    let isr = [vec![0xE6, 0x00], set(0x4010, 0x0F), vec![0x40]].concat();
+    let mut m = nsf2_machine(IRQ, &init, &[], &isr);
+    m.run_cycles(3000);
+    assert_eq!(m.peek(0), 0, "the sample is still playing");
+    m.run_cycles(20_000);
+    assert_eq!(m.peek(0), 1);
+}
+
+#[test]
+fn the_output_with_frame_interrupts_does_not_depend_on_the_size_of_the_chunks() {
+    let init = [
+        set_vector(),
+        set(0x4015, 0x0F),
+        set(0x4000, 0xBF),
+        set(0x4003, 0x08),
+        set(0x4017, 0x00),
+        CLI.to_vec(),
+    ]
+    .concat();
+    let isr = [
+        vec![0xE6, 0x00, 0xA5, 0x00, 0x8D, 0x02, 0x40],
+        vec![0xAD, 0x15, 0x40, 0x40],
+    ]
+    .concat();
+    let whole = {
+        let mut m = nsf2_machine(IRQ, &init, &[], &isr);
+        digest(&render(&mut m, 48000))
+    };
+    let pieces = {
+        let mut m = nsf2_machine(IRQ, &init, &[], &isr);
+        let mut all = Vec::new();
+        for n in [3, 1, 999, 10, 6000, 41, 8192, 77] {
+            all.extend(render(&mut m, n));
+        }
+        let rest = 48000 - all.len() / 2;
+        all.extend(render(&mut m, rest));
+        digest(&all)
+    };
+    assert_eq!(whole, pieces);
+}

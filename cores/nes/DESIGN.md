@@ -109,7 +109,8 @@ instruction early. BRK still stops the routine with a warning.
 
 The play routine arrives as an NMI. The CPU pushes the program counter and the
 flags, the player's wrapper saves A, X and Y, and the routine runs with the I
-flag set and returns to the wrapper, which puts everything back. The entry
+flag set. The routine returns to the wrapper, and the wrapper puts everything
+back. The entry
 takes seven cycles and the wrapper none. A call that falls due while the play
 routine runs waits for its return and then runs at once, and an NMI can
 interrupt an interrupt routine. The first init routine gets no NMIs and is
@@ -251,8 +252,14 @@ bits are the same on every platform.
 `formats/nsf` reads the header: the song count, the first song, the load,
 init and play addresses, the play speeds, the banks, the console and chip
 bytes and three text fields. The data after the header is the program. A
-version 2 file may give the length of the program. A file larger than 4 MiB is
-refused. A load address below 0x8000 is an error.
+version 2 file may give the length of the program, and the bytes after it are
+NSFe chunks: the same chunks as below except INFO, DATA, BANK and NSF2, which
+are skipped there. Bit 7 of the feature byte says that one of them is
+mandatory; with it, an unknown mandatory chunk refuses the file, and without
+it that chunk is skipped. A field that the auth chunk leaves empty keeps the
+header's text, and RATE and regn replace the header's speeds and region when
+the chunk is there. A file larger than 4 MiB is refused. A load address below
+0x8000 is an error.
 
 An NSFe file (the first four bytes are `NSFE`) is a list of chunks, each with a
 length, a four-letter ID and a body. INFO gives the addresses, the console and

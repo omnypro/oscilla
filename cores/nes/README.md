@@ -50,8 +50,10 @@ directly.
 An NSFe file loads through the same calls. The image then also gives the
 ripper, a comment, a name and an author for each song, the time and fade of
 each song in milliseconds, the length as the two added, and the playlist.
-`cnes_image_is_nsfe` tells the two formats apart. A value that the file leaves
-out is an empty string or -1, and an NSF file leaves all of them out.
+`cnes_image_is_nsfe` tells the two containers apart. A value that the file
+leaves out is an empty string or -1. An NSF file leaves all of them out unless
+it is a version 2 file with NSFe chunks after its program. The same calls read
+those chunks.
 
 A player has four more groups of calls.
 

@@ -109,7 +109,12 @@ int main(int argc, char **argv) {
         printf("banks");
         for (int b = 0; b < 8; b++) printf(" %02x", h.banks[b]);
         printf("\n");
-        if (cnes_image_is_nsfe(image)) {
+        int has_song_data = cnes_image_is_nsfe(image) || cnes_image_playlist_count(image) > 0 ||
+                            cnes_image_ripper(image)[0] || cnes_image_comment(image)[0];
+        for (int n = 0; n < h.songs && !has_song_data; n++)
+            has_song_data = cnes_image_song_title(image, n)[0] || cnes_image_song_author(image, n)[0] ||
+                            cnes_image_song_time_ms(image, n) >= 0 || cnes_image_song_fade_ms(image, n) >= 0;
+        if (has_song_data) {
             printf("ripper    %s\ncomment   %s\n", cnes_image_ripper(image),
                    cnes_image_comment(image));
             for (int n = 0; n < h.songs; n++) {

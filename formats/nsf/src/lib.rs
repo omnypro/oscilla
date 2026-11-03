@@ -475,17 +475,18 @@ impl Nsf {
         &self.copyright
     }
 
-    /// Who ripped the file. Only an NSFe file names one.
+    /// Who ripped the file. Only the NSFe chunks name one.
     pub fn ripper(&self) -> &[u8] {
         &self.ripper
     }
 
-    /// A free text. Only an NSFe file has one.
+    /// A free text. Only the NSFe chunks have one.
     pub fn comment(&self) -> &[u8] {
         &self.comment
     }
 
-    /// Whether the file is an NSFe file.
+    /// Whether the file is in the NSFe container. A version 2 NSF file can
+    /// carry NSFe chunks too, and this is false for it.
     pub fn is_nsfe(&self) -> bool {
         self.nsfe
     }
