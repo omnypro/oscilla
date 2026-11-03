@@ -8,12 +8,12 @@ use crate::state::*;
 use oscilla_nsf::Region;
 use std::sync::OnceLock;
 
-const LENGTHS: [u8; 32] = [
+pub(crate) const LENGTHS: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
     192, 24, 72, 26, 16, 28, 32, 30,
 ];
 
-const DUTY: [[u8; 8]; 4] = [
+pub(crate) const DUTY: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0],
     [0, 1, 1, 0, 0, 0, 0, 0],
     [0, 1, 1, 1, 1, 0, 0, 0],
@@ -203,6 +203,10 @@ struct Mixer {
     n163: f64,
     /// One step of the FDS's output.
     fds: f64,
+    /// One level of an MMC5 pulse channel.
+    mmc5_pulse: f64,
+    /// One step of the MMC5's sample register.
+    mmc5_pcm: f64,
 }
 
 fn mixer() -> &'static Mixer {
@@ -215,6 +219,8 @@ fn mixer() -> &'static Mixer {
             s5b: [0.0; 32],
             n163: 0.0,
             fds: 0.0,
+            mmc5_pulse: 0.0,
+            mmc5_pcm: 0.0,
         };
         for (n, slot) in m.pulse.iter_mut().enumerate().skip(1) {
             *slot = 95.52 / (8128.0 / n as f64 + 100.0);
@@ -225,6 +231,8 @@ fn mixer() -> &'static Mixer {
         m.vrc6 = m.pulse[15] / 15.0 * VRC6_GAIN;
         m.n163 = m.pulse[15] * crate::n163::N163_GAIN;
         m.fds = m.pulse[15] * crate::fds::FDS_GAIN;
+        m.mmc5_pulse = m.pulse[15] / 15.0;
+        m.mmc5_pcm = m.tnd[127] / 127.0;
         for (slot, amp) in m.s5b.iter_mut().zip(crate::s5b::amplitudes()) {
             *slot = amp * m.pulse[15] * crate::s5b::S5B_GAIN;
         }
@@ -258,7 +266,7 @@ fn sequence(region: Region, five_step: bool) -> &'static Sequence {
 }
 
 impl Envelope {
-    fn clock(&mut self, volume: u8, looping: bool) {
+    pub(crate) fn clock(&mut self, volume: u8, looping: bool) {
         if self.start {
             self.start = false;
             self.decay = 15;
@@ -466,6 +474,7 @@ impl Apu {
             s5b: S5b::default(),
             n163: N163::default(),
             fds: Fds::default(),
+            mmc5: Mmc5::default(),
             enabled: 0,
             frame: FrameCounter::default(),
             time: 0,
@@ -502,15 +511,25 @@ impl Apu {
             a.s5b.noise_next = 32;
             a.s5b.env_next = 16;
         }
+        if chips & oscilla_nsf::chips::MMC5 != 0 {
+            a.mmc5.active = true;
+            for p in &mut a.mmc5.pulse {
+                p.next_step = p.period_cycles();
+            }
+            a.mmc5.next_clock = crate::mmc5::CLOCK;
+        }
         a.vrc6.pulse[0].counter = 15;
         a.vrc6.pulse[1].counter = 15;
         a.frame.next = sequence(region, false)[0].0;
         a
     }
 
-    fn settle(&mut self, t: u64) {
+    pub(crate) fn settle(&mut self, t: u64) {
         for (i, p) in self.pulse.iter_mut().enumerate() {
             p.settle(t, i);
+        }
+        for p in &mut self.mmc5.pulse {
+            p.settle(t);
         }
         self.tri.settle(t);
         let shift = self.vrc6.shift;
@@ -556,6 +575,16 @@ impl Apu {
                 }
             }
         }
+        if self.mmc5.active {
+            for c in 0..2 {
+                if mask >> (20 + c) & 1 != 0 {
+                    expansion += f64::from(self.mmc5.pulse[c].output()) * m.mmc5_pulse;
+                }
+            }
+            if mask >> 22 & 1 != 0 {
+                expansion += f64::from(self.mmc5.pcm) * m.mmc5_pcm;
+            }
+        }
         if self.fds.active && mask >> 19 & 1 != 0 {
             expansion += self.fds.lowpassed * m.fds;
         }
@@ -570,6 +599,13 @@ impl Apu {
     pub(crate) fn vrc6_levels(&self) -> [u8; 3] {
         let v = &self.vrc6;
         [v.pulse[0].output(), v.pulse[1].output(), v.saw.output()]
+    }
+
+    /// The levels of the MMC5's two pulse channels (0 to 15) and its sample
+    /// register (0 to 255).
+    pub(crate) fn mmc5_levels(&self) -> [u8; 3] {
+        let m = &self.mmc5;
+        [m.pulse[0].output(), m.pulse[1].output(), m.pcm]
     }
 
     /// The levels of the Sunsoft 5B's three channels (0 to 31).
@@ -672,6 +708,17 @@ impl Machine {
                     NEVER
                 },
                 if a.fds.active { a.fds.next_step } else { NEVER },
+                if a.mmc5.active && !a.mmc5.pulse[0].silent() {
+                    a.mmc5.pulse[0].next_step
+                } else {
+                    NEVER
+                },
+                if a.mmc5.active && !a.mmc5.pulse[1].silent() {
+                    a.mmc5.pulse[1].next_step
+                } else {
+                    NEVER
+                },
+                if a.mmc5.active { a.mmc5.next_clock } else { NEVER },
             ];
             for (i, at) in candidates.into_iter().enumerate() {
                 if at < te {
@@ -716,6 +763,16 @@ impl Machine {
                 16 => {
                     let alpha = self.apu.fds.alpha;
                     self.apu.fds.tick(te, alpha);
+                }
+                17 | 18 => {
+                    let p = &mut self.apu.mmc5.pulse[usize::from(which - 17)];
+                    p.pos = p.pos.wrapping_sub(1) & 7;
+                    p.next_step += p.period_cycles();
+                }
+                19 => {
+                    let m = &mut self.apu.mmc5;
+                    m.clock();
+                    m.next_clock += crate::mmc5::CLOCK;
                 }
                 9 => {
                     let v = &mut self.apu.vrc6;
@@ -1018,7 +1075,8 @@ impl Machine {
         let played = oscilla_nsf::chips::VRC6
             | oscilla_nsf::chips::S5B
             | oscilla_nsf::chips::N163
-            | oscilla_nsf::chips::FDS;
+            | oscilla_nsf::chips::FDS
+            | oscilla_nsf::chips::MMC5;
         if self.chips & !played != 0 {
             self.warn(
                 WARN_CHIP,

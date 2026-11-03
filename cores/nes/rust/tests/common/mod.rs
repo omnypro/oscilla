@@ -172,6 +172,13 @@ pub fn fds_machine(init: &[u8], play: &[u8]) -> Machine {
     Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
 }
 
+/// The same as `machine`, for a file that asks for the MMC5.
+pub fn mmc5_machine(init: &[u8], play: &[u8]) -> Machine {
+    let mut f = file(init, play);
+    f[0x7B] = oscilla_nsf::chips::MMC5;
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}
+
 /// A machine for a version 2 file with the feature bits `flags`. `isr` sits
 /// at 0x8800.
 pub fn nsf2_machine(flags: u8, init: &[u8], play: &[u8], isr: &[u8]) -> Machine {

@@ -95,6 +95,10 @@ impl Machine {
                 self.apu.fds.read(address, self.bus).unwrap_or(self.bus)
             }
             0x4800..=0x4FFF if self.apu.n163.active => self.apu.n163.peek_data(),
+            0x5010 | 0x5015 | 0x5205 | 0x5206 if self.apu.mmc5.active => {
+                self.mmc5_peek(address).unwrap_or(self.bus)
+            }
+            0x5C00..=0x5FF7 if self.apu.mmc5.active => self.exram[usize::from(address - 0x5C00)],
             0x6000..=0x7FFF => self.wram[usize::from(address - 0x6000)],
             0x8000..=0xFFFF => self.read_rom(address),
             _ => self.bus,
@@ -141,8 +145,18 @@ impl Machine {
                 self.sync_apu();
                 self.apu.n163.read_data()
             }
+            0x5010 | 0x5015 | 0x5205 | 0x5206 if self.apu.mmc5.active => {
+                self.mmc5_read(address).unwrap_or(self.bus)
+            }
+            0x5C00..=0x5FF7 if self.apu.mmc5.active => self.exram[usize::from(address - 0x5C00)],
             0x6000..=0x7FFF => self.wram[usize::from(address - 0x6000)],
-            0x8000..=0xFFFF => self.read_rom(address),
+            0x8000..=0xFFFF => {
+                let v = self.read_rom(address);
+                if address < 0xC000 && self.apu.mmc5.pcm_read {
+                    self.mmc5_sample_read(v);
+                }
+                v
+            }
             _ => self.bus,
         };
         // A read of the status register leaves the bit that comes from the bus
@@ -230,6 +244,20 @@ impl Machine {
                     o.sound_write(t, address, v);
                 }
                 self.s5b_write(address, v);
+            }
+            0x5000..=0x5015 if self.chips & oscilla_nsf::chips::MMC5 != 0 => {
+                self.sync_apu();
+                let t = self.now;
+                if let Some(o) = self.observer.0.as_mut() {
+                    o.sound_write(t, address, v);
+                }
+                self.mmc5_write(address, v);
+            }
+            0x5205 | 0x5206 if self.chips & oscilla_nsf::chips::MMC5 != 0 => {
+                self.apu.mmc5.operands[usize::from(address - 0x5205)] = v;
+            }
+            0x5C00..=0x5FF7 if self.chips & oscilla_nsf::chips::MMC5 != 0 => {
+                self.exram[usize::from(address - 0x5C00)] = v;
             }
             0x5FF8..=0x5FFF if self.banked => {
                 self.banks[usize::from(address - 0x5FF8)] = v;

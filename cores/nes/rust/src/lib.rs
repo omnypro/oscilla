@@ -13,6 +13,7 @@ mod cpu;
 mod fds;
 mod irq;
 mod machine;
+mod mmc5;
 mod n163;
 mod s5b;
 mod state;

@@ -209,7 +209,7 @@ struct RefusalTests {
         #expect(probe.restore == 3)
         #expect(probe.selected == 0)
         #expect(probe.channelMask == 0, "the mask call returned a neutral value")
-        #expect(cnes_channel_mask(m) == 0xFFFFF, "the mask did not change")
+        #expect(cnes_channel_mask(m) == 0x7FFFFF, "the mask did not change")
         #expect(cnes_song(m) == 0)
         cnes_run_cycles(m, 1000)
         #expect(cnes_cycles(m) >= 2000, "the machine is intact and still running")

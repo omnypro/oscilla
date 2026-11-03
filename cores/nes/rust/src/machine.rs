@@ -14,7 +14,7 @@ use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use std::sync::Arc;
 
 /// The bits of the channel mask that name a channel.
-const ALL_CHANNELS: u32 = (1 << 20) - 1;
+const ALL_CHANNELS: u32 = (1 << 23) - 1;
 
 /// The warning list holds at most 2048 bytes and a closing NUL. Its room is
 /// reserved at the start so that the list never moves.
@@ -117,6 +117,7 @@ impl Machine {
             ram: ram(0x800),
             wram: ram(0x2000),
             fds_ram: ram(0),
+            exram: ram(0x400),
             image,
             banks,
             banked: false,
@@ -196,6 +197,7 @@ impl Machine {
                 self.fds_load_window(7, self.header_banks[7]);
             }
         }
+        self.exram.fill(0);
         self.banks = self.header_banks;
         self.vector = [self.rom_byte(0xFFFE), self.rom_byte(0xFFFF)];
         self.nmi_enabled = false;
@@ -562,6 +564,8 @@ impl Machine {
             None
         } else if self.chips & oscilla_nsf::chips::S5B != 0 {
             Some(self.apu.s5b_levels())
+        } else if self.chips & oscilla_nsf::chips::MMC5 != 0 {
+            Some(self.apu.mmc5_levels())
         } else {
             None
         };

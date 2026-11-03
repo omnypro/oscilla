@@ -235,8 +235,8 @@ fn banks_are_copied_into_the_ram_and_switch_it() {
 fn the_channel_mask_reaches_the_chip() {
     let mut a = playing(0x100, 0);
     let mut b = playing(0x100, 0);
-    assert_eq!(b.channel_mask(), 0xFFFFF);
-    b.set_channel_mask(0xFFFFF & !(1 << 19));
+    assert_eq!(b.channel_mask(), 0x7FFFFF);
+    b.set_channel_mask(0x7FFFFF & !(1 << 19));
     assert!(a.set_highpass_hz(1.0));
     assert!(b.set_highpass_hz(1.0));
     let loud = render(&mut a, 24000);

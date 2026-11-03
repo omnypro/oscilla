@@ -156,10 +156,10 @@ fn a_square_wave_plays_at_the_documented_pitch() {
 fn the_channel_mask_reaches_the_channels() {
     let mut a = n163_machine(&square(0x4000, 0x0F), &[]);
     let mut b = n163_machine(&square(0x4000, 0x0F), &[]);
-    assert_eq!(b.channel_mask(), 0xFFFFF);
+    assert_eq!(b.channel_mask(), 0x7FFFFF);
     b.set_channel_mask(u32::MAX);
-    assert_eq!(b.channel_mask(), 0xFFFFF);
-    b.set_channel_mask(0xFFFFF & !(1 << 18));
+    assert_eq!(b.channel_mask(), 0x7FFFFF);
+    b.set_channel_mask(0x7FFFFF & !(1 << 18));
     assert!(a.set_highpass_hz(1.0));
     assert!(b.set_highpass_hz(1.0));
     assert!(swing(&mut a) > 500.0);

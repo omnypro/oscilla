@@ -348,6 +348,60 @@ impl Default for N163 {
     }
 }
 
+/// One of the MMC5's pulse channels: the 2A03's pulse without the sweep unit.
+#[derive(Clone, Default)]
+pub struct Mmc5Pulse {
+    pub duty: u8,
+    pub halt: bool,
+    pub constant: bool,
+    pub volume: u8,
+    pub env: Envelope,
+    pub period: u16,
+    pub len: u8,
+    /// The sequencer's place, 0 to 7. It counts down.
+    pub pos: u8,
+    /// The cycle of the next timer expiry. While the channel is silent the
+    /// value may lie in the past: `settle` brings it forward before any change.
+    pub next_step: u64,
+}
+
+/// The sound of the MMC5 expansion chip: two pulse channels, an 8-bit sample
+/// register and the 8 by 8 multiplier.
+#[derive(Clone)]
+pub struct Mmc5 {
+    /// The chip is in the file's header. Without it no event runs.
+    pub active: bool,
+    pub pulse: [Mmc5Pulse; 2],
+    /// The enable bits of 0x5015, bit n for pulse n.
+    pub enabled: u8,
+    /// The sample register at 0x5011, 0 to 255.
+    pub pcm: u8,
+    /// Reads of 0x8000 to 0xBFFF set the sample register.
+    pub pcm_read: bool,
+    pub pcm_irq_enable: bool,
+    pub pcm_irq: bool,
+    /// The two operands of the multiplier, at 0x5205 and 0x5206.
+    pub operands: [u8; 2],
+    /// The cycle of the next clock of the envelopes and length counters.
+    pub next_clock: u64,
+}
+
+impl Default for Mmc5 {
+    fn default() -> Mmc5 {
+        Mmc5 {
+            active: false,
+            pulse: [Mmc5Pulse::default(), Mmc5Pulse::default()],
+            enabled: 0,
+            pcm: 0,
+            pcm_read: false,
+            pcm_irq_enable: false,
+            pcm_irq: false,
+            operands: [0; 2],
+            next_clock: NEVER,
+        }
+    }
+}
+
 /// The sound of the VRC6 expansion chip.
 #[derive(Clone, Default)]
 pub struct Vrc6 {
@@ -369,6 +423,7 @@ pub struct Apu {
     pub s5b: S5b,
     pub n163: N163,
     pub fds: Fds,
+    pub mmc5: Mmc5,
     /// The enable bits of $4015, bit n for channel n.
     pub enabled: u8,
     pub frame: FrameCounter,
@@ -443,6 +498,9 @@ pub struct Machine {
     pub(crate) wram: Ram,
     /// The 24 KiB of RAM at 0x8000 that a file with the FDS has.
     pub(crate) fds_ram: Ram,
+    /// The 1 KiB of RAM at 0x5C00 that a file with the MMC5 has, of which the
+    /// CPU sees 0x5C00 to 0x5FF7.
+    pub(crate) exram: Ram,
     /// The program image: byte i sits at ROM address 0x8000 + i when the banks
     /// are 0 to 7.
     pub(crate) image: Arc<[u8]>,

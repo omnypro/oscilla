@@ -191,14 +191,14 @@ fn the_channel_mask_reaches_the_chips_channels() {
     stores.extend(TONE_A);
     let mut a = with(&stores);
     let mut b = with(&stores);
-    assert_eq!(b.channel_mask(), 0xFFFFF);
+    assert_eq!(b.channel_mask(), 0x7FFFFF);
     b.set_channel_mask(u32::MAX);
     assert_eq!(
         b.channel_mask(),
-        0xFFFFF,
+        0x7FFFFF,
         "only the bits that name a channel count"
     );
-    b.set_channel_mask(0xFFFFF & !0x100);
+    b.set_channel_mask(0x7FFFFF & !0x100);
     assert!(a.set_highpass_hz(1.0));
     assert!(b.set_highpass_hz(1.0));
     let loud = render(&mut a, 24000);
