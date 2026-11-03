@@ -5,7 +5,7 @@ driver and returns the sound as interleaved stereo at the rate the caller
 chooses. Nothing is drawn, and nothing reads input.
 
 It covers the 6502 CPU, the memory map with the NSF bank registers, the 2A03's
-sound unit, the VRC6, VRC7, Sunsoft 5B, Namco 163, Disk System and MMC5 expansion chips and the NSF
+sound unit, the VRC6, VRC7, Sunsoft 5B, Namco 163, Disk System, MMC5 and VT02 expansion chips and the NSF
 player that calls the driver's
 init and play routines.
 Both consoles are covered: the clock, the tables and the play rate follow the
@@ -60,7 +60,7 @@ A player has four more groups of calls.
 - `cnes_snapshot_take` copies the whole machine. `cnes_snapshot_restore` puts a
   machine with the same file, console and output rate back to that point, and
   the same calls then render the same samples.
-- `cnes_set_channel_mask` chooses which of the twenty-nine channels reach the mix.
+- `cnes_set_channel_mask` chooses which of the thirty-four channels reach the mix. The mask is 64 bits wide.
   `cnes_channel_levels_get` shows what each channel of the 2A03 outputs, and
   `cnes_expansion_levels_get` shows the expansion chip's, muted or not.
 - `cnes_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
@@ -102,10 +102,11 @@ and prints the time it took.
 - `fds`: the Disk System chip's wavetable, envelope, modulation unit and RAM.
 - `mmc5`: the MMC5's pulse channels, sample register, multiplier and RAM.
 - `vrc7`: the VRC7's registers, envelope, pitch, low frequency oscillators and mix.
+- `vt02`: the VT02's second generator, output switches, raw PCM and DMA.
 - `player`: the schedule of init and play calls, both consoles, bank
   switching, routines that misbehave, snapshots and the end state.
 - `goldens`: a hash of the samples and of the stores for each of 64 generated
-  drivers, and for 16 each that drive the VRC6, the 5B, the Namco 163, the FDS, the MMC5 and the VRC7. A change to the sound or to any trace changes a hash.
+  drivers, and for 16 each that drive the VRC6, the 5B, the Namco 163, the FDS, the MMC5, the VT02 and the VRC7. A change to the sound or to any trace changes a hash.
 - `highpass`: the bass cutoff's range, default, decay time and behavior across
   a change, a reset and a restore.
 - `cartridges`: public test cartridges for the CPU and the sound unit. They are
@@ -143,7 +144,8 @@ the play routine as an NMI. Bit 5 also gives the second init routine that need
 not return, and bit 6 stops the calls of the play routine. The tests check the core against the specification with drivers built from
 bytes. DESIGN.md lists the approximations.
 
-Not emulated: the MMC5's interrupt from its sample register,
+Not emulated: the MMC5's interrupt from its sample register, the VT02's two
+loudness bits (the documents give them no meaning) and its successors' extra features,
 interrupts in a file
 that does not ask for them in its version 2 flags (a driver that waits for the
 frame counter's flag can poll it, and one that enables interrupts never

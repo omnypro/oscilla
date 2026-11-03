@@ -309,6 +309,63 @@ to 0x5015 at the start of a song, because the format gives no such step. Bits
 reference player and no file with the chip were available, so the tests check
 the documentation's statements with drivers built from bytes.
 
+The VT02 puts a second sound generator beside the 2A03's. Its sources are the
+NSF specification (bit 6 of the chip byte), the NESdev page on VT02+ sound and
+the manufacturer's VT02 datasheet, revision A5. The second generator has
+pulse 3, pulse 4, triangle 2 and noise 2 at 0x4020 to 0x402F, laid out as the
+first generator's registers at 0x4000 to 0x400F, and the datasheet's register
+tables for the two sets are the same. A channel of the second generator is the
+matching 2A03 channel: the same sweep, envelope, length table, timer periods
+and noise table. The tests run the same stores through both generators and
+require the same output at every sample. The datasheet sets the beat clocks of
+both generators with one register, 0x4017, so the second generator takes its
+quarter-frame and half-frame clocks from the same frame counter. Register
+0x4035 enables the four channels and reports their length counters, as 0x4015
+does for the first generator. Both generators swap the 25% and 50% duty
+settings, as the datasheet's table and the NESdev page say.
+
+Register 0x4030 switches the outputs. Bit 2 set mutes the first generator and
+bit 3 set turns the second on. The register is 0 at the start, which is the
+console's own behavior, so a driver turns the second generator on itself. The
+datasheet gives each generator its own output pin. The core mixes each
+generator through the 2A03's two tables and adds the results.
+
+Bit 4 of 0x4030 makes the delta channel play its bytes as 8-bit PCM. Each
+timer expiry, at the delta channel's rates, moves the next byte to the PCM
+level, which is the level that a store to 0x4031 sets. A byte costs the CPU
+four cycles, as a delta channel byte does. The PCM level goes to the second
+generator's output. The datasheet counts the DMA address bits 14 and 15 as the
+complement of bits 0 and 1 of 0x4030, so the DMA can read RAM and registers as
+well as the program. The address counts through its low 15 bits and keeps bit
+15. Bit 5 changes the length from 16n+1 bytes for a register value n to 16(n+1)
+bytes. A store to 0x4030 applies the new bits to the last stores to 0x4012
+and 0x4013.
+
+What the public documents leave out, and what the core does about it:
+
+- The level of the second generator against the first is not documented. The
+  core uses the same tables for both.
+- The PCM step is not documented. The core makes the full eight-bit value as
+  loud as the delta channel at 127, so a step is half the delta channel's.
+- Bits 6 and 7 of 0x4030 are called loudness bits with no meaning given. The
+  core keeps them and does nothing with them.
+- The datasheet does not say whether the second generator has a frame counter
+  of its own. The core shares the first generator's.
+- The negate sweep of pulse 3 and pulse 4 is taken to match pulse 1 and
+  pulse 2.
+- The meaning of the maximum length bit comes from its two stated values, 4081
+  and 4096 bytes. The core reads them as 16n+1 and 16(n+1).
+- The PCM level holds its last value when the sample ends. The end raises the
+  delta channel's interrupt flag when the interrupt is enabled, as in delta
+  mode.
+- The other V.R. Technology chips (VT03 and later) add features that the NSF
+  format does not name, and the core has none of them.
+
+No reference player and no file with the chip were available. The tests check
+the documents' statements with drivers built from bytes. Bits 29 to 33 of the
+mask take pulse 3, pulse 4, triangle 2, noise 2 and the PCM out. The mask is
+64 bits wide for them.
+
 ## Output
 
 The mixer is the pair of lookup tables of the documentation, built at startup
