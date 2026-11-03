@@ -1,5 +1,18 @@
 # Changes
 
+## 0.3.5
+
+- NSFe files. The reader fills the same fields as for an NSF header, so the
+  core plays the file as it plays the NSF. The image also gives the ripper, a
+  comment, a name and an author for each song, the time and fade of each song
+  in milliseconds, the length as the two added, and the playlist:
+  `cnes_image_is_nsfe`, `cnes_image_ripper`, `cnes_image_comment`,
+  `cnes_image_song_title`, `cnes_image_song_author`,
+  `cnes_image_song_time_ms`, `cnes_image_song_fade_ms`,
+  `cnes_image_song_length_ms`, `cnes_image_playlist_count` and
+  `cnes_image_playlist_get`.
+- `oscilla-nsf --info` prints the song data of an NSFe file.
+
 ## 0.3.4
 
 - The Famicom Disk System expansion chip: the wavetable channel with its
