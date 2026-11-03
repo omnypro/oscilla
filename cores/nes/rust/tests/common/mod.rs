@@ -171,3 +171,42 @@ pub fn fds_machine(init: &[u8], play: &[u8]) -> Machine {
     f[0x7B] = oscilla_nsf::chips::FDS;
     Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
 }
+
+/// A machine for a version 2 file with the feature bits `flags`. `isr` sits
+/// at 0x8800.
+pub fn nsf2_machine(flags: u8, init: &[u8], play: &[u8], isr: &[u8]) -> Machine {
+    nsf2_with(flags, init, play, isr, &[])
+}
+
+/// The same with bytes at offset 0x7FFE of the program, where the IRQ vector
+/// of the file sits.
+pub fn nsf2_with(flags: u8, init: &[u8], play: &[u8], isr: &[u8], tail: &[u8]) -> Machine {
+    let mut f = file_with(init, play, 16666, 0, [0; 8], Some((0x800, isr)));
+    if !tail.is_empty() {
+        let at = 0x80 + 0x7FFE;
+        f.resize(at + tail.len(), 0);
+        f[at..].copy_from_slice(tail);
+    }
+    f[5] = 2;
+    f[0x7C] = flags;
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}
+
+/// Stores the address of the routine at 0x8800 in the IRQ vector.
+pub fn set_vector() -> Vec<u8> {
+    [set(0xFFFE, 0x00), set(0xFFFF, 0x88)].concat()
+}
+
+/// Sets the timer to a period of `period` cycles and starts it.
+pub fn start_timer(period: u16) -> Vec<u8> {
+    let reload = period - 1;
+    [
+        set(0x401B, reload as u8),
+        set(0x401C, (reload >> 8) as u8),
+        set(0x401D, 1),
+    ]
+    .concat()
+}
+
+/// `inc $00; lda $401D; rti`: counts the interrupt and acknowledges the timer.
+pub const COUNT_ISR: [u8; 6] = [0xE6, 0x00, 0xAD, 0x1D, 0x40, 0x40];

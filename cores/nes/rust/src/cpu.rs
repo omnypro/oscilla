@@ -8,12 +8,12 @@ use crate::state::*;
 
 const C: u8 = 0x01;
 const Z: u8 = 0x02;
-const I: u8 = 0x04;
+pub(crate) const I: u8 = 0x04;
 const D: u8 = 0x08;
 const V: u8 = 0x40;
 const N: u8 = 0x80;
-const UNUSED: u8 = 0x20;
-const BREAK: u8 = 0x10;
+pub(crate) const UNUSED: u8 = 0x20;
+pub(crate) const BREAK: u8 = 0x10;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
@@ -247,7 +247,7 @@ impl Machine {
         self.read(pc)
     }
 
-    fn push(&mut self, v: u8) {
+    pub(crate) fn push(&mut self, v: u8) {
         let sp = self.cpu.sp;
         self.write(0x100 | u16::from(sp), v);
         self.cpu.sp = sp.wrapping_sub(1);

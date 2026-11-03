@@ -95,6 +95,8 @@ and prints the time it took.
 - `vrc6`: the expansion chip's pulse channels, saw, frequency control and mix.
 - `s5b`: the Sunsoft 5B's tones, noise, envelope shapes and volume curve.
 - `n163`: the Namco 163's ports, sound RAM and channels.
+- `nsf2`: the interrupt timer, the vector, the NMI call of the play routine
+  and the init routine that does not return.
 - `fds`: the Disk System chip's wavetable, envelope, modulation unit and RAM.
 - `player`: the schedule of init and play calls, both consoles, bank
   switching, routines that misbehave, snapshots and the end state.
@@ -130,10 +132,18 @@ file that names only Dendy keeps the region bits of INFO. A chunk that runs past
 is left out, except DATA, which keeps the bytes that are there. Files
 converted from NSF files play the same stores and samples as the originals.
 
+The version 2 features run. A file that sets bit 4 or bit 5 of its feature
+byte gets the interrupt timer at 0x401B to 0x401D, the IRQ vector as RAM at
+0xFFFE, interrupts from the timer, the frame counter and the delta channel, and
+the play routine as an NMI. Bit 5 also gives the second init routine that need
+not return, and bit 6 stops the calls of the play routine. The tests check the core against the specification with drivers built from
+bytes. DESIGN.md lists the approximations.
+
 Not emulated: the VRC7 and the MMC5 (a file that asks for
-one plays its other channels and a warning says so), interrupts (a driver that waits for the
+one plays its other channels and a warning says so), interrupts in a file
+that does not ask for them in its version 2 flags (a driver that waits for the
 frame counter's flag can poll it, and one that enables interrupts never
-receives them), the display, input, the undocumented opcodes whose results depend on the
+receives them), BRK, the display, input, the undocumented opcodes whose results depend on the
 chip's analog behavior (the core skips them and warns), and the exact timing
 of a sample read inside an instruction (a read costs the CPU four cycles). The
 output has the console's 90 Hz high-pass filter and its 14 kHz low-pass filter.

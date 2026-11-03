@@ -9,7 +9,6 @@ pub(crate) const WARN_LOCK: u32 = 2;
 pub(crate) const WARN_BRK: u32 = 4;
 pub(crate) const WARN_UNSTABLE: u32 = 8;
 pub(crate) const WARN_CHIP: u32 = 16;
-pub(crate) const WARN_FLAGS: u32 = 32;
 
 impl Machine {
     pub(crate) fn warn(&mut self, bit: u32, text: &str) {
@@ -47,6 +46,14 @@ impl Machine {
 
     /// A byte of the program as the CPU would read it at `address`.
     pub(crate) fn read_rom(&self, address: u16) -> u8 {
+        if self.interrupts && address >= 0xFFFE {
+            return self.vector[usize::from(address - 0xFFFE)];
+        }
+        self.rom_byte(address)
+    }
+
+    /// The same without the IRQ vector that a file with interrupts has in RAM.
+    pub(crate) fn rom_byte(&self, address: u16) -> u8 {
         if address < 0x8000 {
             return 0;
         }
@@ -116,6 +123,7 @@ impl Machine {
                     self.bus
                 }
             }
+            0x401B..=0x401D if self.interrupts => self.irq_read(address),
             0x4000..=0x401F => {
                 if address == 0x4015 {
                     self.apu_read(address)
@@ -150,8 +158,13 @@ impl Machine {
     pub(crate) fn write(&mut self, address: u16, v: u8) {
         self.settle_sample_reads();
         self.bus = v;
+        if self.interrupts && address >= 0xFFFE {
+            // The store reaches the chips that decode the address too.
+            self.vector[usize::from(address - 0xFFFE)] = v;
+        }
         match address {
             0x0000..=0x1FFF => self.ram[usize::from(address & 0x7FF)] = v,
+            0x401B..=0x401D if self.interrupts => self.irq_write(address, v),
             0x4000..=0x4017 => {
                 // The cycles that sample reads took are charged before the
                 // store, so the observer sees the cycle it happens on.

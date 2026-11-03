@@ -215,6 +215,29 @@ struct RefusalTests {
         #expect(cnes_cycles(m) >= 2000, "the machine is intact and still running")
     }
 
+    @Test func aVersion2FileGetsItsTimerInterrupts() throws {
+        // The init routine sets the vector to 0x8800, starts the timer with a
+        // period of 1000 cycles and clears the I flag. The routine at 0x8800
+        // counts in 0x0200 and reads the status to acknowledge.
+        let start = Support.store(0xFFFE, 0x00) + Support.store(0xFFFF, 0x88)
+            + Support.store(0x401B, 0xE7) + Support.store(0x401C, 0x03)
+            + Support.store(0x401D, 0x01) + [0x58]
+        var bytes = Support.nsf(init: start, play: [])
+        let routine: [UInt8] = [0xEE, 0x00, 0x02, 0xAD, 0x1D, 0x40, 0x40]
+        bytes.append(contentsOf: [UInt8](repeating: 0, count: 0x80 + 0x800 + routine.count - bytes.count))
+        bytes.replaceSubrange((0x80 + 0x800)..<(0x80 + 0x800 + routine.count), with: routine)
+        bytes[5] = 2
+        bytes[0x7C] = 16
+        let img = try #require(Support.image(bytes))
+        defer { cnes_image_free(img) }
+        let m = try #require(cnes_new(img, 48000))
+        defer { cnes_free(m) }
+        cnes_run_cycles(m, 100_000)
+        let n = Int(cnes_peek(m, 0x0200))
+        #expect((97...100).contains(n), "\(n) interrupts in 100000 cycles")
+        #expect(String(cString: cnes_warnings(m)).isEmpty)
+    }
+
     @Test func aNullOrEmptyRenderDoesNothing() throws {
         let m = try #require(Support.machine(init: Support.note))
         defer { cnes_free(m) }

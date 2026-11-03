@@ -322,12 +322,14 @@ fn a_hand_built_file_with_a_low_load_address_makes_a_machine() {
 }
 
 #[test]
-fn version_2_features_that_the_core_does_not_run_are_reported() {
-    let mut f = file(&[], &[]);
-    f[5] = 2;
-    f[0x7C] = 32;
-    let m = Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap();
-    assert!(String::from_utf8_lossy(m.warnings_nul()).contains("non-returning"));
+fn the_version_2_interrupt_flags_raise_no_warning() {
+    for flags in [16, 32, 48] {
+        let mut f = file(&[], &[]);
+        f[5] = 2;
+        f[0x7C] = flags;
+        let m = Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap();
+        assert_eq!(m.warnings_nul(), [0]);
+    }
 }
 
 #[test]

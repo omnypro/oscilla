@@ -3,7 +3,7 @@
 //! Everything runs from events, so time that no register touches costs
 //! nothing. Written from public documentation of the registers and the mixer.
 
-use crate::bus::{WARN_CHIP, WARN_FLAGS};
+use crate::bus::WARN_CHIP;
 use crate::state::*;
 use oscilla_nsf::Region;
 use std::sync::OnceLock;
@@ -1023,17 +1023,6 @@ impl Machine {
             self.warn(
                 WARN_CHIP,
                 "The file asks for expansion sound that the core does not play.",
-            );
-        }
-    }
-
-    /// Notes the version 2 features that the core does not run.
-    pub(crate) fn warn_flags(&mut self) {
-        use oscilla_nsf::nsf2;
-        if self.flags & (nsf2::IRQ | nsf2::NON_RETURNING_INIT) != 0 {
-            self.warn(
-                WARN_FLAGS,
-                "The file uses interrupts or a non-returning init, which the core does not run.",
             );
         }
     }

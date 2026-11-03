@@ -399,6 +399,36 @@ pub enum Phase {
     Idle,
 }
 
+/// The interrupt timer of a version 2 file, at 0x401B to 0x401D.
+#[derive(Clone, Default)]
+pub struct IrqTimer {
+    /// The counter reloads from this value: the period is one more cycle.
+    pub reload: u16,
+    pub active: bool,
+    /// The cycle of the next expiry while the timer is active.
+    pub next: u64,
+    /// Set at an expiry and cleared by a read of 0x401D.
+    pub flag: bool,
+}
+
+/// The CPU as an NMI found it, which the end of the play routine restores.
+#[derive(Clone, Copy, Default)]
+pub struct Interrupted {
+    pub pc: u16,
+    pub p: u8,
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+}
+
+/// Where the player's idle loop stands: the address a return from an interrupt
+/// reaches when it leaves nothing else to run.
+pub const IDLE_ADDRESS: u16 = 0xFFFB;
+
+/// Where the play routine returns to when an NMI called it.
+pub const PLAY_RETURN: u16 = 0xFFFD;
+
 /// The address that a routine returns to. It lies in the vector area, which no
 /// routine runs from.
 pub const RETURN_ADDRESS: u16 = 0xFFFF;
@@ -456,6 +486,24 @@ pub struct Machine {
     pub(crate) cartridge: bool,
     /// The frame in which a test cartridge last read the screen's status.
     pub(crate) ppu_read: u64,
+
+    /// The file uses the version 2 interrupts: bit 4 or bit 5 of its flags.
+    pub(crate) interrupts: bool,
+    /// Calls of the play routine arrive as NMIs, which starts when the first
+    /// init routine has returned.
+    pub(crate) nmi_enabled: bool,
+    /// The second init routine of a file with a non-returning init runs.
+    pub(crate) init2: bool,
+    /// The play routine runs, called by an NMI.
+    pub(crate) in_play: bool,
+    pub(crate) play_start: u64,
+    pub(crate) interrupted: Interrupted,
+    /// The I flag as the interrupt poll sees it: after CLI, SEI and PLP it is
+    /// the flag as it was before the instruction.
+    pub(crate) poll_i: bool,
+    /// The IRQ vector at 0xFFFE, which a file with interrupts has as RAM.
+    pub(crate) vector: [u8; 2],
+    pub(crate) irq_timer: IrqTimer,
 
     pub(crate) observer: ObserverSlot,
     pub(crate) warnings: Vec<u8>,

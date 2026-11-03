@@ -38,8 +38,9 @@ check, with the usual results. The others with analog results are skipped: the
 core reads their operand, does nothing else and records a warning. BRK and the opcodes that
 lock the CPU stop the routine and record a warning.
 
-There are no interrupts. The flags that would raise one stay readable, so a
-driver that polls the frame counter's flag works.
+A file without the version 2 interrupt flags has no interrupts. The flags that
+would raise one stay readable, so a driver that polls the frame counter's flag
+works. The section on interrupts covers the other files.
 
 ## Bus
 
@@ -76,6 +77,52 @@ start of the song, so it does not drift.
 A header that names PAL only gets the PAL clock and speed. A header that names
 both consoles gets NTSC, and `new_for` takes the console from the caller. A
 routine that has run for a second without returning is abandoned.
+
+## Interrupts
+
+A version 2 file with bit 4 (interrupts) or bit 5 (non-returning init) of its
+feature byte set gets the interrupts of the NSF2 specification, in `irq.rs`.
+The run loop for any other file never reaches that code.
+
+The IRQ vector at 0xFFFE and 0xFFFF is RAM. It starts each song with the bytes
+that the program has there. A store to either address reaches the RAM and also
+the chips that decode the address, such as the Namco 163's address port. The
+NMI and reset vectors belong to the player and are not modeled.
+
+The timer has a reload value at 0x401B (low byte) and 0x401C and a control
+register at 0x401D. A store with bit 0 set starts it, and the period is the
+reload value plus one cycles, counted from the cycle of the store. Each expiry
+sets the timer's flag. A read of 0x401D returns the flag in bit 7 and the
+active state in bit 0, and clears the flag. A store with bit 0 clear stops the
+timer and leaves the flag. A new reload value takes effect at the next expiry.
+The next expiry is computed from the cycle, so the timer costs nothing between
+expiries and does not depend on how the host divides its calls.
+
+The IRQ line is held while the timer's flag, the frame counter's flag or the
+delta channel's flag is set. The CPU takes it between instructions when the I
+flag is clear: seven cycles that read the next instruction twice, push the
+program counter and the flags with the break bit clear, set I and read the
+vector. CLI, SEI and PLP change the flag the poll sees one instruction late, as
+on the chip. The poll looks at the end of an instruction, where the chip looks
+before its last cycle, so an interrupt that arrives in that cycle is taken one
+instruction early. BRK still stops the routine with a warning.
+
+The play routine arrives as an NMI. The CPU pushes the program counter and the
+flags, the player's wrapper saves A, X and Y, and the routine runs with the I
+flag set and returns to the wrapper, which puts everything back. The entry
+takes seven cycles and the wrapper none. A call that falls due while the play
+routine runs waits for its return and then runs at once, and an NMI can
+interrupt an interrupt routine. The first init routine gets no NMIs and is
+limited to a second, like any routine.
+
+When no routine runs, the CPU is in the player's loop, an address in the vector
+area. Interrupts reach it there and return to it. The machine jumps to the next
+event, so the loop costs no time.
+
+With bit 5, the first init routine has Y = 0x80 and must return. The player
+then calls the init routine again with the same A and X and Y = 0x81. That call
+has no time limit and the NMIs interrupt it. If it returns, the machine falls
+back to the loop, and the play routine goes on. Bit 6 stops the NMIs.
 
 ## Sound
 

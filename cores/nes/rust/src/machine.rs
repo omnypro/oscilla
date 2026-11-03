@@ -71,6 +71,8 @@ impl Machine {
         m.play = nsf.play;
         m.chips = nsf.chips;
         m.flags = nsf.flags;
+        m.interrupts =
+            m.flags & (oscilla_nsf::nsf2::IRQ | oscilla_nsf::nsf2::NON_RETURNING_INIT) != 0;
         m.interval_us = nsf.play_interval_us(region);
         m.songs = nsf.songs;
         m.first_song = nsf.first_song.min(nsf.songs.saturating_sub(1));
@@ -144,6 +146,15 @@ impl Machine {
             announced: false,
             cartridge: false,
             ppu_read: 0,
+            interrupts: false,
+            nmi_enabled: false,
+            init2: false,
+            in_play: false,
+            play_start: 0,
+            interrupted: Interrupted::default(),
+            poll_i: true,
+            vector: [0; 2],
+            irq_timer: IrqTimer::default(),
             observer: ObserverSlot::default(),
             warnings: new_warnings(),
             warned: 0,
@@ -186,6 +197,12 @@ impl Machine {
             }
         }
         self.banks = self.header_banks;
+        self.vector = [self.rom_byte(0xFFFE), self.rom_byte(0xFFFF)];
+        self.nmi_enabled = false;
+        self.init2 = false;
+        self.in_play = false;
+        self.poll_i = true;
+        self.irq_timer = IrqTimer::default();
         self.apu = Apu::new(self.region, self.chips);
         // The player writes the sound registers as the format asks: zero to
         // 0x4000..=0x4013, zero then 0x0F to 0x4015 and 0x40 to 0x4017. These
@@ -218,7 +235,6 @@ impl Machine {
         self.warnings.push(0);
         self.warned = 0;
         self.warn_chips();
-        self.warn_flags();
     }
 
     /// Resets the machine and starts `song` (counted from 0). False when the
@@ -230,6 +246,9 @@ impl Machine {
         self.restart(song);
         self.in_init = true;
         self.begin_routine(self.init);
+        if self.flags & oscilla_nsf::nsf2::NON_RETURNING_INIT != 0 {
+            self.cpu.y = 0x80;
+        }
         true
     }
 
@@ -253,7 +272,7 @@ impl Machine {
 
     /// Calls the routine at `addr`: the return address is on the stack as a
     /// JSR would leave it.
-    fn begin_routine(&mut self, addr: u16) {
+    pub(crate) fn begin_routine(&mut self, addr: u16) {
         self.cpu.locked = false;
         self.cpu.sp = 0xFD;
         let ret = RETURN_ADDRESS.wrapping_sub(1);
@@ -266,7 +285,7 @@ impl Machine {
 
     /// The cycle of play call number `k` (the init routine is call 0), counted
     /// from the start of the song: k intervals, rounded down.
-    fn scheduled(&self, k: u64) -> u64 {
+    pub(crate) fn scheduled(&self, k: u64) -> u64 {
         let (num, den) = self.clock;
         let cycles = u128::from(k) * u128::from(self.interval_us) * u128::from(num)
             / (u128::from(den) * 1_000_000);
@@ -301,6 +320,9 @@ impl Machine {
             if let Some(o) = self.observer.0.as_mut() {
                 o.play_call(t, -1);
             }
+        }
+        if self.interrupts {
+            return self.run_until_irq(target);
         }
         loop {
             match self.phase {
