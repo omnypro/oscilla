@@ -11,6 +11,7 @@ mod apu;
 mod bus;
 mod cpu;
 mod machine;
+mod s5b;
 mod state;
 
 pub use apu::{CONSOLE_HIGHPASS_HZ, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};

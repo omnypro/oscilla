@@ -171,6 +171,62 @@ pub struct Vrc6Saw {
     pub next_step: u64,
 }
 
+#[derive(Clone, Default)]
+pub struct S5bTone {
+    pub out: bool,
+    /// The cycle of the last flip.
+    pub last: u64,
+    pub next_step: u64,
+}
+
+/// The sound of the Sunsoft 5B expansion chip: three tone generators, a noise
+/// generator and an envelope, in the registers of a YM2149-type chip.
+#[derive(Clone)]
+pub struct S5b {
+    /// The chip is in the file's header. Without it no event runs.
+    pub active: bool,
+    /// The register that the next store to the data port reaches.
+    pub select: u8,
+    /// Stores to the data port are ignored: the select store had bits set
+    /// above the register number.
+    pub locked: bool,
+    pub regs: [u8; 16],
+    pub tone: [S5bTone; 3],
+    pub noise_out: bool,
+    pub lfsr: u32,
+    pub noise_last: u64,
+    pub noise_next: u64,
+    pub env_level: u8,
+    /// Position in the current ramp, 0 to 31.
+    pub env_step: u8,
+    pub env_up: bool,
+    pub env_holding: bool,
+    pub env_last: u64,
+    pub env_next: u64,
+}
+
+impl Default for S5b {
+    fn default() -> S5b {
+        S5b {
+            active: false,
+            select: 0,
+            locked: false,
+            regs: [0; 16],
+            tone: [S5bTone::default(), S5bTone::default(), S5bTone::default()],
+            noise_out: true,
+            lfsr: 1,
+            noise_last: 0,
+            noise_next: NEVER,
+            env_level: 0,
+            env_step: 0,
+            env_up: false,
+            env_holding: true,
+            env_last: 0,
+            env_next: NEVER,
+        }
+    }
+}
+
 /// The sound of the VRC6 expansion chip.
 #[derive(Clone, Default)]
 pub struct Vrc6 {
@@ -189,6 +245,7 @@ pub struct Apu {
     pub noise: Noise,
     pub dmc: Dmc,
     pub vrc6: Vrc6,
+    pub s5b: S5b,
     /// The enable bits of $4015, bit n for channel n.
     pub enabled: u8,
     pub frame: FrameCounter,
@@ -255,7 +312,7 @@ pub struct Machine {
     /// The console's low-pass filter, which follows the high-pass filter.
     pub(crate) lp: crate::apu::Lowpass,
     /// The channel mask: bit n is channel n.
-    pub(crate) channel_mask: u8,
+    pub(crate) channel_mask: u32,
     pub(crate) last_change: u64,
 
     pub(crate) phase: Phase,

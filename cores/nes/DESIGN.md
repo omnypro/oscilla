@@ -116,6 +116,21 @@ pulse channel at full volume to the mix, and the mask's bits 5 to 7 take the
 three channels out of it. A channel that cannot change the output (disabled or
 at volume 0) settles its timer arithmetically, like a silent 2A03 channel.
 
+The Sunsoft 5B has the registers of a YM2149-type chip, behind two ports: a
+store to 0xC000 through 0xDFFF picks a register, and a store to 0xE000 through
+0xFFFF writes it. Three tone generators flip every 16 cycles of their 12-bit
+period, a period of 0 counting as 1. A 17-bit shift register makes the noise
+and shifts every 32 cycles of its 5-bit period. Each channel gates its tone and
+its noise with the mixer register, and a channel with both gated off holds a
+constant level. The level is a four-bit volume or a five-bit envelope. The
+volume curve falls 1.5 dB for each level of the five-bit scale, and a
+four-bit volume is the level twice its value plus one, with 0 silent. The
+envelope steps every 16 cycles of its 16-bit period through a ramp of 32
+levels, in the sixteen shapes of the documentation. One 5B channel at its top
+level is three times a 2A03 pulse channel at full volume, which is the gain
+that matches the loudness of a reference player. The mask's bits 8 to 10 take
+the channels out of the mix.
+
 ## Output
 
 The mixer is the pair of lookup tables of the documentation, built at startup

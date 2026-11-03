@@ -5,7 +5,7 @@ driver and returns the sound as interleaved stereo at the rate the caller
 chooses. Nothing is drawn, and nothing reads input.
 
 It covers the 6502 CPU, the memory map with the NSF bank registers, the 2A03's
-sound unit, the VRC6 expansion chip and the NSF player that calls the driver's
+sound unit, the VRC6 and Sunsoft 5B expansion chips and the NSF player that calls the driver's
 init and play routines.
 Both consoles are covered: the clock, the tables and the play rate follow the
 region.
@@ -41,7 +41,7 @@ A machine holds all of its state and renders the same samples on every run.
 `cnes_new` picks the console from the header. A header that names both
 consoles gets NTSC, and `cnes_new_for` takes the console from the caller.
 `cnes_set_observer` reports every store to `0x4000` through `0x4017` (and to the
-VRC6's registers in a file that asks for the chip) and every call of the init
+registers of the VRC6 or the 5B in a file that asks for the chip) and every call of the init
 and play routines. Each play call is the driver's own tick, so
 a host can digest the stores per call. Rust code uses `oscilla_nes::Machine`
 directly.
@@ -51,9 +51,9 @@ A player has four more groups of calls.
 - `cnes_snapshot_take` copies the whole machine. `cnes_snapshot_restore` puts a
   machine with the same file, console and output rate back to that point, and
   the same calls then render the same samples.
-- `cnes_set_channel_mask` chooses which of the eight channels reach the mix.
+- `cnes_set_channel_mask` chooses which of the eleven channels reach the mix.
   `cnes_channel_levels_get` shows what each channel of the 2A03 outputs, and
-  `cnes_expansion_levels_get` shows the VRC6's, muted or not.
+  `cnes_expansion_levels_get` shows the expansion chip's, muted or not.
 - `cnes_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
   plays. The default is the console's own filter at 90 Hz, and
   `cnes_use_console_highpass` returns to it. `cnes_highpass_hz` reads the
@@ -85,10 +85,11 @@ header. `--bench` renders without output and prints the time it took.
 - `sound`: one behavior of the sound unit at a time, with drivers built from
   bytes.
 - `vrc6`: the expansion chip's pulse channels, saw, frequency control and mix.
+- `s5b`: the Sunsoft 5B's tones, noise, envelope shapes and volume curve.
 - `player`: the schedule of init and play calls, both consoles, bank
   switching, routines that misbehave, snapshots and the end state.
 - `goldens`: a hash of the samples and of the stores for each of 64 generated
-  drivers, and for 16 that drive the VRC6. A change to the sound or to any trace changes a hash.
+  drivers, for 16 that drive the VRC6 and for 16 that drive the 5B. A change to the sound or to any trace changes a hash.
 - `highpass`: the bass cutoff's range, default, decay time and behavior across
   a change, a reset and a restore.
 - `cartridges`: public test cartridges for the CPU and the sound unit. They are
@@ -104,10 +105,11 @@ header. `--bench` renders without output and prints the time it took.
 
 The core plays NSF versions 1 and 2, up to the program length of version 2. A
 comparison with the register-store streams of a reference player gave the same
-stores in the same order in every play call for all 145 songs of three files,
-two of them bank-switched and one with the VRC6, over 3,600 play calls each.
+stores in the same order in every play call for all 251 songs of four files,
+two of them bank-switched, one with the VRC6 and one with the 5B, over 3,600
+play calls each.
 
-Not emulated: the expansion chips other than the VRC6 (a file that asks for
+Not emulated: the expansion chips other than the VRC6 and the 5B (a file that asks for
 one plays its other channels and a warning says so), interrupts (a driver that waits for the
 frame counter's flag can poll it, and one that enables interrupts never
 receives them), the display, input, the undocumented opcodes whose results depend on the

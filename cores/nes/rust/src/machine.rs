@@ -13,6 +13,9 @@ use oscilla_nsf::{Nsf, Region};
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use std::sync::Arc;
 
+/// The bits of the channel mask that name a channel.
+const ALL_CHANNELS: u32 = (1 << 11) - 1;
+
 /// The warning list holds at most 2048 bytes and a closing NUL. Its room is
 /// reserved at the start so that the list never moves.
 fn new_warnings() -> Vec<u8> {
@@ -124,11 +127,11 @@ impl Machine {
             flags: 0,
             songs: 1,
             first_song: 0,
-            apu: Apu::new(region),
+            apu: Apu::new(region, 0),
             out: Resampler::with_ratio(output_rate, clock.0, clock.1),
             hp: Highpass::console(clock),
             lp: Lowpass::console(clock),
-            channel_mask: 0xFF,
+            channel_mask: ALL_CHANNELS,
             last_change: 0,
             phase: Phase::Idle,
             song: 0,
@@ -162,7 +165,7 @@ impl Machine {
         self.ram.fill(0);
         self.wram.fill(0);
         self.banks = self.header_banks;
-        self.apu = Apu::new(self.region);
+        self.apu = Apu::new(self.region, self.chips);
         // The player writes the sound registers as the format asks: zero to
         // 0x4000..=0x4013, zero then 0x0F to 0x4015 and 0x40 to 0x4017. These
         // are not the driver's stores, so the observer does not see them.
@@ -486,7 +489,7 @@ impl Machine {
         warnings.extend_from_slice(&s.warnings);
         self.warnings = warnings;
         self.observer = observer;
-        self.channel_mask = mask;
+        self.channel_mask = mask & ALL_CHANNELS;
         self.hp = hp;
         if mask != snapshot_mask {
             // The snapshot's mix was made with its own mask.
@@ -505,12 +508,20 @@ impl Machine {
     }
 
     /// What each expansion channel puts out now, before the mixer. A file with
-    /// the VRC6 shows its two pulse channels (0 to 15) and its saw (0 to 31);
-    /// the other entries are 0.
+    /// the VRC6 shows its two pulse channels (0 to 15) and its saw (0 to 31). A
+    /// file with the Sunsoft 5B and without the VRC6 shows the 5B's three
+    /// channels (0 to 31). The other entries are 0.
     pub fn expansion_levels(&self) -> [i32; 8] {
         let mut out = [0; 8];
-        if self.chips & oscilla_nsf::chips::VRC6 != 0 {
-            for (slot, level) in out.iter_mut().zip(self.apu.expansion_levels()) {
+        let levels = if self.chips & oscilla_nsf::chips::VRC6 != 0 {
+            Some(self.apu.vrc6_levels())
+        } else if self.chips & oscilla_nsf::chips::S5B != 0 {
+            Some(self.apu.s5b_levels())
+        } else {
+            None
+        };
+        if let Some(levels) = levels {
+            for (slot, level) in out.iter_mut().zip(levels) {
                 *slot = i32::from(level);
             }
         }
@@ -518,9 +529,11 @@ impl Machine {
     }
 
     /// Chooses the channels that reach the mix; bit n is channel n: pulse 1,
-    /// pulse 2, triangle, noise, delta, then the VRC6's pulse 1, pulse 2 and
-    /// saw. All eight are on by default.
-    pub fn set_channel_mask(&mut self, mask: u8) {
+    /// pulse 2, triangle, noise and delta (bits 0 to 4), the VRC6's pulse 1,
+    /// pulse 2 and saw (bits 5 to 7), and the Sunsoft 5B's three tone channels
+    /// (bits 8 to 10). All are on by default.
+    pub fn set_channel_mask(&mut self, mask: u32) {
+        let mask = mask & ALL_CHANNELS;
         if mask == self.channel_mask {
             return;
         }
@@ -530,7 +543,7 @@ impl Machine {
         self.apu_emit(t);
     }
 
-    pub fn channel_mask(&self) -> u8 {
+    pub fn channel_mask(&self) -> u32 {
         self.channel_mask
     }
 

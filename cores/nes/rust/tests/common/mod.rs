@@ -135,3 +135,15 @@ pub fn vrc6_machine(init: &[u8], play: &[u8]) -> Machine {
     f[0x7B] = oscilla_nsf::chips::VRC6;
     Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
 }
+
+/// The same as `machine`, for a file that asks for the Sunsoft 5B.
+pub fn s5b_machine(init: &[u8], play: &[u8]) -> Machine {
+    let mut f = file(init, play);
+    f[0x7B] = oscilla_nsf::chips::S5B;
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}
+
+/// Stores `v` in register `r` of the Sunsoft 5B through its two ports.
+pub fn s5b_reg(r: u8, v: u8) -> Vec<u8> {
+    [set(0xC000, r), set(0xE000, v)].concat()
+}

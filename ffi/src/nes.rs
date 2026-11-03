@@ -534,7 +534,7 @@ pub unsafe extern "C" fn cnes_set_channel_mask(machine: *mut CMachine, mask: u32
     if unsafe { in_callback(machine) } {
         return;
     }
-    unsafe { &mut (*machine).machine }.set_channel_mask((mask & 0xFF) as u8);
+    unsafe { &mut (*machine).machine }.set_channel_mask(mask);
 }
 
 #[unsafe(no_mangle)]
@@ -542,7 +542,7 @@ pub unsafe extern "C" fn cnes_channel_mask(machine: *const CMachine) -> u32 {
     if unsafe { in_callback(machine) } {
         return 0;
     }
-    u32::from(unsafe { &(*machine).machine }.channel_mask())
+    unsafe { &(*machine).machine }.channel_mask()
 }
 
 /// 1 when the cutoff is in range and applied, 0 otherwise (also from inside a

@@ -7,7 +7,8 @@
 //! Regenerate `goldens/nes.txt` with
 //! `cargo test -p oscilla-nes --release --test goldens -- --ignored --nocapture print`
 //! and keep the lines between the markers. The cutoff block goes in
-//! `goldens/nes-highpass.txt`, and the VRC6 block in `goldens/nes-vrc6.txt`.
+//! `goldens/nes-highpass.txt`, the VRC6 block in `goldens/nes-vrc6.txt` and the 5B block in
+//! `goldens/nes-s5b.txt`.
 
 mod common;
 
@@ -132,6 +133,58 @@ fn run_vrc6(seed: u64) -> (u64, u64) {
     (digest(&out), writes)
 }
 
+/// A store to a register of the Sunsoft 5B through its ports.
+fn random_s5b_store(r: &mut Rng) -> Vec<u8> {
+    let reg = r.below(14) as u8;
+    let mut v = r.byte();
+    match reg {
+        1 | 3 | 5 => v &= 0x0F,
+        6 => v &= 0x1F,
+        0x0D => v &= 0x0F,
+        _ => {}
+    }
+    let mut out = set(0xC000, reg);
+    out.extend(set(0xE000, v));
+    out
+}
+
+/// A file that asks for the Sunsoft 5B and drives it and the 2A03 together.
+fn s5b_program(seed: u64) -> Vec<u8> {
+    let mut r = Rng(seed ^ 0xB5B5);
+    let mut init = set(0x4015, 0x1F);
+    for _ in 0..6 + r.below(8) {
+        init.extend(random_store(&mut r));
+    }
+    for _ in 0..24 + r.below(24) {
+        init.extend(random_s5b_store(&mut r));
+    }
+    let mut play = vec![0xE6, 0x00, 0xA5, 0x00];
+    play.extend(set(0xC000, [0, 2, 4][r.below(3) as usize]));
+    play.extend([0x8D, 0x00, 0xE0]);
+    for _ in 0..r.below(6) {
+        play.extend(random_s5b_store(&mut r));
+    }
+    let mut f = file_with(&init, &play, 16666, r.below(2) as u8, [0; 8], None);
+    f[0x7B] = oscilla_nsf::chips::S5B;
+    f
+}
+
+fn digests_of(file: Vec<u8>) -> (u64, u64) {
+    let nsf = Nsf::parse(&file).unwrap();
+    let mut m = Machine::new(&nsf, 48000).unwrap();
+    let seen = watch(&mut m);
+    let out = render(&mut m, 96000);
+    let s = seen.borrow();
+    let writes = fnv(s.writes.iter().flat_map(|(c, a, v)| {
+        c.to_le_bytes()
+            .into_iter()
+            .chain(a.to_le_bytes())
+            .chain([*v])
+    }));
+    (digest(&out), writes)
+}
+
+const S5B_SEEDS: u64 = 16;
 const VRC6_SEEDS: u64 = 16;
 
 fn run(seed: u64) -> (u64, u64) {
@@ -224,6 +277,34 @@ fn the_digests_with_the_vrc6_match() {
 }
 
 #[test]
+fn the_digests_with_the_5b_match() {
+    let want: Vec<(u64, u64, u64)> = include_str!("goldens/nes-s5b.txt")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            (
+                p[0].parse().unwrap(),
+                u64::from_str_radix(p[1], 16).unwrap(),
+                u64::from_str_radix(p[2], 16).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(want.len() as u64, S5B_SEEDS);
+    let mut bad = Vec::new();
+    for (seed, audio, writes) in want {
+        let got = digests_of(s5b_program(seed));
+        if got != (audio, writes) {
+            bad.push(format!(
+                "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
+                got.0, got.1
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
 fn the_digests_with_a_cutoff_match() {
     let want: Vec<(u64, u64, u64)> = include_str!("goldens/nes-highpass.txt")
         .lines()
@@ -294,6 +375,12 @@ fn print() {
         println!("{seed} {audio:016x} {writes:016x}");
     }
     println!("-----END VRC6 GOLDENS-----");
+    println!("-----BEGIN 5B GOLDENS-----");
+    for seed in 0..S5B_SEEDS {
+        let (audio, writes) = digests_of(s5b_program(seed));
+        println!("{seed} {audio:016x} {writes:016x}");
+    }
+    println!("-----END 5B GOLDENS-----");
     println!("-----BEGIN CUTOFF GOLDENS-----");
     for seed in 0..CUTOFF_SEEDS {
         for hz in CUTOFFS {

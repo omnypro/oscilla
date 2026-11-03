@@ -197,6 +197,8 @@ struct Mixer {
     tnd: [f64; 203],
     /// One step of the VRC6's linear DAC.
     vrc6: f64,
+    /// The mix of one 5B channel at each of the five-bit levels.
+    s5b: [f64; 32],
 }
 
 fn mixer() -> &'static Mixer {
@@ -206,6 +208,7 @@ fn mixer() -> &'static Mixer {
             pulse: [0.0; 31],
             tnd: [0.0; 203],
             vrc6: 0.0,
+            s5b: [0.0; 32],
         };
         for (n, slot) in m.pulse.iter_mut().enumerate().skip(1) {
             *slot = 95.52 / (8128.0 / n as f64 + 100.0);
@@ -214,6 +217,9 @@ fn mixer() -> &'static Mixer {
             *slot = 163.67 / (24329.0 / n as f64 + 100.0);
         }
         m.vrc6 = m.pulse[15] / 15.0 * VRC6_GAIN;
+        for (slot, amp) in m.s5b.iter_mut().zip(crate::s5b::amplitudes()) {
+            *slot = amp * m.pulse[15] * crate::s5b::S5B_GAIN;
+        }
         m
     })
 }
@@ -435,7 +441,7 @@ impl Noise {
 }
 
 impl Apu {
-    pub(crate) fn new(region: Region) -> Apu {
+    pub(crate) fn new(region: Region, chips: u8) -> Apu {
         let mut a = Apu {
             pulse: [Pulse::default(), Pulse::default()],
             tri: Triangle::default(),
@@ -449,6 +455,7 @@ impl Apu {
                 ..Dmc::default()
             },
             vrc6: Vrc6::default(),
+            s5b: S5b::default(),
             enabled: 0,
             frame: FrameCounter::default(),
             time: 0,
@@ -468,6 +475,14 @@ impl Apu {
         a.vrc6.pulse[0].next_step = 1;
         a.vrc6.pulse[1].next_step = 1;
         a.vrc6.saw.next_step = 2;
+        if chips & oscilla_nsf::chips::S5B != 0 {
+            a.s5b.active = true;
+            for t in &mut a.s5b.tone {
+                t.next_step = 16;
+            }
+            a.s5b.noise_next = 32;
+            a.s5b.env_next = 16;
+        }
         a.vrc6.pulse[0].counter = 15;
         a.vrc6.pulse[1].counter = 15;
         a.frame.next = sequence(region, false)[0].0;
@@ -499,7 +514,7 @@ impl Apu {
     }
 
     /// The mix of the channels that `mask` lets through, in the mixer's units.
-    pub(crate) fn mix(&self, mask: u8) -> f64 {
+    pub(crate) fn mix(&self, mask: u32) -> f64 {
         let l = self.levels();
         let on = |n: usize| {
             if mask >> n & 1 != 0 {
@@ -510,18 +525,31 @@ impl Apu {
         };
         let m = mixer();
         let v = &self.vrc6;
-        let bit = |n: u8| usize::from(mask >> n & 1);
+        let bit = |n: u32| (mask >> n & 1) as usize;
         let steps = bit(5) * usize::from(v.pulse[0].output())
             + bit(6) * usize::from(v.pulse[1].output())
             + bit(7) * usize::from(v.saw.output());
-        m.pulse[on(0) + on(1)] + m.tnd[3 * on(2) + 2 * on(3) + on(4)] + steps as f64 * m.vrc6
+        let mut expansion = steps as f64 * m.vrc6;
+        if self.s5b.active {
+            for c in 0..3 {
+                if mask >> (8 + c) & 1 != 0 {
+                    expansion += m.s5b[usize::from(self.s5b.level(c))];
+                }
+            }
+        }
+        m.pulse[on(0) + on(1)] + m.tnd[3 * on(2) + 2 * on(3) + on(4)] + expansion
     }
 
     /// The levels of the expansion channels before the mixer: the two pulse
     /// channels (0 to 15) and the saw (0 to 31).
-    pub(crate) fn expansion_levels(&self) -> [u8; 3] {
+    pub(crate) fn vrc6_levels(&self) -> [u8; 3] {
         let v = &self.vrc6;
         [v.pulse[0].output(), v.pulse[1].output(), v.saw.output()]
+    }
+
+    /// The levels of the Sunsoft 5B's three channels (0 to 31).
+    pub(crate) fn s5b_levels(&self) -> [u8; 3] {
+        [self.s5b.level(0), self.s5b.level(1), self.s5b.level(2)]
     }
 
     fn quarter_clock(&mut self) {
@@ -592,6 +620,27 @@ impl Machine {
                 } else {
                     a.vrc6.saw.next_step
                 },
+                if a.s5b.active {
+                    a.s5b.tone[0].next_step
+                } else {
+                    NEVER
+                },
+                if a.s5b.active {
+                    a.s5b.tone[1].next_step
+                } else {
+                    NEVER
+                },
+                if a.s5b.active {
+                    a.s5b.tone[2].next_step
+                } else {
+                    NEVER
+                },
+                if a.s5b.active {
+                    a.s5b.noise_next
+                } else {
+                    NEVER
+                },
+                if a.s5b.active { a.s5b.env_next } else { NEVER },
             ];
             for (i, at) in candidates.into_iter().enumerate() {
                 if at < te {
@@ -629,6 +678,9 @@ impl Machine {
                     p.counter = p.counter.checked_sub(1).unwrap_or(15);
                     p.next_step += p.period_cycles(shift);
                 }
+                10..=12 => self.apu.s5b.tone_event(usize::from(which - 10), te),
+                13 => self.apu.s5b.noise_event(te),
+                14 => self.apu.s5b.env_event(te),
                 9 => {
                     let v = &mut self.apu.vrc6;
                     let shift = v.shift;
@@ -927,7 +979,8 @@ impl Machine {
     /// Notes the expansion chips that a file asks for and the core does not
     /// play.
     pub(crate) fn warn_chips(&mut self) {
-        if self.chips & !oscilla_nsf::chips::VRC6 != 0 {
+        let played = oscilla_nsf::chips::VRC6 | oscilla_nsf::chips::S5B;
+        if self.chips & !played != 0 {
             self.warn(
                 WARN_CHIP,
                 "The file asks for expansion sound that the core does not play.",
