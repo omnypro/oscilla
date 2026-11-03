@@ -142,10 +142,12 @@ struct MachineTests {
         let vrc6 = try #require(Support.machine(init: Support.note, chips: 1))
         let other = try #require(Support.machine(init: Support.note, chips: 4))
         let s5b = try #require(Support.machine(init: Support.note, chips: 32))
-        defer { cnes_free(plain); cnes_free(vrc6); cnes_free(other); cnes_free(s5b) }
+        let n163 = try #require(Support.machine(init: Support.note, chips: 16))
+        defer { cnes_free(plain); cnes_free(vrc6); cnes_free(other); cnes_free(s5b); cnes_free(n163) }
         #expect(String(cString: cnes_warnings(plain)).isEmpty)
         #expect(String(cString: cnes_warnings(vrc6)).isEmpty, "the VRC6 is played")
         #expect(String(cString: cnes_warnings(s5b)).isEmpty, "the 5B is played")
+        #expect(String(cString: cnes_warnings(n163)).isEmpty, "the N163 is played")
         #expect(String(cString: cnes_warnings(other)).contains("expansion"))
     }
 
@@ -202,7 +204,7 @@ struct RefusalTests {
         #expect(probe.restore == 3)
         #expect(probe.selected == 0)
         #expect(probe.channelMask == 0, "the mask call returned a neutral value")
-        #expect(cnes_channel_mask(m) == 0x7FF, "the mask did not change")
+        #expect(cnes_channel_mask(m) == 0x7FFFF, "the mask did not change")
         #expect(cnes_song(m) == 0)
         cnes_run_cycles(m, 1000)
         #expect(cnes_cycles(m) >= 2000, "the machine is intact and still running")

@@ -199,6 +199,8 @@ struct Mixer {
     vrc6: f64,
     /// The mix of one 5B channel at each of the five-bit levels.
     s5b: [f64; 32],
+    /// One step of the Namco 163's output.
+    n163: f64,
 }
 
 fn mixer() -> &'static Mixer {
@@ -209,6 +211,7 @@ fn mixer() -> &'static Mixer {
             tnd: [0.0; 203],
             vrc6: 0.0,
             s5b: [0.0; 32],
+            n163: 0.0,
         };
         for (n, slot) in m.pulse.iter_mut().enumerate().skip(1) {
             *slot = 95.52 / (8128.0 / n as f64 + 100.0);
@@ -217,6 +220,7 @@ fn mixer() -> &'static Mixer {
             *slot = 163.67 / (24329.0 / n as f64 + 100.0);
         }
         m.vrc6 = m.pulse[15] / 15.0 * VRC6_GAIN;
+        m.n163 = m.pulse[15] * crate::n163::N163_GAIN;
         for (slot, amp) in m.s5b.iter_mut().zip(crate::s5b::amplitudes()) {
             *slot = amp * m.pulse[15] * crate::s5b::S5B_GAIN;
         }
@@ -456,6 +460,7 @@ impl Apu {
             },
             vrc6: Vrc6::default(),
             s5b: S5b::default(),
+            n163: N163::default(),
             enabled: 0,
             frame: FrameCounter::default(),
             time: 0,
@@ -475,6 +480,10 @@ impl Apu {
         a.vrc6.pulse[0].next_step = 1;
         a.vrc6.pulse[1].next_step = 1;
         a.vrc6.saw.next_step = 2;
+        if chips & oscilla_nsf::chips::N163 != 0 {
+            a.n163.active = true;
+            a.n163.next_step = 15;
+        }
         if chips & oscilla_nsf::chips::S5B != 0 {
             a.s5b.active = true;
             for t in &mut a.s5b.tone {
@@ -536,6 +545,9 @@ impl Apu {
                     expansion += m.s5b[usize::from(self.s5b.level(c))];
                 }
             }
+        }
+        if self.n163.active && mask >> (11 + u32::from(self.n163.out_channel)) & 1 != 0 {
+            expansion += f64::from(self.n163.out_value) * m.n163;
         }
         m.pulse[on(0) + on(1)] + m.tnd[3 * on(2) + 2 * on(3) + on(4)] + expansion
     }
@@ -641,6 +653,11 @@ impl Machine {
                     NEVER
                 },
                 if a.s5b.active { a.s5b.env_next } else { NEVER },
+                if a.n163.active {
+                    a.n163.next_step
+                } else {
+                    NEVER
+                },
             ];
             for (i, at) in candidates.into_iter().enumerate() {
                 if at < te {
@@ -681,6 +698,7 @@ impl Machine {
                 10..=12 => self.apu.s5b.tone_event(usize::from(which - 10), te),
                 13 => self.apu.s5b.noise_event(te),
                 14 => self.apu.s5b.env_event(te),
+                15 => self.apu.n163.tick(te),
                 9 => {
                     let v = &mut self.apu.vrc6;
                     let shift = v.shift;
@@ -979,7 +997,7 @@ impl Machine {
     /// Notes the expansion chips that a file asks for and the core does not
     /// play.
     pub(crate) fn warn_chips(&mut self) {
-        let played = oscilla_nsf::chips::VRC6 | oscilla_nsf::chips::S5B;
+        let played = oscilla_nsf::chips::VRC6 | oscilla_nsf::chips::S5B | oscilla_nsf::chips::N163;
         if self.chips & !played != 0 {
             self.warn(
                 WARN_CHIP,

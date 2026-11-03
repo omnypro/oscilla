@@ -7,8 +7,8 @@
 //! Regenerate `goldens/nes.txt` with
 //! `cargo test -p oscilla-nes --release --test goldens -- --ignored --nocapture print`
 //! and keep the lines between the markers. The cutoff block goes in
-//! `goldens/nes-highpass.txt`, the VRC6 block in `goldens/nes-vrc6.txt` and the 5B block in
-//! `goldens/nes-s5b.txt`.
+//! `goldens/nes-highpass.txt`, the VRC6 block in `goldens/nes-vrc6.txt` the 5B block in
+//! `goldens/nes-s5b.txt` and the Namco 163 block in `goldens/nes-n163.txt`.
 
 mod common;
 
@@ -184,6 +184,49 @@ fn digests_of(file: Vec<u8>) -> (u64, u64) {
     (digest(&out), writes)
 }
 
+/// A file that asks for the Namco 163 and loads random waveforms and channel
+/// registers, then moves a channel's pitch in the play routine.
+fn n163_program(seed: u64) -> Vec<u8> {
+    let mut r = Rng(seed ^ 0x163);
+    let mut init = set(0x4015, 0x1F);
+    for _ in 0..4 + r.below(6) {
+        init.extend(random_store(&mut r));
+    }
+    // Waveform RAM from address 0, with the address stepping.
+    init.extend(set(0xF800, 0x80));
+    for _ in 0..16 + r.below(48) {
+        init.extend(set(0x4800, r.byte()));
+    }
+    // The registers of every channel, and the channel count in the last one.
+    for c in 0..8u8 {
+        init.extend(set(0xF800, 0x80 | (0x40 + 8 * c)));
+        let freq = 0x400 + r.below(0x3000);
+        let length_bits = 0xF0 | (r.below(4) as u8) << 2;
+        for b in [
+            freq as u8,
+            0,
+            (freq >> 8) as u8,
+            0,
+            length_bits | (freq >> 16) as u8,
+            0,
+            r.below(16) as u8 * 4,
+            (r.below(16) as u8) | if c == 7 { (r.below(8) as u8) << 4 } else { 0 },
+        ] {
+            init.extend(set(0x4800, b));
+        }
+    }
+    let mut play = vec![0xE6, 0x00, 0xA5, 0x00];
+    play.extend(set(0xF800, 0x78 | 0x80));
+    play.extend([0x8D, 0x00, 0x48]);
+    for _ in 0..r.below(3) {
+        play.extend(random_store(&mut r));
+    }
+    let mut f = file_with(&init, &play, 16666, r.below(2) as u8, [0; 8], None);
+    f[0x7B] = oscilla_nsf::chips::N163;
+    f
+}
+
+const N163_SEEDS: u64 = 16;
 const S5B_SEEDS: u64 = 16;
 const VRC6_SEEDS: u64 = 16;
 
@@ -266,6 +309,34 @@ fn the_digests_with_the_vrc6_match() {
     let mut bad = Vec::new();
     for (seed, audio, writes) in want {
         let got = run_vrc6(seed);
+        if got != (audio, writes) {
+            bad.push(format!(
+                "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
+                got.0, got.1
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn the_digests_with_the_n163_match() {
+    let want: Vec<(u64, u64, u64)> = include_str!("goldens/nes-n163.txt")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            (
+                p[0].parse().unwrap(),
+                u64::from_str_radix(p[1], 16).unwrap(),
+                u64::from_str_radix(p[2], 16).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(want.len() as u64, N163_SEEDS);
+    let mut bad = Vec::new();
+    for (seed, audio, writes) in want {
+        let got = digests_of(n163_program(seed));
         if got != (audio, writes) {
             bad.push(format!(
                 "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
@@ -375,6 +446,12 @@ fn print() {
         println!("{seed} {audio:016x} {writes:016x}");
     }
     println!("-----END VRC6 GOLDENS-----");
+    println!("-----BEGIN N163 GOLDENS-----");
+    for seed in 0..N163_SEEDS {
+        let (audio, writes) = digests_of(n163_program(seed));
+        println!("{seed} {audio:016x} {writes:016x}");
+    }
+    println!("-----END N163 GOLDENS-----");
     println!("-----BEGIN 5B GOLDENS-----");
     for seed in 0..S5B_SEEDS {
         let (audio, writes) = digests_of(s5b_program(seed));

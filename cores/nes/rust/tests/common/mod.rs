@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 pub const LOAD: u16 = 0x8000;
 pub const INIT: u16 = 0x8000;
-pub const PLAY: u16 = 0x8200;
+pub const PLAY: u16 = 0x8400;
 
 /// `lda #v; sta address`.
 pub fn set(address: u16, v: u8) -> Vec<u8> {
@@ -146,4 +146,21 @@ pub fn s5b_machine(init: &[u8], play: &[u8]) -> Machine {
 /// Stores `v` in register `r` of the Sunsoft 5B through its two ports.
 pub fn s5b_reg(r: u8, v: u8) -> Vec<u8> {
     [set(0xC000, r), set(0xE000, v)].concat()
+}
+
+/// The same as `machine`, for a file that asks for the Namco 163.
+pub fn n163_machine(init: &[u8], play: &[u8]) -> Machine {
+    let mut f = file(init, play);
+    f[0x7B] = oscilla_nsf::chips::N163;
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}
+
+/// Stores `bytes` in the Namco 163's sound RAM from `at` on, through its two
+/// ports with the address stepping on each store.
+pub fn n163_ram(at: u8, bytes: &[u8]) -> Vec<u8> {
+    let mut out = set(0xF800, 0x80 | at);
+    for &b in bytes {
+        out.extend(set(0x4800, b));
+    }
+    out
 }

@@ -24,7 +24,7 @@ extern "C" {
  *
  * The machine plays the 2A03's five channels (two pulse channels, the
  * triangle, the noise channel and the delta channel) and the three channels of
- * the VRC6 or the Sunsoft 5B expansion chip. A file that asks for other
+ * the VRC6, Sunsoft 5B or Namco 163 expansion chip. A file that asks for other
  * expansion sound gets the channels it can play, and cnes_warnings says so.
  */
 
@@ -65,7 +65,7 @@ typedef struct {
     uint8_t region_bits;  /* bit 0: PAL; bit 1: the file works on both */
     uint8_t chips;        /* expansion sound the file asks for, one bit per chip:
                              1 VRC6, 2 VRC7, 4 FDS, 8 MMC5, 16 N163, 32 Sunsoft 5B,
-                             64 VT02. The core plays the VRC6 and the 5B. */
+                             64 VT02. The core plays the VRC6, the 5B and the N163. */
 } cnes_header;
 
 void cnes_image_header(const cnes_image *image, cnes_header *out);
@@ -180,8 +180,8 @@ uint32_t cnes_peek(const cnes_machine *machine, uint32_t address);
 /*
  * Things the machine met and does not support (a routine that did not
  * return, an opcode that locks the CPU or that the core does not run, BRK,
- * expansion sound other than the VRC6 and the Sunsoft 5B), as a NUL-terminated
- * list of short sentences, one per line.
+ * expansion sound other than the VRC6, the Sunsoft 5B and the Namco 163), as a
+ * NUL-terminated list of short sentences, one per line.
  * The machine reports each kind once and never prints.
  */
 const char *cnes_warnings(const cnes_machine *machine);
@@ -219,17 +219,20 @@ void cnes_channel_levels_get(const cnes_machine *machine, int32_t out[5]);
  * What each channel of the expansion chip puts out now, before the mixer. A
  * file that asks for the VRC6 shows its pulse 1 and pulse 2 (0 to 15) and its
  * saw (0 to 31) in the first three entries. A file that asks for the Sunsoft
- * 5B and not the VRC6 shows the 5B's three channels (0 to 31). The other
- * entries, and all of them for a file without a chip that the core plays, are
- * 0. A muted channel still shows its level.
+ * 5B and not the VRC6 shows the 5B's three channels (0 to 31). A file with the
+ * Namco 163 and neither of those shows its eight channels, channel 1 first, as
+ * the size of each channel's last output (0 to 120). The other entries, and all
+ * of them for a file without a chip that the core plays, are 0. A muted
+ * channel still shows its level.
  */
 void cnes_expansion_levels_get(const cnes_machine *machine, int32_t out[8]);
 
 /* Chooses the channels that reach the mix. Bit n is channel n in the order
  * above for bits 0 to 4. Bits 5 to 7 are the VRC6's pulse 1, pulse 2 and saw,
- * and bits 8 to 10 are the Sunsoft 5B's three channels. Every channel is on at
- * the start, and a reset leaves the choice alone. Only those eleven bits count,
- * and cnes_channel_mask returns 0x7FF at the start. */
+ * bits 8 to 10 are the Sunsoft 5B's three channels, and bits 11 to 18 are the
+ * Namco 163's channels 1 to 8. Every channel is on at the start, and a reset
+ * leaves the choice alone. Only those nineteen bits count, and
+ * cnes_channel_mask returns 0x7FFFF at the start. */
 void cnes_set_channel_mask(cnes_machine *machine, uint32_t mask);
 uint32_t cnes_channel_mask(const cnes_machine *machine);
 

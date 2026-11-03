@@ -227,6 +227,44 @@ impl Default for S5b {
     }
 }
 
+/// The sound of the Namco 163 expansion chip: 128 bytes of sound RAM that hold
+/// the waveforms and the registers of up to eight channels, which the chip
+/// plays one at a time.
+#[derive(Clone)]
+pub struct N163 {
+    /// The chip is in the file's header. Without it no event runs.
+    pub active: bool,
+    pub ram: [u8; 128],
+    /// The RAM address that the data port reaches.
+    pub addr: u8,
+    pub auto_increment: bool,
+    /// Which of the enabled channels updates next, counted from the highest.
+    pub turn: u8,
+    /// The channel that made the output now, 0 to 7 for channels 1 to 8.
+    pub out_channel: u8,
+    /// The output of that channel, held until the next update.
+    pub out_value: i32,
+    /// The last output of each channel.
+    pub last: [i32; 8],
+    pub next_step: u64,
+}
+
+impl Default for N163 {
+    fn default() -> N163 {
+        N163 {
+            active: false,
+            ram: [0; 128],
+            addr: 0,
+            auto_increment: false,
+            turn: 0,
+            out_channel: 7,
+            out_value: 0,
+            last: [0; 8],
+            next_step: NEVER,
+        }
+    }
+}
+
 /// The sound of the VRC6 expansion chip.
 #[derive(Clone, Default)]
 pub struct Vrc6 {
@@ -246,6 +284,7 @@ pub struct Apu {
     pub dmc: Dmc,
     pub vrc6: Vrc6,
     pub s5b: S5b,
+    pub n163: N163,
     /// The enable bits of $4015, bit n for channel n.
     pub enabled: u8,
     pub frame: FrameCounter,

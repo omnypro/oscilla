@@ -167,7 +167,7 @@ fn the_channel_mask_reaches_the_expansion_channels() {
     let stores = [(0x9000, 0x7F), (0x9001, 0xFF), (0x9002, 0x81)];
     let mut a = with(&stores);
     let mut b = with(&stores);
-    assert_eq!(b.channel_mask(), 0x7FF);
+    assert_eq!(b.channel_mask(), 0x7FFFF);
     b.set_channel_mask(!0x20);
     assert!(a.set_highpass_hz(1.0));
     assert!(b.set_highpass_hz(1.0));

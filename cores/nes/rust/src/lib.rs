@@ -11,6 +11,7 @@ mod apu;
 mod bus;
 mod cpu;
 mod machine;
+mod n163;
 mod s5b;
 mod state;
 

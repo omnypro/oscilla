@@ -14,7 +14,7 @@ use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use std::sync::Arc;
 
 /// The bits of the channel mask that name a channel.
-const ALL_CHANNELS: u32 = (1 << 11) - 1;
+const ALL_CHANNELS: u32 = (1 << 19) - 1;
 
 /// The warning list holds at most 2048 bytes and a closing NUL. Its room is
 /// reserved at the start so that the list never moves.
@@ -515,11 +515,19 @@ impl Machine {
         let mut out = [0; 8];
         let levels = if self.chips & oscilla_nsf::chips::VRC6 != 0 {
             Some(self.apu.vrc6_levels())
+        } else if self.chips & oscilla_nsf::chips::N163 != 0 {
+            None
         } else if self.chips & oscilla_nsf::chips::S5B != 0 {
             Some(self.apu.s5b_levels())
         } else {
             None
         };
+        if self.chips & oscilla_nsf::chips::VRC6 == 0 && self.chips & oscilla_nsf::chips::N163 != 0
+        {
+            for (slot, level) in out.iter_mut().zip(self.apu.n163.levels()) {
+                *slot = i32::from(level);
+            }
+        }
         if let Some(levels) = levels {
             for (slot, level) in out.iter_mut().zip(levels) {
                 *slot = i32::from(level);

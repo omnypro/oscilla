@@ -64,6 +64,7 @@ impl Machine {
                     | u8::from(a.frame.irq) << 6
                     | u8::from(a.dmc.irq) << 7
             }
+            0x4800..=0x4FFF if self.apu.n163.active => self.apu.n163.peek_data(),
             0x6000..=0x7FFF => self.wram[usize::from(address - 0x6000)],
             0x8000..=0xFFFF => self.read_rom(address),
             _ => self.bus,
@@ -100,6 +101,10 @@ impl Machine {
                 } else {
                     self.bus
                 }
+            }
+            0x4800..=0x4FFF if self.apu.n163.active => {
+                self.sync_apu();
+                self.apu.n163.read_data()
             }
             0x6000..=0x7FFF => self.wram[usize::from(address - 0x6000)],
             0x8000..=0xFFFF => self.read_rom(address),
@@ -139,6 +144,25 @@ impl Machine {
                     o.sound_write(t, address, v);
                 }
                 self.vrc6_write(address, v);
+            }
+            0x4800..=0x4FFF if self.chips & oscilla_nsf::chips::N163 != 0 => {
+                self.sync_apu();
+                let t = self.now;
+                if let Some(o) = self.observer.0.as_mut() {
+                    o.sound_write(t, address, v);
+                }
+                self.apu.n163.write_data(v);
+            }
+            0xF800..=0xFFFF if self.chips & oscilla_nsf::chips::N163 != 0 => {
+                self.sync_apu();
+                let t = self.now;
+                if let Some(o) = self.observer.0.as_mut() {
+                    o.sound_write(t, address, v);
+                }
+                self.apu.n163.write_address(v);
+                if self.chips & oscilla_nsf::chips::S5B != 0 {
+                    self.s5b_write(address, v);
+                }
             }
             0xC000..=0xFFFF if self.chips & oscilla_nsf::chips::S5B != 0 => {
                 self.sync_apu();

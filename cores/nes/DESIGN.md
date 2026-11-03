@@ -131,6 +131,21 @@ level is three times a 2A03 pulse channel at full volume, which is the gain
 that matches the loudness of a reference player. The mask's bits 8 to 10 take
 the channels out of the mix.
 
+The Namco 163 has 128 bytes of sound RAM behind two ports: a store to 0xF800
+through 0xFFFF sets the address and whether it steps, and 0x4800 through 0x4FFF
+reads and writes the byte at the address. The RAM holds 4-bit waveforms, two
+to a byte with the low nibble first, and up to eight 8-byte channel blocks from
+0x40: an 18-bit frequency, a 24-bit phase, a waveform length, a waveform
+address and a volume, with the number of enabled channels in the top bits of the
+last byte. The chip updates one channel every 15 cycles, from channel 8 down
+and round again. An update adds the frequency to the phase, modulo the length,
+reads the sample at the phase, and outputs the sample less 8, times the volume.
+The output is held until the next update, so the chip plays its channels one at
+a time, and with eight of them the switching makes a tone at 14.9 kHz. The
+core keeps that, and the low-pass filter takes some of it off. One step of the
+output is 0.039 of one 2A03 pulse step, which gives the loudness of a
+reference player, and the mask's bits 11 to 18 take the channels out.
+
 ## Output
 
 The mixer is the pair of lookup tables of the documentation, built at startup
