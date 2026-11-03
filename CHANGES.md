@@ -1,5 +1,13 @@
 # Changes
 
+## 0.3.2
+
+- The Sunsoft 5B expansion chip: three tone channels with noise and an
+  envelope, played for files that ask for it. The channel mask has bits 8 to 10
+  for them, and `cnes_expansion_levels_get` shows their levels.
+- `cnes_channel_mask` returns `0x7FF` at the start, with a bit for each channel
+  of the 2A03, the VRC6 and the 5B.
+
 ## 0.3.1
 
 - The VRC6 expansion chip: two pulse channels and a saw, played for files that
