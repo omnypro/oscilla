@@ -1,6 +1,6 @@
 # NES core
 
-A music-only NES in Rust. It plays NSF files: it runs an NES game's sound
+A music-only NES in Rust. It plays NSF and NSFe files: it runs an NES game's sound
 driver and returns the sound as interleaved stereo at the rate the caller
 chooses. Nothing is drawn, and nothing reads input.
 
@@ -21,7 +21,7 @@ region.
 - `DESIGN.md`: how the core works.
 - `tools/oscilla-nsf`: the command-line player described below.
 
-The NSF header reader is the `oscilla-nsf` crate in `formats/nsf`. The
+The NSF and NSFe reader is the `oscilla-nsf` crate in `formats/nsf`. The
 resampler is the `oscilla-resample` crate in `audio/resample`. The C header is
 `swift/CNes/include/cnes.h`, a path from the root of the repository.
 
@@ -46,6 +46,12 @@ registers of the expansion chip in a file that asks for the chip) and every call
 and play routines. Each play call is the driver's own tick, so
 a host can digest the stores per call. Rust code uses `oscilla_nes::Machine`
 directly.
+
+An NSFe file loads through the same calls. The image then also gives the
+ripper, a comment, a name and an author for each song, the time and fade of
+each song in milliseconds, the length as the two added, and the playlist.
+`cnes_image_is_nsfe` tells the two formats apart. A value that the file leaves
+out is an empty string or -1, and an NSF file leaves all of them out.
 
 A player has four more groups of calls.
 
@@ -76,7 +82,8 @@ The first form plays song N (default 0) for S seconds (default 30) and writes
 a 16-bit stereo WAV file. `--writes` adds a text file with one line per store
 to the sound registers: the song, the play call (-1 for the init routine), the
 cycle since that call began, the address and the value. `--info` prints the
-header. `--bench` renders without output and prints the time it took.
+header and, for an NSFe file, the song data. `--bench` renders without output
+and prints the time it took.
 
 ## Tests
 
@@ -106,11 +113,22 @@ header. `--bench` renders without output and prints the time it took.
 
 ## Compatibility
 
-The core plays NSF versions 1 and 2, up to the program length of version 2. A
+The core plays NSF versions 1 and 2, up to the program length of version 2, and
+NSFe files. A
 comparison with the register-store streams of a reference player gave the same
 stores in the same order in every play call for all 300 songs of six files,
 two of them bank-switched, one each with the VRC6, the 5B, the Namco 163 and
 the FDS (12 of its 56 songs), over 3,600 play calls each.
+
+An NSFe file runs the same program as the NSF it came from. The core reads the
+chunks INFO, DATA, BANK, RATE, NSF2, regn, auth, text, tlbl, taut, plst, time
+and fade. It skips mixe, psfx and VRC7 (levels are the ones the core documents,
+and the VRC7 is not played), and it refuses a file with a mandatory chunk
+(first letter uppercase) that it does not know. Of regn it uses the NTSC and
+PAL bits and the preferred region. Dendy has no region of its own here, so a
+file that names only Dendy keeps the region bits of INFO. A chunk that runs past the end of the file
+is left out, except DATA, which keeps the bytes that are there. Files
+converted from NSF files play the same stores and samples as the originals.
 
 Not emulated: the VRC7 and the MMC5 (a file that asks for
 one plays its other channels and a warning says so), interrupts (a driver that waits for the

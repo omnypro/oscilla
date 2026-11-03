@@ -47,6 +47,32 @@ enum Support {
         return file + data
     }
 
+    /// One NSFe chunk: the length, the ID and the body.
+    static func chunk(_ id: String, _ body: [UInt8]) -> [UInt8] {
+        let n = body.count
+        return [UInt8(n & 0xFF), UInt8((n >> 8) & 0xFF), UInt8((n >> 16) & 0xFF), UInt8(n >> 24)]
+            + Array(id.utf8) + body
+    }
+
+    /// An NSFe file with the program of `nsf(init:play:)`, then `extra` chunks
+    /// between DATA and NEND.
+    static func nsfe(init initCode: [UInt8], play: [UInt8] = [], songs: UInt8 = 4,
+                     first: UInt8 = 0, region: UInt8 = 0, chips: UInt8 = 0,
+                     extra: [[UInt8]] = []) -> [UInt8] {
+        let program = Array(nsf(init: initCode, play: play)[0x80...])
+        let info: [UInt8] = [UInt8(load & 0xFF), UInt8(load >> 8), UInt8(load & 0xFF), UInt8(load >> 8),
+                             UInt8(Self.play & 0xFF), UInt8(Self.play >> 8), region, chips, songs, first]
+        return Array("NSFE".utf8) + chunk("INFO", info) + chunk("DATA", program)
+            + extra.flatMap { $0 } + chunk("NEND", [])
+    }
+
+    static func le32(_ values: [Int32]) -> [UInt8] {
+        values.flatMap { v -> [UInt8] in
+            let u = UInt32(bitPattern: v)
+            return [UInt8(u & 0xFF), UInt8((u >> 8) & 0xFF), UInt8((u >> 16) & 0xFF), UInt8(u >> 24)]
+        }
+    }
+
     static func image(_ bytes: [UInt8]) -> OpaquePointer? {
         var image: OpaquePointer?
         var error = [CChar](repeating: 0, count: 128)

@@ -36,11 +36,12 @@ typedef struct cnes_image cnes_image;
 typedef enum {
     CNES_OK = 0,
     CNES_ERR_IO,     /* a file could not be opened or read */
-    CNES_ERR_FORMAT  /* not an NSF file, wrong version, or too large */
+    CNES_ERR_FORMAT  /* not an NSF or NSFe file, wrong version, malformed, or too large */
 } cnes_status;
 
 /*
- * Parses an .nsf file. A NULL `path` or `out` returns CNES_ERR_IO. On failure
+ * Parses an .nsf or .nsfe file, by the first bytes of the file. A NULL `path`
+ * or `out` returns CNES_ERR_IO. On failure
  * *out is NULL and, when `error` is given, it holds a sentence that says why.
  * The path must name a regular file. A file larger than 4 MiB is refused
  * without being read in full.
@@ -48,7 +49,8 @@ typedef enum {
 cnes_status cnes_image_load_nsf(const char *path, cnes_image **out,
                                 char *error, size_t error_size);
 
-/* The same for a file already in memory. The bytes are copied. */
+/* The same for a file already in memory (an NSF or an NSFe file). The bytes
+ * are copied. */
 cnes_status cnes_image_from_nsf(const uint8_t *bytes, size_t size, cnes_image **out,
                                 char *error, size_t error_size);
 
@@ -75,6 +77,46 @@ void cnes_image_header(const cnes_image *image, cnes_header *out);
 const char *cnes_image_title(const cnes_image *image);
 const char *cnes_image_author(const cnes_image *image);
 const char *cnes_image_copyright(const cnes_image *image);
+
+/*
+ * More of the file's text and the data that an NSFe file adds. Strings are
+ * UTF-8 in an NSFe file; the fields of an NSF header hold whatever bytes the
+ * file's maker wrote. A field that the file leaves out is the empty string, so
+ * a missing field and an empty one look the same. Each pointer lives until the
+ * image is freed. A NULL image gives NULL (or -1 or 0 as noted).
+ *
+ * An NSF file has none of this beyond the three fields above: the ripper and
+ * the comment are empty, every song name and song author is empty, the
+ * playlist is empty and every time and fade is -1.
+ *
+ * `song` counts from 0. cnes_image_song_title and cnes_image_song_author
+ * return NULL for a song outside the file.
+ *
+ * Times are milliseconds. A song's time is how long it plays before the fade
+ * starts, and its fade is the length of the fade. -1 means that the file gives
+ * no value (a negative value in the file counts as none). The length is the
+ * two added, or the time alone when the fade is missing, and -1 when the time
+ * is missing.
+ *
+ * The playlist is the order that the file asks a player to follow, as song
+ * numbers. Entries that name a song the file does not have are left out.
+ * cnes_image_playlist_get returns -1 for an index outside the list.
+ *
+ * The core reads the NSFe chunks mixe, psfx and VRC7 and does not use them:
+ * levels are the ones the core documents, and the VRC7 is not played. Of the
+ * regn chunk it uses the NTSC and PAL bits and the preferred region; Dendy has
+ * no region of its own, so a file that names only Dendy keeps its INFO bits.
+ */
+int cnes_image_is_nsfe(const cnes_image *image);
+const char *cnes_image_ripper(const cnes_image *image);
+const char *cnes_image_comment(const cnes_image *image);
+const char *cnes_image_song_title(const cnes_image *image, int song);
+const char *cnes_image_song_author(const cnes_image *image, int song);
+int32_t cnes_image_song_time_ms(const cnes_image *image, int song);
+int32_t cnes_image_song_fade_ms(const cnes_image *image, int song);
+int64_t cnes_image_song_length_ms(const cnes_image *image, int song);
+int cnes_image_playlist_count(const cnes_image *image);
+int cnes_image_playlist_get(const cnes_image *image, int index);
 
 /* ---- Machines ---------------------------------------------------------- */
 

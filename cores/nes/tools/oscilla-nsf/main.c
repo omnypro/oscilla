@@ -4,7 +4,7 @@
 #include <time.h>
 #include "cnes.h"
 
-/* oscilla-nsf: plays one song of an NSF file.
+/* oscilla-nsf: plays one song of an NSF or NSFe file.
  *
  *   oscilla-nsf FILE.nsf [--song N] [--seconds S] [--rate HZ] [--out FILE.wav]
  *                        [--writes FILE.txt] [--highpass HZ]
@@ -16,7 +16,8 @@
  * The default is song 0 for 30 seconds at 48000 Hz, written to out.wav.
  * --writes adds a text file with one line per store to the sound registers:
  * the song, the frame (-1 for the init routine), the cycle since that
- * frame's start, the address and the value. --info prints the header.
+ * frame's start, the address and the value. --info prints the header and, for an
+ * NSFe file, the names, times and playlist.
  * --highpass moves the bass cutoff from the console's 90 Hz. --region picks
  * the console; the default is the one that the file names.
  * Bench mode renders with no output and prints how long that took. */
@@ -108,6 +109,21 @@ int main(int argc, char **argv) {
         printf("banks");
         for (int b = 0; b < 8; b++) printf(" %02x", h.banks[b]);
         printf("\n");
+        if (cnes_image_is_nsfe(image)) {
+            printf("ripper    %s\ncomment   %s\n", cnes_image_ripper(image),
+                   cnes_image_comment(image));
+            for (int n = 0; n < h.songs; n++) {
+                printf("song %3d  time %d ms  fade %d ms  length %lld ms  %s  %s\n", n,
+                       (int)cnes_image_song_time_ms(image, n),
+                       (int)cnes_image_song_fade_ms(image, n),
+                       (long long)cnes_image_song_length_ms(image, n),
+                       cnes_image_song_title(image, n), cnes_image_song_author(image, n));
+            }
+            int plays = cnes_image_playlist_count(image);
+            printf("playlist");
+            for (int n = 0; n < plays; n++) printf(" %d", cnes_image_playlist_get(image, n));
+            printf("\n");
+        }
         cnes_image_free(image);
         return 0;
     }

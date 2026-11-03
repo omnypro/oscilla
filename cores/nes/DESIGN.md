@@ -207,6 +207,23 @@ bytes and three text fields. The data after the header is the program. A
 version 2 file may give the length of the program. A file larger than 4 MiB is
 refused. A load address below 0x8000 is an error.
 
+An NSFe file (the first four bytes are `NSFE`) is a list of chunks, each with a
+length, a four-letter ID and a body. INFO gives the addresses, the console and
+chip bytes, the song count and the first song, counted from 0. DATA gives the
+program. BANK and RATE give the banks and the play speeds, and NSF2 the
+feature bits. The reader fills the same fields as for an NSF header, so the
+core runs the file as it runs any other. The chunks auth, text, tlbl, taut,
+plst, time and fade give the title, the author, the copyright, the ripper, a
+comment, a name and an author for each song, the playlist and the time and
+fade of each song. They reach the player and the core does not use them. A
+chunk whose ID starts with an uppercase letter is mandatory, and a file with
+one that the reader does not know is refused. INFO must come before DATA, and the reader stops at NEND or at the end of the
+file. A chunk that runs past the end of the file is
+dropped, and DATA keeps the bytes that are there. Text that is not UTF-8
+becomes U+FFFD. A playlist entry that names a song the file does not have is
+dropped. A time or fade of a song beyond the end of its chunk is missing, and a
+negative value is missing too.
+
 ## Observer
 
 `cnes_set_observer` registers callbacks that run on the rendering thread,

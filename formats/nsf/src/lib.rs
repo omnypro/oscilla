@@ -2,6 +2,10 @@
 //! an NES sound driver. The header names the load, init and play routines, the
 //! banks to map at the start and the interval between calls of the play
 //! routine. Cores run the program in their own way.
+//!
+//! The NSFe container holds the same information as a list of chunks, with
+//! room for a title per song, a playlist and a length per song. `Nsf::parse`
+//! reads both.
 
 /// A file larger than this is refused. A bank-switched file can hold up to 256
 /// banks of 4 KiB; the limit leaves room for the header.
@@ -30,6 +34,11 @@ pub enum NsfError {
     Load(u16),
     /// The file is larger than MAX_FILE.
     TooLarge,
+    /// An NSFe file without the chunk that the name says it needs, or with
+    /// the chunks in an order that cannot work.
+    Chunk(&'static str),
+    /// An NSFe file with a mandatory chunk that this reader does not know.
+    Mandatory([u8; 4]),
 }
 
 impl std::fmt::Display for NsfError {
@@ -40,6 +49,12 @@ impl std::fmt::Display for NsfError {
             NsfError::NoSongs => write!(f, "The file holds no songs."),
             NsfError::Load(a) => write!(f, "The load address 0x{a:04X} is below the ROM area."),
             NsfError::TooLarge => write!(f, "The file is larger than 4 MiB."),
+            NsfError::Chunk(why) => write!(f, "The NSFe file is malformed: {why}."),
+            NsfError::Mandatory(id) => write!(
+                f,
+                "The NSFe file needs the chunk {}, which is not supported.",
+                String::from_utf8_lossy(id)
+            ),
         }
     }
 }
@@ -78,6 +93,7 @@ pub mod nsf2 {
 /// at the load address, or in banks when the header names any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Nsf {
+    /// 1 or 2 for an NSF file, 0 for an NSFe file.
     pub version: u8,
     pub songs: u8,
     /// The first song to play, counted from 0.
@@ -98,9 +114,24 @@ pub struct Nsf {
     /// The version 2 feature bits of the header (0 for version 1): see
     /// `nsf2`.
     pub flags: u8,
-    title: [u8; TEXT],
-    author: [u8; TEXT],
-    copyright: [u8; TEXT],
+    title: Vec<u8>,
+    author: Vec<u8>,
+    copyright: Vec<u8>,
+    ripper: Vec<u8>,
+    comment: Vec<u8>,
+    /// Per song, from the NSFe chunks `tlbl` and `taut`. A song without an
+    /// entry has an empty one.
+    labels: Vec<Vec<u8>>,
+    song_authors: Vec<Vec<u8>>,
+    /// The play order of the NSFe chunk `plst`, with every entry below
+    /// `songs`.
+    playlist: Vec<u8>,
+    /// Milliseconds per song, from the NSFe chunks `time` and `fade`. Negative
+    /// when the file gives no value.
+    times: Vec<i32>,
+    fades: Vec<i32>,
+    prefer_pal: bool,
+    nsfe: bool,
     pub data: Vec<u8>,
 }
 
@@ -109,18 +140,61 @@ fn word(p: &[u8]) -> u16 {
 }
 
 /// The bytes of a text field up to the first NUL.
-fn text(field: &[u8; TEXT]) -> &[u8] {
+fn text(field: &[u8]) -> &[u8] {
     match field.iter().position(|&b| b == 0) {
         Some(n) => &field[..n],
         None => field,
     }
 }
 
+/// The strings of an NSFe chunk: each ends at a NUL, and the last may end at
+/// the end of the chunk. Bytes that are not UTF-8 become U+FFFD.
+fn strings(chunk: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut rest = chunk;
+    while !rest.is_empty() {
+        let n = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+        out.push(utf8(&rest[..n]));
+        rest = &rest[(n + 1).min(rest.len())..];
+    }
+    out
+}
+
+fn utf8(bytes: &[u8]) -> Vec<u8> {
+    String::from_utf8_lossy(bytes).into_owned().into_bytes()
+}
+
+/// Little-endian 32-bit signed values, one per song; a song past the end of
+/// the chunk gets -1.
+fn millis(chunk: &[u8], songs: usize) -> Vec<i32> {
+    (0..songs)
+        .map(|i| match chunk.get(4 * i..4 * i + 4) {
+            Some(b) => i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            None => -1,
+        })
+        .collect()
+}
+
+/// The chunk IDs that this reader understands. A mandatory chunk (first letter
+/// uppercase) outside this list refuses the file.
+const KNOWN_MANDATORY: [&[u8; 4]; 7] = [
+    b"INFO", b"DATA", b"NEND", b"BANK", b"RATE", b"NSF2", b"VRC7",
+];
+
 impl Nsf {
+    /// Reads an NSF or an NSFe file, by the first bytes.
     pub fn parse(file: &[u8]) -> Result<Nsf, NsfError> {
         if file.len() > MAX_FILE {
             return Err(NsfError::TooLarge);
         }
+        if file.starts_with(b"NSFE") {
+            Nsf::parse_nsfe(file)
+        } else {
+            Nsf::parse_nsf(file)
+        }
+    }
+
+    fn parse_nsf(file: &[u8]) -> Result<Nsf, NsfError> {
         if file.len() < HEADER_SIZE || &file[..5] != b"NESM\x1A" {
             return Err(NsfError::NotNsf);
         }
@@ -136,11 +210,7 @@ impl Nsf {
         if load < 0x8000 {
             return Err(NsfError::Load(load));
         }
-        let field = |at: usize| {
-            let mut t = [0u8; TEXT];
-            t.copy_from_slice(&file[at..at + TEXT]);
-            t
-        };
+        let field = |at: usize| text(&file[at..at + TEXT]).to_vec();
         let mut banks = [0u8; 8];
         banks.copy_from_slice(&file[0x70..0x78]);
         let mut data = &file[HEADER_SIZE..];
@@ -170,20 +240,221 @@ impl Nsf {
             title: field(0x0E),
             author: field(0x2E),
             copyright: field(0x4E),
+            ripper: Vec::new(),
+            comment: Vec::new(),
+            labels: vec![Vec::new(); usize::from(songs)],
+            song_authors: vec![Vec::new(); usize::from(songs)],
+            playlist: Vec::new(),
+            times: vec![-1; usize::from(songs)],
+            fades: vec![-1; usize::from(songs)],
+            prefer_pal: false,
+            nsfe: false,
             data: data.to_vec(),
         })
     }
 
+    fn parse_nsfe(file: &[u8]) -> Result<Nsf, NsfError> {
+        let mut info: Option<&[u8]> = None;
+        let mut data: Option<&[u8]> = None;
+        let mut bank: &[u8] = &[];
+        let mut rate: &[u8] = &[];
+        let mut flags = 0u8;
+        let mut regn: &[u8] = &[];
+        let mut auth: &[u8] = &[];
+        let mut taut: &[u8] = &[];
+        let mut tlbl: &[u8] = &[];
+        let mut plst: &[u8] = &[];
+        let mut time: &[u8] = &[];
+        let mut fade: &[u8] = &[];
+        let mut comment: &[u8] = &[];
+        let mut data_first = false;
+        let mut at = 4;
+        while at + 8 <= file.len() {
+            let len = u32::from_le_bytes([file[at], file[at + 1], file[at + 2], file[at + 3]]);
+            let id: [u8; 4] = [file[at + 4], file[at + 5], file[at + 6], file[at + 7]];
+            let start = at + 8;
+            if id[0].is_ascii_uppercase() && !KNOWN_MANDATORY.contains(&&id) {
+                return Err(NsfError::Mandatory(id));
+            }
+            let room = file.len() - start;
+            let cut = usize::try_from(len).map_or(true, |n| n > room);
+            let body = &file[start..start + if cut { room } else { len as usize }];
+            if cut && &id != b"DATA" {
+                break;
+            }
+            match &id {
+                b"INFO" => info = Some(body),
+                b"DATA" => {
+                    data_first |= info.is_none();
+                    data = Some(body);
+                }
+                b"BANK" => bank = body,
+                b"RATE" => rate = body,
+                b"NSF2" => flags = body.first().copied().unwrap_or(0),
+                b"regn" => regn = body,
+                b"auth" => auth = body,
+                b"taut" => taut = body,
+                b"tlbl" => tlbl = body,
+                b"plst" => plst = body,
+                b"time" => time = body,
+                b"fade" => fade = body,
+                b"text" => comment = body,
+                b"NEND" => break,
+                _ => {}
+            }
+            if cut {
+                break;
+            }
+            at = start + body.len();
+        }
+        let Some(info) = info else {
+            return Err(NsfError::Chunk("there is no INFO chunk"));
+        };
+        if data_first {
+            return Err(NsfError::Chunk("DATA comes before INFO"));
+        }
+        let Some(data) = data else {
+            return Err(NsfError::Chunk("there is no DATA chunk"));
+        };
+        if info.len() < 9 {
+            return Err(NsfError::Chunk("INFO is shorter than 9 bytes"));
+        }
+        let songs = info[8];
+        if songs == 0 {
+            return Err(NsfError::NoSongs);
+        }
+        let load = word(&info[0..]);
+        if load < 0x8000 {
+            return Err(NsfError::Load(load));
+        }
+        let count = usize::from(songs);
+        let mut banks = [0u8; 8];
+        let n = bank.len().min(8);
+        banks[..n].copy_from_slice(&bank[..n]);
+        let (ntsc_us, pal_us) = (
+            rate.get(0..2).map_or(0, word),
+            rate.get(2..4).map_or(0, word),
+        );
+        let mut region_bits = info[6];
+        let mut prefer_pal = false;
+        if let Some(&supported) = regn.first() {
+            // Dendy has no region of its own here: a file that names only
+            // Dendy keeps the INFO bits.
+            match (supported & 1 != 0, supported & 2 != 0) {
+                (true, false) => region_bits = 0,
+                (false, true) => region_bits = 1,
+                (true, true) => {
+                    region_bits = 2;
+                    prefer_pal = regn.get(1) == Some(&1);
+                }
+                (false, false) => {}
+            }
+        }
+        let names = |chunk: &[u8]| {
+            let mut v = strings(chunk);
+            v.resize(count, Vec::new());
+            v.truncate(count);
+            v
+        };
+        let mut auth = strings(auth).into_iter();
+        let mut next = || auth.next().unwrap_or_default();
+        let (title, author, copyright, ripper) = (next(), next(), next(), next());
+        Ok(Nsf {
+            version: 0,
+            songs,
+            first_song: info.get(9).copied().unwrap_or(0).min(songs - 1),
+            load,
+            init: word(&info[2..]),
+            play: word(&info[4..]),
+            ntsc_us,
+            pal_us,
+            banks,
+            region_bits,
+            chips: info[7],
+            flags,
+            title,
+            author,
+            copyright,
+            ripper,
+            comment: text(&utf8(comment)).to_vec(),
+            labels: names(tlbl),
+            song_authors: names(taut),
+            playlist: plst.iter().copied().filter(|&s| s < songs).collect(),
+            times: millis(time, count),
+            fades: millis(fade, count),
+            prefer_pal,
+            nsfe: true,
+            data: data.to_vec(),
+        })
+    }
+
+    /// The text fields. A field that the file leaves out is empty. An NSFe
+    /// file gives UTF-8; the fields of an NSF header are whatever bytes the
+    /// ripper wrote.
     pub fn title(&self) -> &[u8] {
-        text(&self.title)
+        &self.title
     }
 
     pub fn author(&self) -> &[u8] {
-        text(&self.author)
+        &self.author
     }
 
     pub fn copyright(&self) -> &[u8] {
-        text(&self.copyright)
+        &self.copyright
+    }
+
+    /// Who ripped the file. Only an NSFe file names one.
+    pub fn ripper(&self) -> &[u8] {
+        &self.ripper
+    }
+
+    /// A free text. Only an NSFe file has one.
+    pub fn comment(&self) -> &[u8] {
+        &self.comment
+    }
+
+    /// Whether the file is an NSFe file.
+    pub fn is_nsfe(&self) -> bool {
+        self.nsfe
+    }
+
+    /// The name of `song` (counted from 0), empty when the file gives none or
+    /// the song is out of range.
+    pub fn song_title(&self, song: usize) -> &[u8] {
+        self.labels.get(song).map_or(&[], Vec::as_slice)
+    }
+
+    /// The author of `song`, empty when the file gives none.
+    pub fn song_author(&self, song: usize) -> &[u8] {
+        self.song_authors.get(song).map_or(&[], Vec::as_slice)
+    }
+
+    /// The order in which a player plays the songs, counted from 0. Empty when
+    /// the file has none.
+    pub fn playlist(&self) -> &[u8] {
+        &self.playlist
+    }
+
+    /// How long `song` plays before it fades, in milliseconds: negative when
+    /// the file gives no value or the song is out of range.
+    pub fn time_ms(&self, song: usize) -> i32 {
+        self.times.get(song).map_or(-1, |&t| t.max(-1))
+    }
+
+    /// The length of the fade at the end of `song`, in milliseconds: negative
+    /// when the file gives no value.
+    pub fn fade_ms(&self, song: usize) -> i32 {
+        self.fades.get(song).map_or(-1, |&t| t.max(-1))
+    }
+
+    /// The time and the fade of `song` as one number, or -1 when the file
+    /// gives no time. A song without a fade length counts the time alone.
+    pub fn length_ms(&self, song: usize) -> i64 {
+        let time = self.time_ms(song);
+        if time < 0 {
+            return -1;
+        }
+        i64::from(time) + i64::from(self.fade_ms(song).max(0))
     }
 
     /// Whether the header names banks. Without them the data sits at the load
@@ -193,9 +464,9 @@ impl Nsf {
     }
 
     /// The console that the file is for: PAL only when the header says PAL and
-    /// not both.
+    /// not both. An NSFe file for both consoles can name PAL as its choice.
     pub fn region(&self) -> Region {
-        if self.region_bits & 3 == 1 {
+        if self.region_bits & 3 == 1 || (self.region_bits & 3 == 2 && self.prefer_pal) {
             Region::Pal
         } else {
             Region::Ntsc
@@ -301,6 +572,328 @@ mod tests {
         f[5] = 2;
         f[0x7D] = 2;
         assert_eq!(Nsf::parse(&f).unwrap().data, [1, 2]);
+    }
+
+    fn chunk(id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut c = (body.len() as u32).to_le_bytes().to_vec();
+        c.extend_from_slice(id);
+        c.extend_from_slice(body);
+        c
+    }
+
+    fn info(songs: u8, first: u8, chips: u8, region: u8) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&0x8000u16.to_le_bytes());
+        b.extend_from_slice(&0x8003u16.to_le_bytes());
+        b.extend_from_slice(&0x8000u16.to_le_bytes());
+        b.extend_from_slice(&[region, chips, songs, first]);
+        chunk(b"INFO", &b)
+    }
+
+    fn nsfe(chunks: &[Vec<u8>]) -> Vec<u8> {
+        let mut f = b"NSFE".to_vec();
+        for c in chunks {
+            f.extend_from_slice(c);
+        }
+        f
+    }
+
+    fn basic(extra: &[Vec<u8>]) -> Vec<u8> {
+        let mut chunks = vec![info(3, 1, 4, 0), chunk(b"DATA", &[1, 2, 3, 4])];
+        chunks.extend_from_slice(extra);
+        chunks.push(chunk(b"NEND", &[]));
+        nsfe(&chunks)
+    }
+
+    #[test]
+    fn an_nsfe_file_gives_the_header_fields() {
+        let g = Nsf::parse(&basic(&[])).unwrap();
+        assert!(g.is_nsfe());
+        assert_eq!((g.version, g.songs, g.first_song), (0, 3, 1));
+        assert_eq!((g.load, g.init, g.play), (0x8000, 0x8003, 0x8000));
+        assert_eq!((g.chips, g.region_bits, g.flags), (4, 0, 0));
+        assert_eq!(g.data, [1, 2, 3, 4]);
+        assert_eq!((g.ntsc_us, g.pal_us), (0, 0));
+        assert_eq!(g.play_interval_us(Region::Ntsc), 16639);
+        assert!(!g.is_banked());
+        assert!(g.title().is_empty() && g.ripper().is_empty() && g.comment().is_empty());
+        assert_eq!(g.time_ms(0), -1);
+        assert_eq!(g.length_ms(0), -1);
+        assert!(g.playlist().is_empty());
+    }
+
+    #[test]
+    fn an_info_chunk_of_9_bytes_starts_at_song_0() {
+        let mut i = info(3, 0, 0, 0);
+        i.pop();
+        i[0] = 9;
+        let g = Nsf::parse(&nsfe(&[i, chunk(b"DATA", &[0])])).unwrap();
+        assert_eq!(g.first_song, 0);
+    }
+
+    #[test]
+    fn the_first_song_stays_inside_the_count_in_an_nsfe_file() {
+        let g = Nsf::parse(&nsfe(&[info(2, 200, 0, 0), chunk(b"DATA", &[0])])).unwrap();
+        assert_eq!(g.first_song, 1);
+    }
+
+    #[test]
+    fn the_text_chunks() {
+        let g = Nsf::parse(&basic(&[
+            chunk(b"auth", b"Game\0Artist\0\0Ripper\0"),
+            chunk(b"text", b"A note\r\nof two lines\0"),
+            chunk(b"tlbl", b"One\0Two\0"),
+            chunk(b"taut", b"\0Second\0Third"),
+        ]))
+        .unwrap();
+        assert_eq!(g.title(), b"Game");
+        assert_eq!(g.author(), b"Artist");
+        assert_eq!(g.copyright(), b"");
+        assert_eq!(g.ripper(), b"Ripper");
+        assert_eq!(g.comment(), b"A note\r\nof two lines");
+        assert_eq!(g.song_title(0), b"One");
+        assert_eq!(g.song_title(1), b"Two");
+        assert_eq!(g.song_title(2), b"");
+        assert_eq!(g.song_title(9), b"");
+        assert_eq!(g.song_author(0), b"");
+        assert_eq!(g.song_author(1), b"Second");
+        assert_eq!(g.song_author(2), b"Third");
+    }
+
+    #[test]
+    fn text_that_is_not_utf8_is_repaired() {
+        let g = Nsf::parse(&basic(&[chunk(b"auth", b"Caf\xE9\0")])).unwrap();
+        assert_eq!(g.title(), "Caf\u{FFFD}".as_bytes());
+    }
+
+    #[test]
+    fn a_title_missing_from_a_short_auth_chunk_is_empty() {
+        let g = Nsf::parse(&basic(&[chunk(b"auth", b"")])).unwrap();
+        assert!(g.title().is_empty() && g.author().is_empty());
+    }
+
+    #[test]
+    fn times_and_fades() {
+        let mut time = Vec::new();
+        for t in [90_000i32, 0, -5] {
+            time.extend_from_slice(&t.to_le_bytes());
+        }
+        let mut fade = Vec::new();
+        for t in [4_000i32, -1] {
+            fade.extend_from_slice(&t.to_le_bytes());
+        }
+        let g = Nsf::parse(&basic(&[chunk(b"time", &time), chunk(b"fade", &fade)])).unwrap();
+        assert_eq!(
+            (g.time_ms(0), g.fade_ms(0), g.length_ms(0)),
+            (90_000, 4_000, 94_000)
+        );
+        assert_eq!((g.time_ms(1), g.fade_ms(1), g.length_ms(1)), (0, -1, 0));
+        assert_eq!((g.time_ms(2), g.fade_ms(2), g.length_ms(2)), (-1, -1, -1));
+        assert_eq!(g.time_ms(7), -1);
+    }
+
+    #[test]
+    fn a_time_chunk_that_is_too_short_leaves_the_rest_without_a_value() {
+        let g = Nsf::parse(&basic(&[chunk(b"time", &1000i32.to_le_bytes())])).unwrap();
+        assert_eq!((g.time_ms(0), g.time_ms(1)), (1000, -1));
+        let mut ragged = 1000i32.to_le_bytes().to_vec();
+        ragged.extend_from_slice(&[7, 0]);
+        let g = Nsf::parse(&basic(&[chunk(b"time", &ragged)])).unwrap();
+        assert_eq!((g.time_ms(0), g.time_ms(1)), (1000, -1));
+    }
+
+    #[test]
+    fn the_playlist_drops_songs_that_do_not_exist() {
+        let g = Nsf::parse(&basic(&[chunk(b"plst", &[2, 0, 0, 3, 255, 1])])).unwrap();
+        assert_eq!(g.playlist(), [2, 0, 0, 1]);
+    }
+
+    #[test]
+    fn banks_and_rate() {
+        let g = Nsf::parse(&basic(&[
+            chunk(b"BANK", &[1, 2, 3]),
+            chunk(b"RATE", &[0x10, 0x41, 0x1D, 0x4E, 0x01, 0x02]),
+        ]))
+        .unwrap();
+        assert_eq!(g.banks, [1, 2, 3, 0, 0, 0, 0, 0]);
+        assert!(g.is_banked());
+        assert_eq!((g.ntsc_us, g.pal_us), (0x4110, 0x4E1D));
+        let long =
+            Nsf::parse(&basic(&[chunk(b"BANK", &[9; 12]), chunk(b"RATE", &[5, 0])])).unwrap();
+        assert_eq!(long.banks, [9; 8]);
+        assert_eq!((long.ntsc_us, long.pal_us), (5, 0));
+    }
+
+    #[test]
+    fn the_nsf2_chunk_sets_the_feature_bits() {
+        let g = Nsf::parse(&basic(&[chunk(b"NSF2", &[nsf2::NO_PLAY])])).unwrap();
+        assert_eq!(g.flags, nsf2::NO_PLAY);
+    }
+
+    #[test]
+    fn the_region_chunk_overrides_the_info_bits() {
+        let f = |regn: &[u8]| Nsf::parse(&basic(&[chunk(b"regn", regn)])).unwrap();
+        assert_eq!(f(&[2]).region(), Region::Pal);
+        assert_eq!(f(&[1]).region(), Region::Ntsc);
+        assert_eq!(f(&[3, 1]).region(), Region::Pal);
+        assert_eq!(f(&[3, 0]).region(), Region::Ntsc);
+        assert_eq!(f(&[3]).region(), Region::Ntsc);
+        // A file that names only Dendy keeps the INFO bits.
+        let pal = nsfe(&[info(1, 0, 0, 1), chunk(b"DATA", &[0]), chunk(b"regn", &[4])]);
+        assert_eq!(Nsf::parse(&pal).unwrap().region(), Region::Pal);
+    }
+
+    #[test]
+    fn unknown_chunks_are_skipped_or_refuse_the_file() {
+        let g = Nsf::parse(&basic(&[
+            chunk(b"xyzw", b"anything"),
+            chunk(b"mixe", &[0; 6]),
+        ]))
+        .unwrap();
+        assert_eq!(g.songs, 3);
+        assert_eq!(
+            Nsf::parse(&basic(&[chunk(b"XYZW", b"anything")])),
+            Err(NsfError::Mandatory(*b"XYZW"))
+        );
+        // The VRC7 chunk is known.
+        assert!(Nsf::parse(&basic(&[chunk(b"VRC7", &[0])])).is_ok());
+    }
+
+    #[test]
+    fn nothing_after_nend_counts() {
+        let mut f = basic(&[]);
+        f.extend_from_slice(&chunk(b"XYZW", b"x"));
+        f.extend_from_slice(&chunk(b"auth", b"Late\0"));
+        let g = Nsf::parse(&f).unwrap();
+        assert!(g.title().is_empty());
+    }
+
+    #[test]
+    fn a_file_without_nend_is_read_to_its_end() {
+        let f = nsfe(&[
+            info(1, 0, 0, 0),
+            chunk(b"DATA", &[5, 6]),
+            chunk(b"auth", b"T\0"),
+        ]);
+        let g = Nsf::parse(&f).unwrap();
+        assert_eq!((g.data.as_slice(), g.title()), (&[5u8, 6][..], &b"T"[..]));
+    }
+
+    #[test]
+    fn a_data_chunk_that_runs_past_the_end_is_used_as_far_as_it_goes() {
+        let mut f = nsfe(&[info(1, 0, 0, 0), chunk(b"DATA", &[5, 6, 7, 8])]);
+        f.truncate(f.len() - 2);
+        assert_eq!(Nsf::parse(&f).unwrap().data, [5, 6]);
+    }
+
+    #[test]
+    fn another_chunk_that_runs_past_the_end_is_left_out() {
+        let mut f = basic(&[chunk(b"auth", b"Game\0")]);
+        // Cut inside the auth chunk and drop the NEND chunk.
+        f.truncate(f.len() - 8 - 3);
+        let g = Nsf::parse(&f).unwrap();
+        assert!(g.title().is_empty());
+        assert_eq!(g.data, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_chunk_length_beyond_the_file_does_not_overflow() {
+        let mut f = nsfe(&[info(1, 0, 0, 0), chunk(b"DATA", &[5])]);
+        f.extend_from_slice(&u32::MAX.to_le_bytes());
+        f.extend_from_slice(b"time");
+        f.extend_from_slice(&[1, 2, 3]);
+        assert!(Nsf::parse(&f).is_ok());
+    }
+
+    #[test]
+    fn a_malformed_nsfe_file_is_refused() {
+        assert_eq!(
+            Nsf::parse(&nsfe(&[chunk(b"DATA", &[1])])),
+            Err(NsfError::Chunk("there is no INFO chunk"))
+        );
+        assert_eq!(
+            Nsf::parse(&nsfe(&[info(1, 0, 0, 0)])),
+            Err(NsfError::Chunk("there is no DATA chunk"))
+        );
+        assert_eq!(
+            Nsf::parse(&nsfe(&[chunk(b"DATA", &[1]), info(1, 0, 0, 0)])),
+            Err(NsfError::Chunk("DATA comes before INFO"))
+        );
+        assert_eq!(
+            Nsf::parse(&nsfe(&[chunk(b"INFO", &[0; 8]), chunk(b"DATA", &[1])])),
+            Err(NsfError::Chunk("INFO is shorter than 9 bytes"))
+        );
+        assert_eq!(
+            Nsf::parse(&nsfe(&[info(0, 0, 0, 0), chunk(b"DATA", &[1])])),
+            Err(NsfError::NoSongs)
+        );
+        let mut low = info(1, 0, 0, 0);
+        low[8] = 0x00;
+        low[9] = 0x70;
+        assert_eq!(
+            Nsf::parse(&nsfe(&[low, chunk(b"DATA", &[1])])),
+            Err(NsfError::Load(0x7000))
+        );
+        assert_eq!(
+            Nsf::parse(b"NSFE"),
+            Err(NsfError::Chunk("there is no INFO chunk"))
+        );
+    }
+
+    #[test]
+    fn the_per_song_chunks_may_come_before_info() {
+        let f = nsfe(&[
+            chunk(b"tlbl", b"A\0B\0C\0"),
+            info(3, 0, 0, 0),
+            chunk(b"DATA", &[1]),
+        ]);
+        assert_eq!(Nsf::parse(&f).unwrap().song_title(2), b"C");
+    }
+
+    #[test]
+    fn an_nsf_file_has_no_song_data() {
+        let g = Nsf::parse(&file(2, 1, 0x8000, [0; 8], 0)).unwrap();
+        assert!(!g.is_nsfe());
+        assert_eq!(g.song_title(0), b"");
+        assert_eq!(g.length_ms(1), -1);
+        assert!(g.playlist().is_empty() && g.ripper().is_empty());
+    }
+
+    #[test]
+    fn damaged_files_never_panic() {
+        let base = basic(&[
+            chunk(b"auth", b"Game\0Artist\0Copy\0Ripper\0"),
+            chunk(b"tlbl", b"One\0Two\0Three\0"),
+            chunk(b"time", &[1, 0, 0, 0, 2, 0, 0, 0]),
+            chunk(b"plst", &[0, 1, 2]),
+            chunk(b"RATE", &[1, 2, 3, 4]),
+        ]);
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..20_000 {
+            let mut f = base.clone();
+            for _ in 0..1 + next() % 4 {
+                let at = (next() % f.len() as u64) as usize;
+                match next() % 3 {
+                    0 => f[at] = next() as u8,
+                    1 => f.truncate(at),
+                    _ => f.insert(at, next() as u8),
+                }
+                if f.is_empty() {
+                    break;
+                }
+            }
+            if let Ok(g) = Nsf::parse(&f) {
+                for song in 0..usize::from(g.songs) + 2 {
+                    let _ = (g.song_title(song), g.length_ms(song));
+                }
+            }
+        }
     }
 
     #[test]

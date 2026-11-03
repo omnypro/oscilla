@@ -22,6 +22,10 @@ pub struct CImage {
     title: CString,
     author: CString,
     copyright: CString,
+    ripper: CString,
+    comment: CString,
+    labels: Vec<CString>,
+    song_authors: Vec<CString>,
 }
 
 fn c_text(bytes: &[u8]) -> CString {
@@ -31,12 +35,19 @@ fn c_text(bytes: &[u8]) -> CString {
 
 fn make_image(bytes: &[u8], error: *mut c_char, error_size: usize) -> Result<Box<CImage>, c_int> {
     match Nsf::parse(bytes) {
-        Ok(nsf) => Ok(Box::new(CImage {
-            title: c_text(nsf.title()),
-            author: c_text(nsf.author()),
-            copyright: c_text(nsf.copyright()),
-            nsf,
-        })),
+        Ok(nsf) => {
+            let songs = usize::from(nsf.songs);
+            Ok(Box::new(CImage {
+                title: c_text(nsf.title()),
+                author: c_text(nsf.author()),
+                copyright: c_text(nsf.copyright()),
+                ripper: c_text(nsf.ripper()),
+                comment: c_text(nsf.comment()),
+                labels: (0..songs).map(|i| c_text(nsf.song_title(i))).collect(),
+                song_authors: (0..songs).map(|i| c_text(nsf.song_author(i))).collect(),
+                nsf,
+            }))
+        }
         Err(e) => {
             write_error(error, error_size, e.to_string().as_bytes());
             Err(FORMAT)
@@ -209,6 +220,100 @@ pub unsafe extern "C" fn cnes_image_copyright(image: *const CImage) -> *const c_
         return ptr::null();
     }
     unsafe { &*image }.copyright.as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_ripper(image: *const CImage) -> *const c_char {
+    if image.is_null() {
+        return ptr::null();
+    }
+    unsafe { &*image }.ripper.as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_comment(image: *const CImage) -> *const c_char {
+    if image.is_null() {
+        return ptr::null();
+    }
+    unsafe { &*image }.comment.as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_is_nsfe(image: *const CImage) -> c_int {
+    if image.is_null() {
+        return 0;
+    }
+    c_int::from(unsafe { &*image }.nsf.is_nsfe())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_song_title(image: *const CImage, song: c_int) -> *const c_char {
+    if image.is_null() {
+        return ptr::null();
+    }
+    let image = unsafe { &*image };
+    usize::try_from(song)
+        .ok()
+        .and_then(|i| image.labels.get(i))
+        .map_or(ptr::null(), |t| t.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_song_author(
+    image: *const CImage,
+    song: c_int,
+) -> *const c_char {
+    if image.is_null() {
+        return ptr::null();
+    }
+    let image = unsafe { &*image };
+    usize::try_from(song)
+        .ok()
+        .and_then(|i| image.song_authors.get(i))
+        .map_or(ptr::null(), |t| t.as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_song_time_ms(image: *const CImage, song: c_int) -> i32 {
+    if image.is_null() {
+        return -1;
+    }
+    usize::try_from(song).map_or(-1, |i| unsafe { &*image }.nsf.time_ms(i))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_song_fade_ms(image: *const CImage, song: c_int) -> i32 {
+    if image.is_null() {
+        return -1;
+    }
+    usize::try_from(song).map_or(-1, |i| unsafe { &*image }.nsf.fade_ms(i))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_song_length_ms(image: *const CImage, song: c_int) -> i64 {
+    if image.is_null() {
+        return -1;
+    }
+    usize::try_from(song).map_or(-1, |i| unsafe { &*image }.nsf.length_ms(i))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_playlist_count(image: *const CImage) -> c_int {
+    if image.is_null() {
+        return 0;
+    }
+    unsafe { &*image }.nsf.playlist().len() as c_int
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_image_playlist_get(image: *const CImage, index: c_int) -> c_int {
+    if image.is_null() {
+        return -1;
+    }
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| unsafe { &*image }.nsf.playlist().get(i))
+        .map_or(-1, |&s| c_int::from(s))
 }
 
 // ---- Machines ---------------------------------------------------------

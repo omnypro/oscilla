@@ -11,7 +11,7 @@ asks for.
 - `cores/gba`: Game Boy Advance. Plays GSF and minigsf sets and bare
   cartridge images.
 - `cores/gb`: Game Boy. Plays GBS files.
-- `cores/nes`: NES. Plays NSF files.
+- `cores/nes`: NES. Plays NSF and NSFe files.
 
 ## Layout
 
@@ -19,7 +19,7 @@ asks for.
 - `cores/<name>/tests`, `tools` and `DESIGN.md`: Swift tests of the C
   interface, command-line tools and design notes.
 - `formats/psf`, `formats/gbs` and `formats/nsf`: the PSF, GBS and NSF
-  containers.
+  containers (`formats/nsf` reads NSFe too).
 - `audio/resample`: the band-limited rate conversion that every core uses.
 - `ffi`: the C interface. One static library exports every core, and a cargo
   feature (`gba`, `gb`, `nes`) selects each one.
