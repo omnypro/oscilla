@@ -87,6 +87,8 @@ pub mod nsf2 {
     pub const NON_RETURNING_INIT: u8 = 32;
     /// The play routine is never called.
     pub const NO_PLAY: u8 = 64;
+    /// The NSFe chunks after the program include a mandatory one.
+    pub const METADATA: u8 = 128;
 }
 
 /// A parsed file. The data is the program bytes after the header. They belong
@@ -181,6 +183,86 @@ const KNOWN_MANDATORY: [&[u8; 4]; 7] = [
     b"INFO", b"DATA", b"NEND", b"BANK", b"RATE", b"NSF2", b"VRC7",
 ];
 
+/// The chunks of an NSFe file, or of the metadata that follows the program of
+/// a version 2 file. A chunk that is missing is empty.
+#[derive(Default)]
+struct Chunks<'a> {
+    info: Option<&'a [u8]>,
+    data: Option<&'a [u8]>,
+    data_first: bool,
+    bank: &'a [u8],
+    rate: Option<&'a [u8]>,
+    nsf2: Option<u8>,
+    regn: &'a [u8],
+    auth: &'a [u8],
+    taut: &'a [u8],
+    tlbl: &'a [u8],
+    plst: &'a [u8],
+    time: &'a [u8],
+    fade: &'a [u8],
+    text: &'a [u8],
+}
+
+/// Reads the chunks in `file` from `at`. A chunk whose ID starts with an
+/// uppercase letter is mandatory: when `strict` is set, one that this reader
+/// does not know refuses the file, and otherwise it is skipped. After the
+/// program of a version 2 file the chunks INFO, DATA, BANK and NSF2 are not
+/// allowed and are skipped (`tail`).
+fn scan(file: &[u8], mut at: usize, strict: bool, tail: bool) -> Result<Chunks<'_>, NsfError> {
+    let mut c = Chunks::default();
+    while at + 8 <= file.len() {
+        let len = u32::from_le_bytes([file[at], file[at + 1], file[at + 2], file[at + 3]]);
+        let id: [u8; 4] = [file[at + 4], file[at + 5], file[at + 6], file[at + 7]];
+        let start = at + 8;
+        if strict && id[0].is_ascii_uppercase() && !KNOWN_MANDATORY.contains(&&id) {
+            return Err(NsfError::Mandatory(id));
+        }
+        let room = file.len() - start;
+        let cut = u64::from(len) > room as u64;
+        let body = &file[start..start + if cut { room } else { len as usize }];
+        if cut && &id != b"DATA" {
+            break;
+        }
+        let allowed = !tail;
+        match &id {
+            b"INFO" if allowed => c.info = Some(body),
+            b"DATA" if allowed => {
+                c.data_first |= c.info.is_none();
+                c.data = Some(body);
+            }
+            b"BANK" if allowed => c.bank = body,
+            b"NSF2" if allowed => c.nsf2 = Some(body.first().copied().unwrap_or(0)),
+            b"RATE" => c.rate = Some(body),
+            b"regn" => c.regn = body,
+            b"auth" => c.auth = body,
+            b"taut" => c.taut = body,
+            b"tlbl" => c.tlbl = body,
+            b"plst" => c.plst = body,
+            b"time" => c.time = body,
+            b"fade" => c.fade = body,
+            b"text" => c.text = body,
+            b"NEND" => break,
+            _ => {}
+        }
+        if cut {
+            break;
+        }
+        at = start + body.len();
+    }
+    Ok(c)
+}
+
+/// The region bits and the preference for PAL after a regn chunk. Dendy has no
+/// region of its own here: a chunk that names only Dendy changes nothing.
+fn region_from(bits: u8, prefer_pal: bool, regn: &[u8]) -> (u8, bool) {
+    match regn.first().map(|&b| (b & 1 != 0, b & 2 != 0)) {
+        Some((true, false)) => (0, false),
+        Some((false, true)) => (1, false),
+        Some((true, true)) => (2, regn.get(1) == Some(&1)),
+        _ => (bits, prefer_pal),
+    }
+}
+
 impl Nsf {
     /// Reads an NSF or an NSFe file, by the first bytes.
     pub fn parse(file: &[u8]) -> Result<Nsf, NsfError> {
@@ -214,17 +296,20 @@ impl Nsf {
         let mut banks = [0u8; 8];
         banks.copy_from_slice(&file[0x70..0x78]);
         let mut data = &file[HEADER_SIZE..];
-        // A version 2 file may state the length of the program, with data
-        // after it that this reader does not use.
+        let mut tail: &[u8] = &[];
+        let flags = if version == 2 { file[0x7C] } else { 0 };
+        // A version 2 file may state the length of the program, with NSFe
+        // chunks after it.
         if version == 2 {
             let len = usize::from(file[0x7D])
                 | usize::from(file[0x7E]) << 8
                 | usize::from(file[0x7F]) << 16;
             if len != 0 && len < data.len() {
+                tail = &data[len..];
                 data = &data[..len];
             }
         }
-        Ok(Nsf {
+        let mut nsf = Nsf {
             version,
             songs,
             first_song: file[7].saturating_sub(1).min(songs - 1),
@@ -236,7 +321,7 @@ impl Nsf {
             banks,
             region_bits: file[0x7A],
             chips: file[0x7B],
-            flags: if version == 2 { file[0x7C] } else { 0 },
+            flags,
             title: field(0x0E),
             author: field(0x2E),
             copyright: field(0x4E),
@@ -250,63 +335,64 @@ impl Nsf {
             prefer_pal: false,
             nsfe: false,
             data: data.to_vec(),
-        })
+        };
+        if !tail.is_empty() {
+            nsf.read_tail(tail, flags & nsf2::METADATA != 0)?;
+        }
+        Ok(nsf)
+    }
+
+    /// Reads the NSFe chunks that follow the program of a version 2 file. A
+    /// file whose flags say that a mandatory chunk is there is refused when
+    /// the reader does not know one; any other file keeps what it can read.
+    fn read_tail(&mut self, tail: &[u8], mandatory: bool) -> Result<(), NsfError> {
+        let c = scan(tail, 0, mandatory, true)?;
+        let count = usize::from(self.songs);
+        if let Some(rate) = c.rate {
+            if let Some(us) = rate.get(0..2).map(word) {
+                self.ntsc_us = us;
+            }
+            if let Some(us) = rate.get(2..4).map(word) {
+                self.pal_us = us;
+            }
+        }
+        (self.region_bits, self.prefer_pal) =
+            region_from(self.region_bits, self.prefer_pal, c.regn);
+        let mut auth = strings(c.auth).into_iter();
+        for field in [
+            &mut self.title,
+            &mut self.author,
+            &mut self.copyright,
+            &mut self.ripper,
+        ] {
+            if let Some(v) = auth.next().filter(|v| !v.is_empty()) {
+                *field = v;
+            }
+        }
+        if !c.text.is_empty() {
+            self.comment = text(&utf8(c.text)).to_vec();
+        }
+        let names = |chunk: &[u8]| {
+            let mut v = strings(chunk);
+            v.resize(count, Vec::new());
+            v
+        };
+        self.labels = names(c.tlbl);
+        self.song_authors = names(c.taut);
+        self.playlist = c.plst.iter().copied().filter(|&s| s < self.songs).collect();
+        self.times = millis(c.time, count);
+        self.fades = millis(c.fade, count);
+        Ok(())
     }
 
     fn parse_nsfe(file: &[u8]) -> Result<Nsf, NsfError> {
-        let mut info: Option<&[u8]> = None;
-        let mut data: Option<&[u8]> = None;
-        let mut bank: &[u8] = &[];
-        let mut rate: &[u8] = &[];
-        let mut flags = 0u8;
-        let mut regn: &[u8] = &[];
-        let mut auth: &[u8] = &[];
-        let mut taut: &[u8] = &[];
-        let mut tlbl: &[u8] = &[];
-        let mut plst: &[u8] = &[];
-        let mut time: &[u8] = &[];
-        let mut fade: &[u8] = &[];
-        let mut comment: &[u8] = &[];
-        let mut data_first = false;
-        let mut at = 4;
-        while at + 8 <= file.len() {
-            let len = u32::from_le_bytes([file[at], file[at + 1], file[at + 2], file[at + 3]]);
-            let id: [u8; 4] = [file[at + 4], file[at + 5], file[at + 6], file[at + 7]];
-            let start = at + 8;
-            if id[0].is_ascii_uppercase() && !KNOWN_MANDATORY.contains(&&id) {
-                return Err(NsfError::Mandatory(id));
-            }
-            let room = file.len() - start;
-            let cut = usize::try_from(len).map_or(true, |n| n > room);
-            let body = &file[start..start + if cut { room } else { len as usize }];
-            if cut && &id != b"DATA" {
-                break;
-            }
-            match &id {
-                b"INFO" => info = Some(body),
-                b"DATA" => {
-                    data_first |= info.is_none();
-                    data = Some(body);
-                }
-                b"BANK" => bank = body,
-                b"RATE" => rate = body,
-                b"NSF2" => flags = body.first().copied().unwrap_or(0),
-                b"regn" => regn = body,
-                b"auth" => auth = body,
-                b"taut" => taut = body,
-                b"tlbl" => tlbl = body,
-                b"plst" => plst = body,
-                b"time" => time = body,
-                b"fade" => fade = body,
-                b"text" => comment = body,
-                b"NEND" => break,
-                _ => {}
-            }
-            if cut {
-                break;
-            }
-            at = start + body.len();
-        }
+        let c = scan(file, 4, true, false)?;
+        let (info, data, bank, rate, regn) =
+            (c.info, c.data, c.bank, c.rate.unwrap_or(&[]), c.regn);
+        let flags = c.nsf2.unwrap_or(0);
+        let (auth, taut, tlbl, plst, time, fade, comment) =
+            (c.auth, c.taut, c.tlbl, c.plst, c.time, c.fade, c.text);
+        let data_first = c.data_first;
         let Some(info) = info else {
             return Err(NsfError::Chunk("there is no INFO chunk"));
         };
@@ -335,21 +421,7 @@ impl Nsf {
             rate.get(0..2).map_or(0, word),
             rate.get(2..4).map_or(0, word),
         );
-        let mut region_bits = info[6];
-        let mut prefer_pal = false;
-        if let Some(&supported) = regn.first() {
-            // Dendy has no region of its own here: a file that names only
-            // Dendy keeps the INFO bits.
-            match (supported & 1 != 0, supported & 2 != 0) {
-                (true, false) => region_bits = 0,
-                (false, true) => region_bits = 1,
-                (true, true) => {
-                    region_bits = 2;
-                    prefer_pal = regn.get(1) == Some(&1);
-                }
-                (false, false) => {}
-            }
-        }
+        let (region_bits, prefer_pal) = region_from(info[6], false, regn);
         let names = |chunk: &[u8]| {
             let mut v = strings(chunk);
             v.resize(count, Vec::new());
@@ -859,15 +931,134 @@ mod tests {
         assert!(g.playlist().is_empty() && g.ripper().is_empty());
     }
 
+    /// A version 2 file whose program is the 4 bytes of `file`, then `tail`.
+    fn nsf2_with(flags: u8, tail: &[Vec<u8>]) -> Vec<u8> {
+        let mut f = file(3, 1, 0x8000, [0; 8], 0);
+        f[5] = 2;
+        f[0x7C] = flags;
+        f[0x7D] = 4;
+        for c in tail {
+            f.extend_from_slice(c);
+        }
+        f
+    }
+
+    #[test]
+    fn a_version_2_file_carries_nsfe_chunks_after_its_program() {
+        let mut time = Vec::new();
+        for t in [30_000i32, 40_000] {
+            time.extend_from_slice(&t.to_le_bytes());
+        }
+        let f = nsf2_with(
+            nsf2::METADATA,
+            &[
+                chunk(b"auth", b"Longer title\0\0\0Ripper\0"),
+                chunk(b"tlbl", b"One\0Two\0"),
+                chunk(b"time", &time),
+                chunk(b"plst", &[1, 0]),
+                chunk(b"text", b"Note\0"),
+                chunk(b"RATE", &[0x0A, 0x40]),
+                chunk(b"VRC7", &[0]),
+                chunk(b"NEND", &[]),
+            ],
+        );
+        let g = Nsf::parse(&f).unwrap();
+        assert!(!g.is_nsfe());
+        assert_eq!(g.data, [1, 2, 3, 4]);
+        // A field that the chunk gives replaces the header's. One that it
+        // leaves empty keeps the header's.
+        assert_eq!(g.title(), b"Longer title");
+        assert_eq!(g.author(), b"Name");
+        assert_eq!(g.copyright(), b"?");
+        assert_eq!(g.ripper(), b"Ripper");
+        assert_eq!(g.comment(), b"Note");
+        assert_eq!(
+            (g.song_title(0), g.song_title(1), g.song_title(2)),
+            (&b"One"[..], &b"Two"[..], &b""[..])
+        );
+        assert_eq!(
+            (g.time_ms(0), g.time_ms(1), g.time_ms(2)),
+            (30_000, 40_000, -1)
+        );
+        assert_eq!(g.playlist(), [1, 0]);
+        assert_eq!((g.ntsc_us, g.pal_us), (0x400A, 19997));
+    }
+
+    #[test]
+    fn the_chunks_a_version_2_file_may_not_repeat_are_skipped() {
+        let f = nsf2_with(
+            0,
+            &[
+                chunk(b"INFO", &[0; 10]),
+                chunk(b"DATA", &[9, 9]),
+                chunk(b"BANK", &[7; 8]),
+                chunk(b"NSF2", &[nsf2::NO_PLAY]),
+                chunk(b"tlbl", b"Kept\0"),
+            ],
+        );
+        let g = Nsf::parse(&f).unwrap();
+        assert_eq!(g.data, [1, 2, 3, 4]);
+        assert!(!g.is_banked());
+        assert_eq!(g.flags, 0);
+        assert_eq!(g.song_title(0), b"Kept");
+    }
+
+    #[test]
+    fn an_unknown_mandatory_chunk_matters_only_when_the_flag_says_so() {
+        let tail = [chunk(b"SAMP", &[1, 2, 3]), chunk(b"tlbl", b"Kept\0")];
+        assert_eq!(
+            Nsf::parse(&nsf2_with(nsf2::METADATA, &tail)),
+            Err(NsfError::Mandatory(*b"SAMP"))
+        );
+        let g = Nsf::parse(&nsf2_with(0, &tail)).unwrap();
+        assert_eq!(g.song_title(0), b"Kept");
+    }
+
+    #[test]
+    fn a_version_1_file_ignores_what_follows_its_program() {
+        let mut f = file(3, 1, 0x8000, [0; 8], 0);
+        f[0x7D] = 4;
+        f.extend_from_slice(&chunk(b"tlbl", b"Ignored\0"));
+        let g = Nsf::parse(&f).unwrap();
+        // The program, then the chunk's 8 header bytes and 8 bytes of text.
+        assert_eq!(g.data.len(), 4 + 8 + 8);
+        assert_eq!(g.song_title(0), b"");
+    }
+
+    #[test]
+    fn a_version_2_file_without_a_length_has_no_metadata() {
+        let mut f = nsf2_with(0, &[chunk(b"tlbl", b"Lost\0")]);
+        f[0x7D] = 0;
+        let g = Nsf::parse(&f).unwrap();
+        assert_eq!(g.song_title(0), b"");
+        assert_eq!(g.data.len(), 4 + 8 + 5);
+    }
+
+    #[test]
+    fn the_region_chunk_of_a_version_2_file_changes_the_region() {
+        let g = Nsf::parse(&nsf2_with(0, &[chunk(b"regn", &[2])])).unwrap();
+        assert_eq!(g.region(), Region::Pal);
+    }
+
     #[test]
     fn damaged_files_never_panic() {
-        let base = basic(&[
+        let nsfe = basic(&[
             chunk(b"auth", b"Game\0Artist\0Copy\0Ripper\0"),
             chunk(b"tlbl", b"One\0Two\0Three\0"),
             chunk(b"time", &[1, 0, 0, 0, 2, 0, 0, 0]),
             chunk(b"plst", &[0, 1, 2]),
             chunk(b"RATE", &[1, 2, 3, 4]),
         ]);
+        let nsf2 = nsf2_with(
+            nsf2::METADATA,
+            &[
+                chunk(b"auth", b"Game\0Artist\0"),
+                chunk(b"tlbl", b"One\0Two\0Three\0"),
+                chunk(b"time", &[1, 0, 0, 0]),
+                chunk(b"plst", &[2, 1, 0]),
+                chunk(b"VRC7", &[0]),
+            ],
+        );
         let mut seed = 0x2545_F491_4F6C_DD1Du64;
         let mut next = move || {
             seed ^= seed << 13;
@@ -875,8 +1066,8 @@ mod tests {
             seed ^= seed << 17;
             seed
         };
-        for _ in 0..20_000 {
-            let mut f = base.clone();
+        for round in 0..40_000 {
+            let mut f = if round % 2 == 0 { &nsfe } else { &nsf2 }.clone();
             for _ in 0..1 + next() % 4 {
                 let at = (next() % f.len() as u64) as usize;
                 match next() % 3 {
