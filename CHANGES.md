@@ -1,5 +1,14 @@
 # Changes
 
+## 0.3.4
+
+- The Famicom Disk System expansion chip: the wavetable channel with its
+  volume envelope and modulation unit, played for files that ask for it. The
+  channel mask has bit 19 for it, and `cnes_expansion_levels_get` shows its
+  level.
+- `cnes_channel_mask` returns `0xFFFFF` at the start, with a bit for each
+  channel of the 2A03 and of the four expansion chips.
+
 ## 0.3.3
 
 - The Namco 163 expansion chip: eight wavetable channels, played for files that
