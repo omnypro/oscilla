@@ -224,3 +224,15 @@ pub fn start_timer(period: u16) -> Vec<u8> {
 
 /// `inc $00; lda $401D; rti`: counts the interrupt and acknowledges the timer.
 pub const COUNT_ISR: [u8; 6] = [0xE6, 0x00, 0xAD, 0x1D, 0x40, 0x40];
+
+/// The same as `machine`, for a file that asks for the VT02.
+pub fn vt02_machine(init: &[u8], play: &[u8]) -> Machine {
+    vt02_with(init, play, None)
+}
+
+/// The same with bytes at offset `at` of the program.
+pub fn vt02_with(init: &[u8], play: &[u8], extra: Option<(usize, &[u8])>) -> Machine {
+    let mut f = file_with(init, play, 16666, 0, [0; 8], extra);
+    f[0x7B] = oscilla_nsf::chips::VT02;
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}

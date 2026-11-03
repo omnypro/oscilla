@@ -635,7 +635,7 @@ pub unsafe extern "C" fn cnes_expansion_levels_get(machine: *const CMachine, out
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn cnes_set_channel_mask(machine: *mut CMachine, mask: u32) {
+pub unsafe extern "C" fn cnes_set_channel_mask(machine: *mut CMachine, mask: u64) {
     if unsafe { in_callback(machine) } {
         return;
     }
@@ -643,7 +643,7 @@ pub unsafe extern "C" fn cnes_set_channel_mask(machine: *mut CMachine, mask: u32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn cnes_channel_mask(machine: *const CMachine) -> u32 {
+pub unsafe extern "C" fn cnes_channel_mask(machine: *const CMachine) -> u64 {
     if unsafe { in_callback(machine) } {
         return 0;
     }

@@ -146,10 +146,11 @@ struct MachineTests {
         let vrc7 = try #require(Support.machine(init: Support.note, chips: 2))
         let mmc5 = try #require(Support.machine(init: Support.note, chips: 8))
         let vt02 = try #require(Support.machine(init: Support.note, chips: 64))
+        let unknown = try #require(Support.machine(init: Support.note, chips: 128))
         defer {
             cnes_free(plain); cnes_free(vrc6); cnes_free(s5b)
             cnes_free(n163); cnes_free(fds); cnes_free(vrc7)
-            cnes_free(mmc5); cnes_free(vt02)
+            cnes_free(mmc5); cnes_free(vt02); cnes_free(unknown)
         }
         #expect(String(cString: cnes_warnings(plain)).isEmpty)
         #expect(String(cString: cnes_warnings(vrc6)).isEmpty, "the VRC6 is played")
@@ -158,7 +159,8 @@ struct MachineTests {
         #expect(String(cString: cnes_warnings(fds)).isEmpty, "the FDS is played")
         #expect(String(cString: cnes_warnings(vrc7)).isEmpty, "the VRC7 is played")
         #expect(String(cString: cnes_warnings(mmc5)).isEmpty, "the MMC5 is played")
-        #expect(String(cString: cnes_warnings(vt02)).contains("expansion"))
+        #expect(String(cString: cnes_warnings(vt02)).isEmpty, "the VT02 is played")
+        #expect(String(cString: cnes_warnings(unknown)).contains("expansion"))
     }
 
     @Test func theEndStateTellsAnEmptyUnitFromAPlayingOne() throws {
@@ -182,7 +184,7 @@ struct RefusalTests {
         var snapshot: OpaquePointer?
         var restore: Int32 = -1
         var selected: Int32 = -1
-        var channelMask: UInt32 = 0
+        var channelMask: UInt64 = 0
         var done = false
     }
 
@@ -214,7 +216,7 @@ struct RefusalTests {
         #expect(probe.restore == 3)
         #expect(probe.selected == 0)
         #expect(probe.channelMask == 0, "the mask call returned a neutral value")
-        #expect(cnes_channel_mask(m) == 0x1FFFFFFF, "the mask did not change")
+        #expect(cnes_channel_mask(m) == 0x3_FFFF_FFFF, "the mask did not change")
         #expect(cnes_song(m) == 0)
         cnes_run_cycles(m, 1000)
         #expect(cnes_cycles(m) >= 2000, "the machine is intact and still running")

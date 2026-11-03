@@ -209,6 +209,9 @@ struct Mixer {
     mmc5_pulse: f64,
     /// One step of the MMC5's sample register.
     mmc5_pcm: f64,
+    /// One step of the VT02's raw PCM: the delta channel's full scale over the
+    /// 255 steps of an eight-bit level.
+    vt_pcm: f64,
 }
 
 fn mixer() -> &'static Mixer {
@@ -224,6 +227,7 @@ fn mixer() -> &'static Mixer {
             vrc7: 0.0,
             mmc5_pulse: 0.0,
             mmc5_pcm: 0.0,
+            vt_pcm: 0.0,
         };
         for (n, slot) in m.pulse.iter_mut().enumerate().skip(1) {
             *slot = 95.52 / (8128.0 / n as f64 + 100.0);
@@ -237,6 +241,7 @@ fn mixer() -> &'static Mixer {
         m.vrc7 = m.pulse[15] * crate::vrc7::VRC7_GAIN;
         m.mmc5_pulse = m.pulse[15] / 15.0;
         m.mmc5_pcm = m.tnd[127] / 127.0;
+        m.vt_pcm = m.tnd[127] / 255.0;
         for (slot, amp) in m.s5b.iter_mut().zip(crate::s5b::amplitudes()) {
             *slot = amp * m.pulse[15] * crate::s5b::S5B_GAIN;
         }
@@ -460,6 +465,52 @@ impl Noise {
     }
 }
 
+impl Vt {
+    /// The duty setting as the VT02 reads it: the 25% and 50% settings trade
+    /// places.
+    pub(crate) fn duty(&self, v: u8) -> u8 {
+        if self.active {
+            [0, 2, 1, 3][usize::from(v & 3)]
+        } else {
+            v & 3
+        }
+    }
+
+    /// The first sample address for a store of `v` to $4012. Bits 14 and 15
+    /// come from the complement of $4030's low bits, which leaves 0xC000 when
+    /// the register holds 0.
+    pub(crate) fn dma_address(&self, v: u8) -> u16 {
+        let high = u16::from(!self.control & 3) << 14;
+        high | u16::from(v) << 6
+    }
+
+    /// The sample length for a store of `v` to $4013: 16 bytes for each step
+    /// and one more, or with bit 5 of $4030 set, 16 bytes for each step above
+    /// zero.
+    pub(crate) fn dma_length(&self, v: u8) -> u16 {
+        if self.control & 0x20 != 0 {
+            (u16::from(v) + 1) << 4
+        } else {
+            u16::from(v) << 4 | 1
+        }
+    }
+
+    /// Whether the first generator reaches the output.
+    pub(crate) fn first_on(&self) -> bool {
+        !self.active || self.control & 4 == 0
+    }
+
+    /// Whether the second generator reaches the output.
+    pub(crate) fn second_on(&self) -> bool {
+        self.active && self.control & 8 != 0
+    }
+
+    /// Whether the delta channel plays its bytes as raw PCM.
+    pub(crate) fn raw_pcm(&self) -> bool {
+        self.active && self.control & 0x10 != 0
+    }
+}
+
 impl Apu {
     pub(crate) fn new(region: Region, chips: u8) -> Apu {
         let mut a = Apu {
@@ -480,6 +531,13 @@ impl Apu {
             fds: Fds::default(),
             mmc5: Mmc5::default(),
             vrc7: Vrc7::default(),
+            vt: Vt::default(),
+            pulse2: [Pulse::default(), Pulse::default()],
+            tri2: Triangle::default(),
+            noise2: Noise {
+                lfsr: 1,
+                ..Noise::default()
+            },
             enabled: 0,
             frame: FrameCounter::default(),
             time: 0,
@@ -493,8 +551,13 @@ impl Apu {
         for p in &mut a.pulse {
             p.next_step = p.period_cycles();
         }
+        for p in &mut a.pulse2 {
+            p.next_step = p.period_cycles();
+        }
         a.tri.next_step = 1;
+        a.tri2.next_step = 1;
         a.noise.next_step = noise_period(region, 0);
+        a.noise2.next_step = noise_period(region, 0);
         a.dmc.next_step = dmc_period(region, 0);
         a.vrc6.pulse[0].next_step = 1;
         a.vrc6.pulse[1].next_step = 1;
@@ -526,6 +589,7 @@ impl Apu {
         if chips & oscilla_nsf::chips::VRC7 != 0 {
             a.vrc7 = Vrc7::new(clock_of(region));
         }
+        a.vt.active = chips & oscilla_nsf::chips::VT02 != 0;
         a.vrc6.pulse[0].counter = 15;
         a.vrc6.pulse[1].counter = 15;
         a.frame.next = sequence(region, false)[0].0;
@@ -540,6 +604,12 @@ impl Apu {
             p.settle(t);
         }
         self.tri.settle(t);
+        if self.vt.active {
+            for (i, p) in self.pulse2.iter_mut().enumerate() {
+                p.settle(t, i);
+            }
+            self.tri2.settle(t);
+        }
         let shift = self.vrc6.shift;
         for p in &mut self.vrc6.pulse {
             p.settle(t, shift);
@@ -560,10 +630,11 @@ impl Apu {
     }
 
     /// The mix of the channels that `mask` lets through, in the mixer's units.
-    pub(crate) fn mix(&self, mask: u32) -> f64 {
+    pub(crate) fn mix(&self, mask: u64) -> f64 {
         let l = self.levels();
+        let first = self.vt.first_on();
         let on = |n: usize| {
-            if mask >> n & 1 != 0 {
+            if first && mask >> n & 1 != 0 {
                 usize::from(l[n])
             } else {
                 0
@@ -606,6 +677,19 @@ impl Apu {
         if self.n163.active && mask >> (11 + u32::from(self.n163.out_channel)) & 1 != 0 {
             expansion += f64::from(self.n163.out_value) * m.n163;
         }
+        if self.vt.second_on() {
+            let l = self.vt_levels();
+            let at = |n: u32, level: u8| {
+                if mask >> n & 1 != 0 {
+                    usize::from(level)
+                } else {
+                    0
+                }
+            };
+            expansion += m.pulse[at(29, l[0]) + at(30, l[1])]
+                + m.tnd[3 * at(31, l[2]) + 2 * at(32, l[3])]
+                + at(33, l[4]) as f64 * m.vt_pcm;
+        }
         m.pulse[on(0) + on(1)] + m.tnd[3 * on(2) + 2 * on(3) + on(4)] + expansion
     }
 
@@ -614,6 +698,18 @@ impl Apu {
     pub(crate) fn vrc6_levels(&self) -> [u8; 3] {
         let v = &self.vrc6;
         [v.pulse[0].output(), v.pulse[1].output(), v.saw.output()]
+    }
+
+    /// The levels of the VT02's second generator before the mixer: pulse 3,
+    /// pulse 4, triangle 2, noise 2 (0 to 15) and the raw PCM level (0 to 255).
+    pub(crate) fn vt_levels(&self) -> [u8; 5] {
+        [
+            self.pulse2[0].output(0),
+            self.pulse2[1].output(1),
+            TRIANGLE[usize::from(self.tri2.pos)],
+            self.noise2.output(),
+            self.vt.pcm,
+        ]
     }
 
     /// The levels of the MMC5's two pulse channels (0 to 15) and its sample
@@ -635,6 +731,14 @@ impl Apu {
         let n = &mut self.noise;
         n.env.clock(n.volume, n.halt);
         self.tri.linear_clock();
+        if self.vt.active {
+            for p in &mut self.pulse2 {
+                p.env.clock(p.volume, p.halt);
+            }
+            let n = &mut self.noise2;
+            n.env.clock(n.volume, n.halt);
+            self.tri2.linear_clock();
+        }
     }
 
     fn half_clock(&mut self) {
@@ -651,6 +755,22 @@ impl Apu {
         }
         for (i, p) in self.pulse.iter_mut().enumerate() {
             p.sweep_clock(i);
+        }
+        if self.vt.active {
+            for p in &mut self.pulse2 {
+                if !p.halt && p.len > 0 {
+                    p.len -= 1;
+                }
+            }
+            if !self.tri2.control && self.tri2.len > 0 {
+                self.tri2.len -= 1;
+            }
+            if !self.noise2.halt && self.noise2.len > 0 {
+                self.noise2.len -= 1;
+            }
+            for (i, p) in self.pulse2.iter_mut().enumerate() {
+                p.sweep_clock(i);
+            }
         }
     }
 }
@@ -735,6 +855,22 @@ impl Machine {
                 },
                 if a.mmc5.active { a.mmc5.next_clock } else { NEVER },
                 if a.vrc7.active { a.vrc7.next_step } else { NEVER },
+                if a.vt.active && !a.pulse2[0].silent(0) {
+                    a.pulse2[0].next_step
+                } else {
+                    NEVER
+                },
+                if a.vt.active && !a.pulse2[1].silent(1) {
+                    a.pulse2[1].next_step
+                } else {
+                    NEVER
+                },
+                if a.vt.active && !a.tri2.gated() {
+                    a.tri2.next_step
+                } else {
+                    NEVER
+                },
+                if a.vt.active { a.noise2.next_step } else { NEVER },
             ];
             for (i, at) in candidates.into_iter().enumerate() {
                 if at < te {
@@ -791,6 +927,22 @@ impl Machine {
                     m.next_clock += crate::mmc5::CLOCK;
                 }
                 20 => self.apu.vrc7.tick(),
+                21 | 22 => {
+                    let p = &mut self.apu.pulse2[usize::from(which - 21)];
+                    p.pos = p.pos.wrapping_sub(1) & 7;
+                    p.next_step += p.period_cycles();
+                }
+                23 => {
+                    let tri = &mut self.apu.tri2;
+                    tri.pos = (tri.pos + 1) & 31;
+                    tri.next_step += u64::from(tri.period) + 1;
+                }
+                24 => {
+                    let region = self.region;
+                    let n = &mut self.apu.noise2;
+                    n.step();
+                    n.next_step += noise_period(region, n.period_index);
+                }
                 9 => {
                     let v = &mut self.apu.vrc6;
                     let shift = v.shift;
@@ -837,8 +989,17 @@ impl Machine {
     /// One expiry of the delta channel's timer.
     fn dmc_step(&mut self) {
         let region = self.region;
+        let raw = self.apu.vt.raw_pcm();
         let d = &mut self.apu.dmc;
         d.next_step += dmc_period(region, d.rate_index);
+        if raw {
+            // Each expiry plays one byte as it is.
+            if let Some(byte) = d.buffer.take() {
+                self.apu.vt.pcm = byte;
+            }
+            self.dmc_fill(4);
+            return;
+        }
         if !d.silent {
             if d.shift & 1 != 0 {
                 if d.level < 126 {
@@ -871,14 +1032,16 @@ impl Machine {
         if d.buffer.is_some() || d.remaining == 0 {
             return;
         }
-        let byte = self.read_rom(d.address);
+        let address = d.address;
+        let byte = if address >= 0x8000 {
+            self.read_rom(address)
+        } else {
+            self.peek(address)
+        };
         let d = &mut self.apu.dmc;
         d.buffer = Some(byte);
-        d.address = if d.address == 0xFFFF {
-            0x8000
-        } else {
-            d.address + 1
-        };
+        // The address counts through the low 15 bits and keeps bit 15.
+        d.address = d.address & 0x8000 | d.address.wrapping_add(1) & 0x7FFF;
         d.remaining -= 1;
         if d.remaining == 0 {
             if d.looping {
@@ -968,8 +1131,9 @@ impl Machine {
         let enabled = |n: u8, a: &Apu| a.enabled >> n & 1 != 0;
         match address {
             0x4000 | 0x4004 => {
+                let duty = a.vt.duty(v >> 6);
                 let p = &mut a.pulse[usize::from(address >> 2 & 1)];
-                p.duty = v >> 6;
+                p.duty = duty;
                 p.halt = v & 0x20 != 0;
                 p.constant = v & 0x10 != 0;
                 p.volume = v & 15;
@@ -1037,8 +1201,14 @@ impl Machine {
                 d.rate_index = v & 15;
             }
             0x4011 => a.dmc.level = v & 0x7F,
-            0x4012 => a.dmc.sample_address = 0xC000 | u16::from(v) << 6,
-            0x4013 => a.dmc.sample_length = u16::from(v) << 4 | 1,
+            0x4012 => {
+                a.vt.address_register = v;
+                a.dmc.sample_address = a.vt.dma_address(v);
+            }
+            0x4013 => {
+                a.vt.length_register = v;
+                a.dmc.sample_length = a.vt.dma_length(v);
+            }
             0x4015 => {
                 a.enabled = v & 0x1F;
                 if v & 1 == 0 {
@@ -1094,13 +1264,117 @@ impl Machine {
             | oscilla_nsf::chips::N163
             | oscilla_nsf::chips::FDS
             | oscilla_nsf::chips::MMC5
-            | oscilla_nsf::chips::VRC7;
+            | oscilla_nsf::chips::VRC7
+            | oscilla_nsf::chips::VT02;
         if self.chips & !played != 0 {
             self.warn(
                 WARN_CHIP,
                 "The file asks for expansion sound that the core does not play.",
             );
         }
+    }
+
+    /// A store to the VT02's second generator or its control registers.
+    pub(crate) fn vt_write(&mut self, address: u16, v: u8) {
+        self.sync_apu();
+        let t = self.now;
+        self.apu.settle(t);
+        let a = &mut self.apu;
+        let enabled = |n: u8, vt: &Vt| vt.enabled >> n & 1 != 0;
+        match address {
+            0x4020 | 0x4024 => {
+                let duty = a.vt.duty(v >> 6);
+                let p = &mut a.pulse2[usize::from(address >> 2 & 1)];
+                p.duty = duty;
+                p.halt = v & 0x20 != 0;
+                p.constant = v & 0x10 != 0;
+                p.volume = v & 15;
+            }
+            0x4021 | 0x4025 => {
+                let s = &mut a.pulse2[usize::from(address >> 2 & 1)].sweep;
+                s.enabled = v & 0x80 != 0;
+                s.period = v >> 4 & 7;
+                s.negate = v & 8 != 0;
+                s.shift = v & 7;
+                s.reload = true;
+            }
+            0x4022 | 0x4026 => {
+                let p = &mut a.pulse2[usize::from(address >> 2 & 1)];
+                p.period = p.period & 0x700 | u16::from(v);
+            }
+            0x4023 | 0x4027 => {
+                let i = usize::from(address >> 2 & 1);
+                let load = enabled(i as u8, &a.vt);
+                let p = &mut a.pulse2[i];
+                p.period = p.period & 0xFF | u16::from(v & 7) << 8;
+                if load {
+                    p.len = LENGTHS[usize::from(v >> 3)];
+                }
+                p.pos = 0;
+                p.env.start = true;
+            }
+            0x4028 => {
+                a.tri2.control = v & 0x80 != 0;
+                a.tri2.linear_value = v & 0x7F;
+            }
+            0x402A => a.tri2.period = a.tri2.period & 0x700 | u16::from(v),
+            0x402B => {
+                let load = enabled(2, &a.vt);
+                a.tri2.period = a.tri2.period & 0xFF | u16::from(v & 7) << 8;
+                if load {
+                    a.tri2.len = LENGTHS[usize::from(v >> 3)];
+                }
+                a.tri2.linear_reload = true;
+            }
+            0x402C => {
+                let n = &mut a.noise2;
+                n.halt = v & 0x20 != 0;
+                n.constant = v & 0x10 != 0;
+                n.volume = v & 15;
+            }
+            0x402E => {
+                a.noise2.mode = v & 0x80 != 0;
+                a.noise2.period_index = v & 15;
+            }
+            0x402F => {
+                if enabled(3, &a.vt) {
+                    a.noise2.len = LENGTHS[usize::from(v >> 3)];
+                }
+                a.noise2.env.start = true;
+            }
+            0x4030 => {
+                a.vt.control = v;
+                a.dmc.sample_address = a.vt.dma_address(a.vt.address_register);
+                a.dmc.sample_length = a.vt.dma_length(a.vt.length_register);
+            }
+            0x4031 => a.vt.pcm = v,
+            0x4035 => {
+                a.vt.enabled = v & 15;
+                if v & 1 == 0 {
+                    a.pulse2[0].len = 0;
+                }
+                if v & 2 == 0 {
+                    a.pulse2[1].len = 0;
+                }
+                if v & 4 == 0 {
+                    a.tri2.len = 0;
+                }
+                if v & 8 == 0 {
+                    a.noise2.len = 0;
+                }
+            }
+            _ => {}
+        }
+        self.apu_emit(t);
+    }
+
+    /// The length counters of the second generator, as $4035 reports them.
+    pub(crate) fn vt_status(&self) -> u8 {
+        let a = &self.apu;
+        u8::from(a.pulse2[0].len > 0)
+            | u8::from(a.pulse2[1].len > 0) << 1
+            | u8::from(a.tri2.len > 0) << 2
+            | u8::from(a.noise2.len > 0) << 3
     }
 
     /// A store to the VRC6's registers.

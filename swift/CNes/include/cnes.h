@@ -24,8 +24,8 @@ extern "C" {
  *
  * The machine plays the 2A03's five channels (two pulse channels, the
  * triangle, the noise channel and the delta channel) and the channels of the
- * VRC6, VRC7, Sunsoft 5B, Namco 163, Famicom Disk System or MMC5 expansion
- * chip. A
+ * VRC6, VRC7, Sunsoft 5B, Namco 163, Famicom Disk System, MMC5 or VT02
+ * expansion chip. A
  * file that asks for other expansion sound gets the channels it can play, and
  * cnes_warnings says so.
  */
@@ -69,7 +69,7 @@ typedef struct {
     uint8_t region_bits;  /* bit 0: PAL; bit 1: the file works on both */
     uint8_t chips;        /* expansion sound the file asks for, one bit per chip:
                              1 VRC6, 2 VRC7, 4 FDS, 8 MMC5, 16 N163, 32 Sunsoft 5B,
-                             64 VT02. The core plays the VRC6, the VRC7, the FDS, the MMC5, the N163 and the 5B. */
+                             64 VT02. The core plays the VRC6, the VRC7, the FDS, the MMC5, the N163, the 5B and the VT02. */
 } cnes_header;
 
 void cnes_image_header(const cnes_image *image, cnes_header *out);
@@ -230,7 +230,7 @@ uint32_t cnes_peek(const cnes_machine *machine, uint32_t address);
  * Things the machine met and does not support (a routine that did not
  * return, an opcode that locks the CPU or that the core does not run, BRK,
  * expansion sound other than the VRC6, the VRC7, the FDS, the MMC5, the
- * Namco 163 and the Sunsoft 5B), as a NUL-terminated list of short sentences, one per line.
+ * Namco 163, the Sunsoft 5B and the VT02), as a NUL-terminated list of short sentences, one per line.
  * The machine reports each kind once and never prints.
  */
 const char *cnes_warnings(const cnes_machine *machine);
@@ -276,7 +276,9 @@ void cnes_channel_levels_get(const cnes_machine *machine, int32_t out[5]);
  * 15) and its sample register (0 to 255) in the first three entries. A file
  * with the VRC7 and neither the VRC6 nor the Namco 163 shows the size of the
  * last output of its six channels (0 to about 4100) in the first six entries.
- * The other entries, and all
+ * A file with the VT02 and none of those shows the second generator's pulse 3,
+ * pulse 4, triangle 2 and noise 2 (each 0 to 15) and its raw PCM level (0 to
+ * 255) in the first five entries. The other entries, and all
  * of them for a file without a chip that the core plays, are 0. A muted
  * channel still shows its level.
  */
@@ -287,11 +289,14 @@ void cnes_expansion_levels_get(const cnes_machine *machine, int32_t out[8]);
  * bits 8 to 10 are the Sunsoft 5B's three channels, bits 11 to 18 are the
  * Namco 163's channels 1 to 8, bit 19 is the FDS's channel, bits 20 and 21 are
  * the MMC5's pulse 1 and pulse 2, bit 22 is its sample register, and bits 23
- * to 28 are the VRC7's channels 1 to 6. Every channel is on at the start, and
- * a reset leaves the choice alone. Only those twenty-nine bits count, and
- * cnes_channel_mask returns 0x1FFFFFFF at the start. */
-void cnes_set_channel_mask(cnes_machine *machine, uint32_t mask);
-uint32_t cnes_channel_mask(const cnes_machine *machine);
+ * to 28 are the VRC7's channels 1 to 6. Bits 29 and 30 are the VT02's pulse 3
+ * and pulse 4, bit 31 is its triangle 2, bit 32 is its noise 2 and bit 33 is
+ * its raw PCM. Every channel is on at the start, and a reset leaves the choice
+ * alone. Only those thirty-four bits count, and cnes_channel_mask returns
+ * 0x3FFFFFFFF at the start. The mask is 64 bits wide because 34 channels do
+ * not fit in 32. */
+void cnes_set_channel_mask(cnes_machine *machine, uint64_t mask);
+uint64_t cnes_channel_mask(const cnes_machine *machine);
 
 /* ---- Bass cutoff ------------------------------------------------------- */
 

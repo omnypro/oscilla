@@ -326,7 +326,7 @@ fn the_channels_are_independent() {
 fn the_channel_mask_reaches_the_vrc7_channels() {
     let mut a = playing(&[]);
     let mut b = playing(&[]);
-    assert_eq!(b.channel_mask(), 0x1FFFFFFF);
+    assert_eq!(b.channel_mask(), 0x3_FFFF_FFFF);
     b.set_channel_mask(!(1 << 23));
     left(&mut a, 4800);
     left(&mut b, 4800);

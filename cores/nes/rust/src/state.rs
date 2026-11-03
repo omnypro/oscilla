@@ -132,6 +132,23 @@ pub struct Dmc {
     pub next_step: u64,
 }
 
+/// The VT02's additions to the sound unit: the registers at $4030, $4031 and
+/// $4035. The second generator's channels are `Apu::pulse2`, `tri2` and
+/// `noise2`.
+#[derive(Clone, Default)]
+pub struct Vt {
+    pub active: bool,
+    /// The last store to $4030.
+    pub control: u8,
+    /// The enable bits of $4035: pulse 3, pulse 4, triangle 2, noise 2.
+    pub enabled: u8,
+    /// The raw PCM level, from $4031 or from the DMA channel.
+    pub pcm: u8,
+    /// The last stores to $4012 and $4013, which $4030 reinterprets.
+    pub address_register: u8,
+    pub length_register: u8,
+}
+
 #[derive(Clone, Default)]
 pub struct FrameCounter {
     pub five_step: bool,
@@ -465,6 +482,11 @@ pub struct Apu {
     pub fds: Fds,
     pub mmc5: Mmc5,
     pub vrc7: Vrc7,
+    /// The VT02's second pulse, triangle and noise channels.
+    pub vt: Vt,
+    pub pulse2: [Pulse; 2],
+    pub tri2: Triangle,
+    pub noise2: Noise,
     /// The enable bits of $4015, bit n for channel n.
     pub enabled: u8,
     pub frame: FrameCounter,
@@ -566,7 +588,7 @@ pub struct Machine {
     /// The console's low-pass filter, which follows the high-pass filter.
     pub(crate) lp: crate::apu::Lowpass,
     /// The channel mask: bit n is channel n.
-    pub(crate) channel_mask: u32,
+    pub(crate) channel_mask: u64,
     pub(crate) last_change: u64,
 
     pub(crate) phase: Phase,

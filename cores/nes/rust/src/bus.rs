@@ -91,6 +91,7 @@ impl Machine {
                     | u8::from(a.frame.irq) << 6
                     | u8::from(a.dmc.irq) << 7
             }
+            0x4035 if self.apu.vt.active => self.vt_status(),
             0x4040..=0x4097 if self.apu.fds.active => {
                 self.apu.fds.read(address, self.bus).unwrap_or(self.bus)
             }
@@ -136,6 +137,10 @@ impl Machine {
                 } else {
                     self.bus
                 }
+            }
+            0x4035 if self.apu.vt.active => {
+                self.sync_apu();
+                self.vt_status()
             }
             0x4040..=0x4097 if self.apu.fds.active => {
                 self.sync_apu();
@@ -190,6 +195,14 @@ impl Machine {
                 if address != 0x4014 && address != 0x4016 {
                     self.apu_write(address, v);
                 }
+            }
+            0x4020..=0x4035 if self.chips & oscilla_nsf::chips::VT02 != 0 => {
+                self.sync_apu();
+                let t = self.now;
+                if let Some(o) = self.observer.0.as_mut() {
+                    o.sound_write(t, address, v);
+                }
+                self.vt_write(address, v);
             }
             0x9000..=0xBFFF if self.chips & oscilla_nsf::chips::VRC6 != 0 => {
                 self.sync_apu();

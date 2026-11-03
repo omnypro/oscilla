@@ -230,7 +230,7 @@ fn an_unmapped_read_returns_the_last_bus_value() {
 #[test]
 fn expansion_chips_are_reported() {
     let mut f = file(&[], &[]);
-    f[0x7B] = oscilla_nsf::chips::VT02;
+    f[0x7B] = 0x80;
     let m = Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap();
     assert!(String::from_utf8_lossy(m.warnings_nul()).contains("expansion"));
     assert!(machine(&[], &[]).warnings_nul() == [0]);

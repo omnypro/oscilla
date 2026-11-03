@@ -14,7 +14,7 @@ use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use std::sync::Arc;
 
 /// The bits of the channel mask that name a channel.
-const ALL_CHANNELS: u32 = (1 << 29) - 1;
+const ALL_CHANNELS: u64 = (1 << 34) - 1;
 
 /// The warning list holds at most 2048 bytes and a closing NUL. Its room is
 /// reserved at the start so that the list never moves.
@@ -589,6 +589,20 @@ impl Machine {
                 *slot = v.abs();
             }
         }
+        if self.chips
+            & (oscilla_nsf::chips::VRC6
+                | oscilla_nsf::chips::VRC7
+                | oscilla_nsf::chips::FDS
+                | oscilla_nsf::chips::MMC5
+                | oscilla_nsf::chips::N163
+                | oscilla_nsf::chips::S5B)
+            == 0
+            && self.chips & oscilla_nsf::chips::VT02 != 0
+        {
+            for (slot, level) in out.iter_mut().zip(self.apu.vt_levels()) {
+                *slot = i32::from(level);
+            }
+        }
         if let Some(levels) = levels {
             for (slot, level) in out.iter_mut().zip(levels) {
                 *slot = i32::from(level);
@@ -601,7 +615,7 @@ impl Machine {
     /// pulse 2, triangle, noise and delta (bits 0 to 4), the VRC6's pulse 1,
     /// pulse 2 and saw (bits 5 to 7), and the Sunsoft 5B's three tone channels
     /// (bits 8 to 10). All are on by default.
-    pub fn set_channel_mask(&mut self, mask: u32) {
+    pub fn set_channel_mask(&mut self, mask: u64) {
         let mask = mask & ALL_CHANNELS;
         if mask == self.channel_mask {
             return;
@@ -612,7 +626,7 @@ impl Machine {
         self.apu_emit(t);
     }
 
-    pub fn channel_mask(&self) -> u32 {
+    pub fn channel_mask(&self) -> u64 {
         self.channel_mask
     }
 
