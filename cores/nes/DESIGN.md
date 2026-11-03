@@ -210,6 +210,78 @@ volume. A file with the chip has 24 KiB of RAM at 0x8000, filled from the
 program, and its bank registers copy banks into it. Bit 19 of the mask takes
 the channel out.
 
+The VRC7 has six channels of two operators, a modulator and a carrier. The
+chip makes one sample for every 72 cycles of its own 3.579545 MHz clock, 49716
+Hz. That is 36 cycles of the NTSC console, and a count that is not whole on the
+PAL console, because the chip's clock does not follow the console's. Each
+operator keeps a 19-bit phase that moves on by the F-number shifted left by the
+octave, times the multiplier of the table. The vibrato changes that step. The
+top ten bits of the phase pick a place in the sine. The sine comes from the two
+tables whose formulas the decapsulation report of the related YM3812 gives, a
+log-sine of 256 samples for a quarter wave and an exponential of 256 samples.
+Both are in constants, and a test derives them again from the formulas. The unit
+is 1/256 of an octave, so an envelope step of 0.375 dB is 16 units. The output
+of an operator is the exponential of the log-sine plus its attenuation, which
+is the envelope, the total level in steps of 0.75 dB (modulator only), the key
+level scale of the manual's table in the setting that the register names, the
+tremolo, and for the carrier the channel volume in steps of 3 dB. A carrier
+at full level peaks at 4088. The modulator's output moves the carrier's phase
+by half its value, so that a full output is 4 pi, the largest index of the
+feedback table. The feedback moves the modulator's own phase by the mean of its
+last two outputs scaled the same way, by the index of the feedback table. The
+waveform bits select the sine or its positive half.
+
+The envelope's attenuation runs from 0 to 127 steps. The manual's table gives
+the time that the whole range takes to fall, from rate 0 to 63, where the rate
+is four times the parameter plus the key scale offset of its table (the
+offset is 0 when the parameter is 0, and then the stage halts). The core takes
+8128 samples at rate 32, half as long at each rate four higher, and shorter by
+4 / (4 + n) at the n-th rate within a group of four. The manual labels the times
+as 40 dB; they match the whole range of 127 steps of 64 samples at rate 32, and
+the core reads them that way. The manual calls the table error-prone in its
+lower rows. The core follows the structure that the upper rows show. The
+fastest group of four takes 1.27 ms whatever its position. An attack takes the
+attenuation down by a share of what is left at each sample, so that it falls
+from the whole range to under one step in the table's attack time. Rates of 60
+and above attack at once. The manual's attack column departs from the pattern
+at rates 48 to 59, and the core uses its printed values there. A decay falls
+in a straight line to the sustain level, which is in steps of 3 dB. Then a
+sustained operator holds, and a percussive operator (sustain bit clear) goes on
+into its release. A release starts from the current level. After a key off,
+a channel with its sustain bit set releases at rate 5, a percussive operator at
+rate 7 and a sustained one at its patch's rate. A modulator with its sustain
+bit set ignores the key off. When a key goes on while the envelope is not at
+its end, the envelope first falls to the end in about 10 ms and the phase
+restarts there. The manufacturer's four-page datasheet gives that time and the
+rate 7 of a percussive release in a figure that is read from a scan.
+
+The tremolo is a triangle of 210 steps that moves once in 64 samples (3.7 Hz),
+with a peak of 4.3 dB. The vibrato is a triangle of eight steps that moves once
+in 1024 samples (6.07 Hz), with a peak of 14 cents. The test register speeds
+them up as the wiki describes. The reset bit of 0xE000 clears the registers and
+the tremolo and leaves the vibrato where it is.
+
+The documents leave these open, and the core chooses as follows. The manual's
+EG resolution of 0.325 dB is read as 0.375 dB, because the manual's other steps
+are multiples of that and 48 dB divided by it is 128. Two entries of the
+manual's key level table (2.525 and 14.825) are read as 2.625 and 14.625. The
+shape of the tremolo and the vibrato is a triangle, and the vibrato rate follows
+the wiki's ratio of 1024 samples a step with eight steps a cycle, where the
+manual says 6.4 Hz. The tremolo depth is the 4.3 dB of the hardware note, where
+the related YM3812's documents say 4.8 dB. The feedback input is the mean of the
+last two outputs. The scale of the modulator's output against the carrier's
+phase is the feedback table's largest index. The log-sine and exponential
+tables are the YM3812's, and the VRC7 is taken to use the same ones. The
+envelope time of the damp before a key on and the rate 7 come from a scan. The
+core does not model the delay that the chip needs between two stores to its
+ports, and it does not model the DAC, which sends the channels out one at a
+time. The level against the 2A03 is not documented. The gain is 2.32 times the
+level at which a channel's full output equals a pulse step, which puts the
+mean of three songs at the level of a reference player's render. Against that
+render the songs lie between 1.6 dB below and 1.5 dB above, and the register
+stores of the songs match it exactly over 1800 play calls each. Bits 23 to 28
+of the mask take the channels out.
+
 The MMC5 has two pulse channels, a sample register and a multiplier. A pulse
 channel is the 2A03's pulse channel without the sweep unit: the same duty
 sequences, the same timer (a step every two times the period plus one cycles)

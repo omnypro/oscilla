@@ -5,7 +5,7 @@ driver and returns the sound as interleaved stereo at the rate the caller
 chooses. Nothing is drawn, and nothing reads input.
 
 It covers the 6502 CPU, the memory map with the NSF bank registers, the 2A03's
-sound unit, the VRC6, Sunsoft 5B, Namco 163, Disk System and MMC5 expansion chips and the NSF
+sound unit, the VRC6, VRC7, Sunsoft 5B, Namco 163, Disk System and MMC5 expansion chips and the NSF
 player that calls the driver's
 init and play routines.
 Both consoles are covered: the clock, the tables and the play rate follow the
@@ -60,7 +60,7 @@ A player has four more groups of calls.
 - `cnes_snapshot_take` copies the whole machine. `cnes_snapshot_restore` puts a
   machine with the same file, console and output rate back to that point, and
   the same calls then render the same samples.
-- `cnes_set_channel_mask` chooses which of the twenty-three channels reach the mix.
+- `cnes_set_channel_mask` chooses which of the twenty-nine channels reach the mix.
   `cnes_channel_levels_get` shows what each channel of the 2A03 outputs, and
   `cnes_expansion_levels_get` shows the expansion chip's, muted or not.
 - `cnes_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
@@ -101,10 +101,11 @@ and prints the time it took.
   and the init routine that does not return.
 - `fds`: the Disk System chip's wavetable, envelope, modulation unit and RAM.
 - `mmc5`: the MMC5's pulse channels, sample register, multiplier and RAM.
+- `vrc7`: the VRC7's registers, envelope, pitch, low frequency oscillators and mix.
 - `player`: the schedule of init and play calls, both consoles, bank
   switching, routines that misbehave, snapshots and the end state.
 - `goldens`: a hash of the samples and of the stores for each of 64 generated
-  drivers, and for 16 each that drive the VRC6, the 5B, the Namco 163 and the FDS. A change to the sound or to any trace changes a hash.
+  drivers, and for 16 each that drive the VRC6, the 5B, the Namco 163, the FDS, the MMC5 and the VRC7. A change to the sound or to any trace changes a hash.
 - `highpass`: the bass cutoff's range, default, decay time and behavior across
   a change, a reset and a restore.
 - `cartridges`: public test cartridges for the CPU and the sound unit. They are
@@ -128,7 +129,7 @@ the FDS (12 of its 56 songs), over 3,600 play calls each.
 An NSFe file runs the same program as the NSF it came from. The core reads the
 chunks INFO, DATA, BANK, RATE, NSF2, regn, auth, text, tlbl, taut, plst, time
 and fade. It skips mixe, psfx and VRC7 (levels are the ones the core documents,
-and the VRC7 is not played), and it refuses a file with a mandatory chunk
+and the VRC7 plays the chip's 15 patches), and it refuses a file with a mandatory chunk
 (first letter uppercase) that it does not know. Of regn it uses the NTSC and
 PAL bits and the preferred region. Dendy has no region of its own here, so a
 file that names only Dendy keeps the region bits of INFO. A chunk that runs past the end of the file
@@ -142,8 +143,7 @@ the play routine as an NMI. Bit 5 also gives the second init routine that need
 not return, and bit 6 stops the calls of the play routine. The tests check the core against the specification with drivers built from
 bytes. DESIGN.md lists the approximations.
 
-Not emulated: the VRC7 (a file that asks for it plays its other
-channels and a warning says so), the MMC5's interrupt from its sample register,
+Not emulated: the MMC5's interrupt from its sample register,
 interrupts in a file
 that does not ask for them in its version 2 flags (a driver that waits for the
 frame counter's flag can poll it, and one that enables interrupts never

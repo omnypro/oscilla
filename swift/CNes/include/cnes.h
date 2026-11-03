@@ -24,7 +24,8 @@ extern "C" {
  *
  * The machine plays the 2A03's five channels (two pulse channels, the
  * triangle, the noise channel and the delta channel) and the channels of the
- * VRC6, Sunsoft 5B, Namco 163, Famicom Disk System or MMC5 expansion chip. A
+ * VRC6, VRC7, Sunsoft 5B, Namco 163, Famicom Disk System or MMC5 expansion
+ * chip. A
  * file that asks for other expansion sound gets the channels it can play, and
  * cnes_warnings says so.
  */
@@ -68,7 +69,7 @@ typedef struct {
     uint8_t region_bits;  /* bit 0: PAL; bit 1: the file works on both */
     uint8_t chips;        /* expansion sound the file asks for, one bit per chip:
                              1 VRC6, 2 VRC7, 4 FDS, 8 MMC5, 16 N163, 32 Sunsoft 5B,
-                             64 VT02. The core plays the VRC6, the FDS, the MMC5, the N163 and the 5B. */
+                             64 VT02. The core plays the VRC6, the VRC7, the FDS, the MMC5, the N163 and the 5B. */
 } cnes_header;
 
 void cnes_image_header(const cnes_image *image, cnes_header *out);
@@ -107,7 +108,8 @@ const char *cnes_image_copyright(const cnes_image *image);
  * cnes_image_playlist_get returns -1 for an index outside the list.
  *
  * The core reads the NSFe chunks mixe, psfx and VRC7 and does not use them:
- * levels are the ones the core documents, and the VRC7 is not played. Of the
+ * levels are the ones the core documents, and the VRC7 plays the 15 patches of
+ * the chip. Of the
  * regn chunk it uses the NTSC and PAL bits and the preferred region; Dendy has
  * no region of its own, so a file that names only Dendy keeps its INFO bits.
  */
@@ -227,8 +229,8 @@ uint32_t cnes_peek(const cnes_machine *machine, uint32_t address);
 /*
  * Things the machine met and does not support (a routine that did not
  * return, an opcode that locks the CPU or that the core does not run, BRK,
- * expansion sound other than the VRC6, the FDS, the MMC5, the Namco 163 and
- * the Sunsoft 5B), as a NUL-terminated list of short sentences, one per line.
+ * expansion sound other than the VRC6, the VRC7, the FDS, the MMC5, the
+ * Namco 163 and the Sunsoft 5B), as a NUL-terminated list of short sentences, one per line.
  * The machine reports each kind once and never prints.
  */
 const char *cnes_warnings(const cnes_machine *machine);
@@ -271,7 +273,9 @@ void cnes_channel_levels_get(const cnes_machine *machine, int32_t out[5]);
  * the size of each channel's last output (0 to 120). A file with the FDS and
  * none of those shows the chip's output level in the first entry (0 to 2016).
  * A file with the MMC5 and none of those shows its pulse 1 and pulse 2 (0 to
- * 15) and its sample register (0 to 255) in the first three entries.
+ * 15) and its sample register (0 to 255) in the first three entries. A file
+ * with the VRC7 and neither the VRC6 nor the Namco 163 shows the size of the
+ * last output of its six channels (0 to about 4100) in the first six entries.
  * The other entries, and all
  * of them for a file without a chip that the core plays, are 0. A muted
  * channel still shows its level.
@@ -282,10 +286,10 @@ void cnes_expansion_levels_get(const cnes_machine *machine, int32_t out[8]);
  * above for bits 0 to 4. Bits 5 to 7 are the VRC6's pulse 1, pulse 2 and saw,
  * bits 8 to 10 are the Sunsoft 5B's three channels, bits 11 to 18 are the
  * Namco 163's channels 1 to 8, bit 19 is the FDS's channel, bits 20 and 21 are
- * the MMC5's pulse 1 and pulse 2, and bit 22 is its sample register. Every
- * channel is on at the start, and a reset leaves the choice alone. Only those
- * twenty-three bits count, and cnes_channel_mask returns 0x7FFFFF at the
- * start. */
+ * the MMC5's pulse 1 and pulse 2, bit 22 is its sample register, and bits 23
+ * to 28 are the VRC7's channels 1 to 6. Every channel is on at the start, and
+ * a reset leaves the choice alone. Only those twenty-nine bits count, and
+ * cnes_channel_mask returns 0x1FFFFFFF at the start. */
 void cnes_set_channel_mask(cnes_machine *machine, uint32_t mask);
 uint32_t cnes_channel_mask(const cnes_machine *machine);
 
