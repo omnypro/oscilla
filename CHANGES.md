@@ -1,5 +1,16 @@
 # Changes
 
+## 0.3.6
+
+- The NSF2 features. A version 2 file can carry NSFe chunks after its program,
+  and the same calls read them. A file that sets bit 4 or bit 5 of its feature
+  byte gets the interrupt timer at `0x401B` to `0x401D`, the IRQ vector as RAM
+  at `0xFFFE`, interrupts from the timer, the frame counter and the delta
+  channel, and the play routine as an NMI. Bit 5 also gives the second init
+  routine that need not return, and bit 6 stops the calls of the play routine.
+- The warning about interrupts and non-returning init is gone.
+- `oscilla-nsf --info` prints the song data of any file that has it.
+
 ## 0.3.5
 
 - NSFe files. The reader fills the same fields as for an NSF header, so the
