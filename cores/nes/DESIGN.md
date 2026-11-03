@@ -210,6 +210,33 @@ volume. A file with the chip has 24 KiB of RAM at 0x8000, filled from the
 program, and its bank registers copy banks into it. Bit 19 of the mask takes
 the channel out.
 
+The MMC5 has two pulse channels, a sample register and a multiplier. A pulse
+channel is the 2A03's pulse channel without the sweep unit: the same duty
+sequences, the same timer (a step every two times the period plus one cycles)
+and the same length table. A period below 8 does not silence it. The chip has
+no frame sequencer. One counter clocks the envelopes and the length counters
+every 7424 cycles, about 241 Hz, so a length counter runs twice as fast as the
+2A03's. The documentation takes that rate from die images and says it has not
+been measured, and it is unsure whether the length counter shares the
+envelope's clock. The core follows the documentation as written. The counter
+starts at the first cycle of a song, because the phase is not documented.
+Register 0x5015 enables the two channels and reports their length counters. A
+pulse channel is as loud as a 2A03 pulse channel at the same level, as the
+documentation says, summed with the 2A03's mix. The sample register at 0x5011
+holds eight bits and has the step size of the delta channel at 127, so its full
+value is twice as loud as the delta channel's. A store of zero leaves the
+register as it is and sets its interrupt flag, and the core does not deliver
+that interrupt. In read mode (bit 0 of 0x5010) a read of 0x8000 to 0xBFFF sets
+the register to the byte read, unless that byte is zero. The multiplier
+returns the product of its operands at once from 0x5205 and 0x5206. The core
+starts both operands at 0 and the sample register at 0, because the
+documentation gives no power-on values. RAM covers 0x5C00 to 0x5FF7; the
+format keeps 0x5FF8 to 0x5FFF for the bank registers. The core writes nothing
+to 0x5015 at the start of a song, because the format gives no such step. Bits
+20 to 22 of the mask take the pulse channels and the sample register out. No
+reference player and no file with the chip were available, so the tests check
+the documentation's statements with drivers built from bytes.
+
 ## Output
 
 The mixer is the pair of lookup tables of the documentation, built at startup
