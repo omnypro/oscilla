@@ -201,6 +201,8 @@ struct Mixer {
     s5b: [f64; 32],
     /// One step of the Namco 163's output.
     n163: f64,
+    /// One step of the FDS's output.
+    fds: f64,
 }
 
 fn mixer() -> &'static Mixer {
@@ -212,6 +214,7 @@ fn mixer() -> &'static Mixer {
             vrc6: 0.0,
             s5b: [0.0; 32],
             n163: 0.0,
+            fds: 0.0,
         };
         for (n, slot) in m.pulse.iter_mut().enumerate().skip(1) {
             *slot = 95.52 / (8128.0 / n as f64 + 100.0);
@@ -221,6 +224,7 @@ fn mixer() -> &'static Mixer {
         }
         m.vrc6 = m.pulse[15] / 15.0 * VRC6_GAIN;
         m.n163 = m.pulse[15] * crate::n163::N163_GAIN;
+        m.fds = m.pulse[15] * crate::fds::FDS_GAIN;
         for (slot, amp) in m.s5b.iter_mut().zip(crate::s5b::amplitudes()) {
             *slot = amp * m.pulse[15] * crate::s5b::S5B_GAIN;
         }
@@ -461,6 +465,7 @@ impl Apu {
             vrc6: Vrc6::default(),
             s5b: S5b::default(),
             n163: N163::default(),
+            fds: Fds::default(),
             enabled: 0,
             frame: FrameCounter::default(),
             time: 0,
@@ -480,6 +485,11 @@ impl Apu {
         a.vrc6.pulse[0].next_step = 1;
         a.vrc6.pulse[1].next_step = 1;
         a.vrc6.saw.next_step = 2;
+        if chips & oscilla_nsf::chips::FDS != 0 {
+            a.fds.active = true;
+            a.fds.alpha = Fds::alpha_for(clock_of(region));
+            a.fds.next_step = 16;
+        }
         if chips & oscilla_nsf::chips::N163 != 0 {
             a.n163.active = true;
             a.n163.next_step = 15;
@@ -545,6 +555,9 @@ impl Apu {
                     expansion += m.s5b[usize::from(self.s5b.level(c))];
                 }
             }
+        }
+        if self.fds.active && mask >> 19 & 1 != 0 {
+            expansion += self.fds.lowpassed * m.fds;
         }
         if self.n163.active && mask >> (11 + u32::from(self.n163.out_channel)) & 1 != 0 {
             expansion += f64::from(self.n163.out_value) * m.n163;
@@ -658,6 +671,7 @@ impl Machine {
                 } else {
                     NEVER
                 },
+                if a.fds.active { a.fds.next_step } else { NEVER },
             ];
             for (i, at) in candidates.into_iter().enumerate() {
                 if at < te {
@@ -699,6 +713,10 @@ impl Machine {
                 13 => self.apu.s5b.noise_event(te),
                 14 => self.apu.s5b.env_event(te),
                 15 => self.apu.n163.tick(te),
+                16 => {
+                    let alpha = self.apu.fds.alpha;
+                    self.apu.fds.tick(te, alpha);
+                }
                 9 => {
                     let v = &mut self.apu.vrc6;
                     let shift = v.shift;
@@ -997,7 +1015,10 @@ impl Machine {
     /// Notes the expansion chips that a file asks for and the core does not
     /// play.
     pub(crate) fn warn_chips(&mut self) {
-        let played = oscilla_nsf::chips::VRC6 | oscilla_nsf::chips::S5B | oscilla_nsf::chips::N163;
+        let played = oscilla_nsf::chips::VRC6
+            | oscilla_nsf::chips::S5B
+            | oscilla_nsf::chips::N163
+            | oscilla_nsf::chips::FDS;
         if self.chips & !played != 0 {
             self.warn(
                 WARN_CHIP,

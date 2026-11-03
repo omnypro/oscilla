@@ -146,6 +146,22 @@ core keeps that, and the low-pass filter takes some of it off. One step of the
 output is 0.039 of one 2A03 pulse step, which gives the loudness of a
 reference player, and the mask's bits 11 to 18 take the channels out.
 
+The Disk System chip has one channel. A wavetable of 64 six-bit samples sits
+in RAM at 0x4040, and it is write-protected unless 0x4089 enables it. Every 16
+cycles a 24-bit phase moves on by a pitch that the modulation unit sets, and the
+top six bits are the sample. The output is the sample times the volume gain
+(held at 32 at most) times the master volume of 1, 2/3, 1/2 or 2/5. A halted
+wave outputs its first sample. The volume envelope moves the gain up or down by
+one every 8 times its speed plus one, times the global speed plus one, cycles.
+The modulation unit adds its own pitch to an accumulator, and each carry steps
+a counter through a table of 32 three-bit entries. The counter times the
+modulation gain gives the multiplier of the wave's pitch, rounded as the
+documentation gives. The output passes a one-pole low-pass filter at 2 kHz and
+is as loud as the documentation says, 2.4 times a 2A03 pulse channel at full
+volume. A file with the chip has 24 KiB of RAM at 0x8000, filled from the
+program, and its bank registers copy banks into it. Bit 19 of the mask takes
+the channel out.
+
 ## Output
 
 The mixer is the pair of lookup tables of the documentation, built at startup

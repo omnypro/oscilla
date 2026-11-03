@@ -8,7 +8,8 @@
 //! `cargo test -p oscilla-nes --release --test goldens -- --ignored --nocapture print`
 //! and keep the lines between the markers. The cutoff block goes in
 //! `goldens/nes-highpass.txt`, the VRC6 block in `goldens/nes-vrc6.txt` the 5B block in
-//! `goldens/nes-s5b.txt` and the Namco 163 block in `goldens/nes-n163.txt`.
+//! `goldens/nes-s5b.txt` the Namco 163 block in `goldens/nes-n163.txt` and the FDS block in
+//! `goldens/nes-fds.txt`.
 
 mod common;
 
@@ -226,6 +227,47 @@ fn n163_program(seed: u64) -> Vec<u8> {
     f
 }
 
+/// A file that asks for the FDS, loads a random wavetable and drives the
+/// chip's registers, then moves the pitch in the play routine.
+fn fds_program(seed: u64) -> Vec<u8> {
+    let mut r = Rng(seed ^ 0xFD5);
+    let mut init = set(0x4015, 0x1F);
+    for _ in 0..4 + r.below(6) {
+        init.extend(random_store(&mut r));
+    }
+    init.extend(set(0x4089, 0x80));
+    for i in 0..64u16 {
+        init.extend(set(0x4040 + i, r.byte() & 0x3F));
+    }
+    init.extend(set(0x4087, 0x80));
+    for _ in 0..32 {
+        init.extend(set(0x4088, r.byte() & 7));
+    }
+    init.extend(set(0x4089, r.byte() & 3));
+    for _ in 0..8 + r.below(12) {
+        let reg = [
+            0x4080u16, 0x4082, 0x4083, 0x4084, 0x4085, 0x4086, 0x4087, 0x408A,
+        ][r.below(8) as usize];
+        let mut v = r.byte();
+        if reg == 0x4083 {
+            v &= 0x4F;
+        }
+        if reg == 0x408A && r.below(2) == 0 {
+            v = 0xE8;
+        }
+        init.extend(set(reg, v));
+    }
+    init.extend(set(0x4083, 0x01 + r.below(4) as u8));
+    let mut play = vec![0xE6, 0x00, 0xA5, 0x00, 0x8D, 0x82, 0x40];
+    for _ in 0..r.below(3) {
+        play.extend(random_store(&mut r));
+    }
+    let mut f = file_with(&init, &play, 16666, r.below(2) as u8, [0; 8], None);
+    f[0x7B] = oscilla_nsf::chips::FDS;
+    f
+}
+
+const FDS_SEEDS: u64 = 16;
 const N163_SEEDS: u64 = 16;
 const S5B_SEEDS: u64 = 16;
 const VRC6_SEEDS: u64 = 16;
@@ -309,6 +351,34 @@ fn the_digests_with_the_vrc6_match() {
     let mut bad = Vec::new();
     for (seed, audio, writes) in want {
         let got = run_vrc6(seed);
+        if got != (audio, writes) {
+            bad.push(format!(
+                "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
+                got.0, got.1
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn the_digests_with_the_fds_match() {
+    let want: Vec<(u64, u64, u64)> = include_str!("goldens/nes-fds.txt")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            (
+                p[0].parse().unwrap(),
+                u64::from_str_radix(p[1], 16).unwrap(),
+                u64::from_str_radix(p[2], 16).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(want.len() as u64, FDS_SEEDS);
+    let mut bad = Vec::new();
+    for (seed, audio, writes) in want {
+        let got = digests_of(fds_program(seed));
         if got != (audio, writes) {
             bad.push(format!(
                 "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
@@ -446,6 +516,12 @@ fn print() {
         println!("{seed} {audio:016x} {writes:016x}");
     }
     println!("-----END VRC6 GOLDENS-----");
+    println!("-----BEGIN FDS GOLDENS-----");
+    for seed in 0..FDS_SEEDS {
+        let (audio, writes) = digests_of(fds_program(seed));
+        println!("{seed} {audio:016x} {writes:016x}");
+    }
+    println!("-----END FDS GOLDENS-----");
     println!("-----BEGIN N163 GOLDENS-----");
     for seed in 0..N163_SEEDS {
         let (audio, writes) = digests_of(n163_program(seed));

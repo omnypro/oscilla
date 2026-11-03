@@ -122,7 +122,7 @@ struct MachineTests {
     }
 
     @Test func aRoutineThatNeverReturnsIsReported() throws {
-        let m = try #require(Support.machine(init: [], play: [0x4C, 0x00, 0x81]))
+        let m = try #require(Support.machine(init: [], play: [0x4C, 0x00, 0x84]))
         defer { cnes_free(m) }
         cnes_run_cycles(m, UInt64(CNES_NTSC_CLOCK_HZ) * 5 / 4)
         #expect(cnes_end_state_get(m) == CNES_STALLED)
@@ -140,15 +140,20 @@ struct MachineTests {
     @Test func expansionSoundIsReported() throws {
         let plain = try #require(Support.machine(init: Support.note))
         let vrc6 = try #require(Support.machine(init: Support.note, chips: 1))
-        let other = try #require(Support.machine(init: Support.note, chips: 4))
         let s5b = try #require(Support.machine(init: Support.note, chips: 32))
         let n163 = try #require(Support.machine(init: Support.note, chips: 16))
-        defer { cnes_free(plain); cnes_free(vrc6); cnes_free(other); cnes_free(s5b); cnes_free(n163) }
+        let fds = try #require(Support.machine(init: Support.note, chips: 4))
+        let vrc7 = try #require(Support.machine(init: Support.note, chips: 2))
+        defer {
+            cnes_free(plain); cnes_free(vrc6); cnes_free(s5b)
+            cnes_free(n163); cnes_free(fds); cnes_free(vrc7)
+        }
         #expect(String(cString: cnes_warnings(plain)).isEmpty)
         #expect(String(cString: cnes_warnings(vrc6)).isEmpty, "the VRC6 is played")
         #expect(String(cString: cnes_warnings(s5b)).isEmpty, "the 5B is played")
         #expect(String(cString: cnes_warnings(n163)).isEmpty, "the N163 is played")
-        #expect(String(cString: cnes_warnings(other)).contains("expansion"))
+        #expect(String(cString: cnes_warnings(fds)).isEmpty, "the FDS is played")
+        #expect(String(cString: cnes_warnings(vrc7)).contains("expansion"))
     }
 
     @Test func theEndStateTellsAnEmptyUnitFromAPlayingOne() throws {
@@ -204,7 +209,7 @@ struct RefusalTests {
         #expect(probe.restore == 3)
         #expect(probe.selected == 0)
         #expect(probe.channelMask == 0, "the mask call returned a neutral value")
-        #expect(cnes_channel_mask(m) == 0x7FFFF, "the mask did not change")
+        #expect(cnes_channel_mask(m) == 0xFFFFF, "the mask did not change")
         #expect(cnes_song(m) == 0)
         cnes_run_cycles(m, 1000)
         #expect(cnes_cycles(m) >= 2000, "the machine is intact and still running")

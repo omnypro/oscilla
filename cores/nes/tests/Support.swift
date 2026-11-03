@@ -5,7 +5,7 @@ import CNes
 /// made from them.
 enum Support {
     static let load = 0x8000
-    static let play = 0x8100
+    static let play = 0x8400
 
     /// `lda #v; sta addr`.
     static func store(_ address: UInt16, _ v: UInt8) -> [UInt8] {
@@ -19,7 +19,7 @@ enum Support {
 
     /// An NSF file whose init and play routines are `init` and `play`. Each
     /// ends with RTS. The init routine sits at the load address and the play
-    /// routine 0x100 bytes after it.
+    /// routine 0x400 bytes after it.
     static func nsf(init initCode: [UInt8], play: [UInt8] = [], songs: UInt8 = 4,
                     first: UInt8 = 1, ntscUS: UInt16 = 0, palUS: UInt16 = 0,
                     region: UInt8 = 0, chips: UInt8 = 0,

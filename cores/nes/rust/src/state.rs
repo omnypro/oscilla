@@ -227,6 +227,89 @@ impl Default for S5b {
     }
 }
 
+/// The sound of the Famicom Disk System's expansion chip: one wavetable
+/// channel with a volume envelope and a frequency modulation unit.
+#[derive(Clone)]
+pub struct Fds {
+    /// The chip is in the file's header. Without it no event runs.
+    pub active: bool,
+    pub wave: [u8; 64],
+    /// The 24-bit phase of the wave: its top six bits are the sample.
+    pub accum: u32,
+    pub freq: u16,
+    /// Wave playback is halted: the output is the first sample.
+    pub halted: bool,
+    pub write_enable: bool,
+    pub master: u8,
+    /// The volume envelope: off when set, rising when `vol_up`.
+    pub vol_off: bool,
+    pub vol_up: bool,
+    pub vol_speed: u8,
+    pub vol_gain: u8,
+    /// The gain that the output uses, which follows `vol_gain` when the wave
+    /// is at its first sample.
+    pub vol_out: u8,
+    pub vol_timer: u32,
+    pub env_disabled: bool,
+    pub env_speed: u8,
+    pub mod_off: bool,
+    pub mod_up: bool,
+    pub mod_speed: u8,
+    pub mod_gain: u8,
+    pub mod_timer: u32,
+    pub mod_freq: u16,
+    pub mod_halted: bool,
+    pub mod_carry: bool,
+    pub mod_accum: u32,
+    pub mod_pos: u8,
+    pub mod_table: [u8; 32],
+    pub mod_counter: i8,
+    /// The output before the chip's low-pass filter, and after it.
+    pub out: i32,
+    pub lowpassed: f64,
+    /// The share of a change that the low-pass filter takes up in one update.
+    pub alpha: f64,
+    pub next_step: u64,
+}
+
+impl Default for Fds {
+    fn default() -> Fds {
+        Fds {
+            active: false,
+            wave: [0; 64],
+            accum: 0,
+            freq: 0,
+            halted: true,
+            write_enable: false,
+            master: 0,
+            vol_off: true,
+            vol_up: false,
+            vol_speed: 0,
+            vol_gain: 0,
+            vol_out: 0,
+            vol_timer: 0,
+            env_disabled: false,
+            env_speed: 0xE8,
+            mod_off: true,
+            mod_up: false,
+            mod_speed: 0,
+            mod_gain: 0,
+            mod_timer: 0,
+            mod_freq: 0,
+            mod_halted: true,
+            mod_carry: false,
+            mod_accum: 0,
+            mod_pos: 0,
+            mod_table: [0; 32],
+            mod_counter: 0,
+            out: 0,
+            lowpassed: 0.0,
+            alpha: 0.0,
+            next_step: NEVER,
+        }
+    }
+}
+
 /// The sound of the Namco 163 expansion chip: 128 bytes of sound RAM that hold
 /// the waveforms and the registers of up to eight channels, which the chip
 /// plays one at a time.
@@ -285,6 +368,7 @@ pub struct Apu {
     pub vrc6: Vrc6,
     pub s5b: S5b,
     pub n163: N163,
+    pub fds: Fds,
     /// The enable bits of $4015, bit n for channel n.
     pub enabled: u8,
     pub frame: FrameCounter,
@@ -327,6 +411,8 @@ pub struct Machine {
     pub(crate) bus: u8,
     pub(crate) ram: Ram,
     pub(crate) wram: Ram,
+    /// The 24 KiB of RAM at 0x8000 that a file with the FDS has.
+    pub(crate) fds_ram: Ram,
     /// The program image: byte i sits at ROM address 0x8000 + i when the banks
     /// are 0 to 7.
     pub(crate) image: Arc<[u8]>,

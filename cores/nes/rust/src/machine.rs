@@ -14,7 +14,7 @@ use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use std::sync::Arc;
 
 /// The bits of the channel mask that name a channel.
-const ALL_CHANNELS: u32 = (1 << 19) - 1;
+const ALL_CHANNELS: u32 = (1 << 20) - 1;
 
 /// The warning list holds at most 2048 bytes and a closing NUL. Its room is
 /// reserved at the start so that the list never moves.
@@ -114,6 +114,7 @@ impl Machine {
             bus: 0,
             ram: ram(0x800),
             wram: ram(0x2000),
+            fds_ram: ram(0),
             image,
             banks,
             banked: false,
@@ -164,6 +165,26 @@ impl Machine {
         self.bus = 0;
         self.ram.fill(0);
         self.wram.fill(0);
+        if self.chips & oscilla_nsf::chips::FDS != 0 {
+            if self.fds_ram.is_empty() {
+                self.fds_ram = ram(0x6000);
+            }
+            self.fds_ram.fill(0);
+            // The program is copied into the RAM: window by window for a
+            // file with banks, and all at once for a file without.
+            for window in 0..6usize {
+                let bank = if self.banked {
+                    self.header_banks[window]
+                } else {
+                    window as u8
+                };
+                self.fds_load_window(window, bank);
+            }
+            if self.banked {
+                self.fds_load_window(6, self.header_banks[6]);
+                self.fds_load_window(7, self.header_banks[7]);
+            }
+        }
         self.banks = self.header_banks;
         self.apu = Apu::new(self.region, self.chips);
         // The player writes the sound registers as the format asks: zero to
@@ -522,6 +543,12 @@ impl Machine {
         } else {
             None
         };
+        if self.chips & oscilla_nsf::chips::VRC6 == 0
+            && self.chips & oscilla_nsf::chips::N163 == 0
+            && self.chips & oscilla_nsf::chips::FDS != 0
+        {
+            out[0] = self.apu.fds.level();
+        }
         if self.chips & oscilla_nsf::chips::VRC6 == 0 && self.chips & oscilla_nsf::chips::N163 != 0
         {
             for (slot, level) in out.iter_mut().zip(self.apu.n163.levels()) {

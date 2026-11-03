@@ -167,7 +167,7 @@ fn the_channel_mask_reaches_the_expansion_channels() {
     let stores = [(0x9000, 0x7F), (0x9001, 0xFF), (0x9002, 0x81)];
     let mut a = with(&stores);
     let mut b = with(&stores);
-    assert_eq!(b.channel_mask(), 0x7FFFF);
+    assert_eq!(b.channel_mask(), 0xFFFFF);
     b.set_channel_mask(!0x20);
     assert!(a.set_highpass_hz(1.0));
     assert!(b.set_highpass_hz(1.0));
@@ -203,7 +203,7 @@ fn only_the_other_chips_are_reported() {
     let m = with(&[]);
     assert_eq!(m.warnings_nul(), [0]);
     let mut f = file(&[], &[]);
-    f[0x7B] = oscilla_nsf::chips::VRC6 | oscilla_nsf::chips::FDS;
+    f[0x7B] = oscilla_nsf::chips::VRC6 | oscilla_nsf::chips::VRC7;
     let m = Machine::new(&oscilla_nsf::Nsf::parse(&f).unwrap(), 48000).unwrap();
     assert!(String::from_utf8_lossy(m.warnings_nul()).contains("expansion"));
 }

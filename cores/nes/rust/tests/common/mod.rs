@@ -164,3 +164,10 @@ pub fn n163_ram(at: u8, bytes: &[u8]) -> Vec<u8> {
     }
     out
 }
+
+/// The same as `machine`, for a file that asks for the Famicom Disk System.
+pub fn fds_machine(init: &[u8], play: &[u8]) -> Machine {
+    let mut f = file(init, play);
+    f[0x7B] = oscilla_nsf::chips::FDS;
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}

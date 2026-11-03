@@ -15,7 +15,7 @@ struct ImageTests {
         #expect(h.first_song == 2, "the file counts from 1 and the interface from 0")
         #expect(h.load == 0x8000)
         #expect(h.`init` == 0x8000)
-        #expect(h.play == 0x8100)
+        #expect(h.play == 0x8400)
         #expect(h.ntsc_us == 16666)
         #expect(h.pal_us == 20000)
         #expect(h.region_bits == 1)
