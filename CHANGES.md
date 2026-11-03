@@ -1,5 +1,18 @@
 # Changes
 
+## 0.3.7
+
+- The MMC5 expansion chip: two pulse channels, the 8-bit sample register, the
+  8 by 8 multiplier and the RAM at `0x5C00`, played for files that ask for it.
+  The channel mask has bits 20 and 21 for the pulse channels and bit 22 for the
+  sample register.
+- The VRC7 expansion chip: six FM channels with the chip's 15 patches and the
+  custom patch, played for files that ask for it. The channel mask has bits 23
+  to 28 for them, and `cnes_expansion_levels_get` shows their last outputs.
+- `cnes_channel_mask` returns `0x1FFFFFFF` at the start.
+- A file that asks for the MMC5 or the VRC7 no longer raises the warning about
+  expansion sound.
+
 ## 0.3.6
 
 - The NSF2 features. A version 2 file can carry NSFe chunks after its program,
