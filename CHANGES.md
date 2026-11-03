@@ -1,5 +1,17 @@
 # Changes
 
+## 0.3.8
+
+- The VT02 expansion chip: a second generator with two pulse channels, a
+  triangle and a noise channel at `0x4020`, the output switches at `0x4030`,
+  raw 8-bit PCM from `0x4031` or the delta channel's DMA, and the enables at
+  `0x4035`. The channel mask has bits 29 to 33 for them, and
+  `cnes_expansion_levels_get` shows their levels.
+- `cnes_set_channel_mask` and `cnes_channel_mask` use 64 bits.
+  `cnes_channel_mask` returns `0x3FFFFFFFF` at the start.
+- A file that asks for the VT02 no longer raises the warning about expansion
+  sound.
+
 ## 0.3.7
 
 - The MMC5 expansion chip: two pulse channels, the 8-bit sample register, the
