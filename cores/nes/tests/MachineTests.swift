@@ -219,9 +219,13 @@ struct RefusalTests {
         // The init routine sets the vector to 0x8800, starts the timer with a
         // period of 1000 cycles and clears the I flag. The routine at 0x8800
         // counts in 0x0200 and reads the status to acknowledge.
-        let start = Support.store(0xFFFE, 0x00) + Support.store(0xFFFF, 0x88)
-            + Support.store(0x401B, 0xE7) + Support.store(0x401C, 0x03)
-            + Support.store(0x401D, 0x01) + [0x58]
+        var start: [UInt8] = []
+        start += Support.store(0xFFFE, 0x00)
+        start += Support.store(0xFFFF, 0x88)
+        start += Support.store(0x401B, 0xE7)
+        start += Support.store(0x401C, 0x03)
+        start += Support.store(0x401D, 0x01)
+        start.append(0x58)
         var bytes = Support.nsf(init: start, play: [])
         let routine: [UInt8] = [0xEE, 0x00, 0x02, 0xAD, 0x1D, 0x40, 0x40]
         bytes.append(contentsOf: [UInt8](repeating: 0, count: 0x80 + 0x800 + routine.count - bytes.count))
