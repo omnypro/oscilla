@@ -17,6 +17,7 @@ mod mmc5;
 mod n163;
 mod s5b;
 mod state;
+mod vrc7;
 
 pub use apu::{CONSOLE_HIGHPASS_HZ, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 pub use machine::{EndState, RestoreError, Snapshot};

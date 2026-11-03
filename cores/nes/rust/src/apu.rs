@@ -203,6 +203,8 @@ struct Mixer {
     n163: f64,
     /// One step of the FDS's output.
     fds: f64,
+    /// One unit of a VRC7 channel's output.
+    vrc7: f64,
     /// One level of an MMC5 pulse channel.
     mmc5_pulse: f64,
     /// One step of the MMC5's sample register.
@@ -219,6 +221,7 @@ fn mixer() -> &'static Mixer {
             s5b: [0.0; 32],
             n163: 0.0,
             fds: 0.0,
+            vrc7: 0.0,
             mmc5_pulse: 0.0,
             mmc5_pcm: 0.0,
         };
@@ -231,6 +234,7 @@ fn mixer() -> &'static Mixer {
         m.vrc6 = m.pulse[15] / 15.0 * VRC6_GAIN;
         m.n163 = m.pulse[15] * crate::n163::N163_GAIN;
         m.fds = m.pulse[15] * crate::fds::FDS_GAIN;
+        m.vrc7 = m.pulse[15] * crate::vrc7::VRC7_GAIN;
         m.mmc5_pulse = m.pulse[15] / 15.0;
         m.mmc5_pcm = m.tnd[127] / 127.0;
         for (slot, amp) in m.s5b.iter_mut().zip(crate::s5b::amplitudes()) {
@@ -475,6 +479,7 @@ impl Apu {
             n163: N163::default(),
             fds: Fds::default(),
             mmc5: Mmc5::default(),
+            vrc7: Vrc7::default(),
             enabled: 0,
             frame: FrameCounter::default(),
             time: 0,
@@ -517,6 +522,9 @@ impl Apu {
                 p.next_step = p.period_cycles();
             }
             a.mmc5.next_clock = crate::mmc5::CLOCK;
+        }
+        if chips & oscilla_nsf::chips::VRC7 != 0 {
+            a.vrc7 = Vrc7::new(clock_of(region));
         }
         a.vrc6.pulse[0].counter = 15;
         a.vrc6.pulse[1].counter = 15;
@@ -583,6 +591,13 @@ impl Apu {
             }
             if mask >> 22 & 1 != 0 {
                 expansion += f64::from(self.mmc5.pcm) * m.mmc5_pcm;
+            }
+        }
+        if self.vrc7.active && !self.vrc7.reset {
+            for c in 0..6 {
+                if mask >> (23 + c) & 1 != 0 {
+                    expansion += f64::from(self.vrc7.out[c]) * m.vrc7;
+                }
             }
         }
         if self.fds.active && mask >> 19 & 1 != 0 {
@@ -719,6 +734,7 @@ impl Machine {
                     NEVER
                 },
                 if a.mmc5.active { a.mmc5.next_clock } else { NEVER },
+                if a.vrc7.active { a.vrc7.next_step } else { NEVER },
             ];
             for (i, at) in candidates.into_iter().enumerate() {
                 if at < te {
@@ -774,6 +790,7 @@ impl Machine {
                     m.clock();
                     m.next_clock += crate::mmc5::CLOCK;
                 }
+                20 => self.apu.vrc7.tick(),
                 9 => {
                     let v = &mut self.apu.vrc6;
                     let shift = v.shift;
@@ -1076,7 +1093,8 @@ impl Machine {
             | oscilla_nsf::chips::S5B
             | oscilla_nsf::chips::N163
             | oscilla_nsf::chips::FDS
-            | oscilla_nsf::chips::MMC5;
+            | oscilla_nsf::chips::MMC5
+            | oscilla_nsf::chips::VRC7;
         if self.chips & !played != 0 {
             self.warn(
                 WARN_CHIP,

@@ -9,7 +9,8 @@
 //! and keep the lines between the markers. The cutoff block goes in
 //! `goldens/nes-highpass.txt`, the VRC6 block in `goldens/nes-vrc6.txt` the 5B block in
 //! `goldens/nes-s5b.txt` the Namco 163 block in `goldens/nes-n163.txt` and the FDS block in
-//! `goldens/nes-fds.txt`.
+//! `goldens/nes-fds.txt`, the MMC5 block in `goldens/nes-mmc5.txt` and the VRC7 block in
+//! `goldens/nes-vrc7.txt`.
 
 mod common;
 
@@ -267,6 +268,67 @@ fn fds_program(seed: u64) -> Vec<u8> {
     f
 }
 
+/// A file that asks for the MMC5 and drives its pulse channels, sample
+/// register and multiplier with the 2A03, then moves a pitch in the play
+/// routine.
+fn mmc5_program(seed: u64) -> Vec<u8> {
+    let mut r = Rng(seed ^ 0x5C5);
+    let mut init = set(0x4015, 0x1F);
+    init.extend(set(0x5015, 0x03));
+    for _ in 0..3 + r.below(4) {
+        init.extend(random_store(&mut r));
+    }
+    for _ in 0..10 + r.below(10) {
+        let reg = [
+            0x5000u16, 0x5002, 0x5003, 0x5004, 0x5006, 0x5007, 0x5011, 0x5205, 0x5206, 0x5015,
+        ][r.below(10) as usize];
+        let mut v = r.byte();
+        if reg == 0x5015 {
+            v |= 3;
+        }
+        init.extend(set(reg, v));
+    }
+    init.extend(set(0x5003, 0x08 + r.below(0x40) as u8 * 8));
+    let mut play = vec![0xE6, 0x00, 0xA5, 0x00, 0x8D, 0x02, 0x50];
+    for _ in 0..r.below(3) {
+        play.extend(set(0x5011, r.byte()));
+    }
+    let mut f = file_with(&init, &play, 16666, r.below(2) as u8, [0; 8], None);
+    f[0x7B] = oscilla_nsf::chips::MMC5;
+    f
+}
+
+/// A store to a register of the VRC7 through its two ports.
+fn vrc7_store(reg: u8, v: u8) -> Vec<u8> {
+    [set(0x9010, reg), set(0x9030, v)].concat()
+}
+
+/// A file that asks for the VRC7, writes a random custom patch and sets up
+/// the six channels with random instruments, then moves a pitch and a key in
+/// the play routine.
+fn vrc7_program(seed: u64) -> Vec<u8> {
+    let mut r = Rng(seed ^ 0x707);
+    let mut init = Vec::new();
+    for reg in 0..8u8 {
+        init.extend(vrc7_store(reg, r.byte()));
+    }
+    for ch in 0..6u8 {
+        init.extend(vrc7_store(0x30 + ch, r.byte()));
+        init.extend(vrc7_store(0x10 + ch, r.byte()));
+        init.extend(vrc7_store(0x20 + ch, 0x10 | r.byte() & 0x2F));
+    }
+    for _ in 0..r.below(3) {
+        init.extend(vrc7_store(0x0F, r.byte() & 15));
+    }
+    // lda #$10; sta $9010; inc $00; lda $00; sta $9030
+    let play = vec![0xA9, 0x10, 0x8D, 0x10, 0x90, 0xE6, 0x00, 0xA5, 0x00, 0x8D, 0x30, 0x90];
+    let mut f = file_with(&init, &play, 16666, r.below(2) as u8, [0; 8], None);
+    f[0x7B] = oscilla_nsf::chips::VRC7;
+    f
+}
+
+const MMC5_SEEDS: u64 = 16;
+const VRC7_SEEDS: u64 = 16;
 const FDS_SEEDS: u64 = 16;
 const N163_SEEDS: u64 = 16;
 const S5B_SEEDS: u64 = 16;
@@ -387,6 +449,43 @@ fn the_digests_with_the_fds_match() {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+fn check_chip(text: &str, seeds: u64, program: fn(u64) -> Vec<u8>) {
+    let want: Vec<(u64, u64, u64)> = text
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            (
+                p[0].parse().unwrap(),
+                u64::from_str_radix(p[1], 16).unwrap(),
+                u64::from_str_radix(p[2], 16).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(want.len() as u64, seeds);
+    let mut bad = Vec::new();
+    for (seed, audio, writes) in want {
+        let got = digests_of(program(seed));
+        if got != (audio, writes) {
+            bad.push(format!(
+                "seed {seed}: audio {:016x} (want {audio:016x}), writes {:016x} (want {writes:016x})",
+                got.0, got.1
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn the_digests_with_the_mmc5_match() {
+    check_chip(include_str!("goldens/nes-mmc5.txt"), MMC5_SEEDS, mmc5_program);
+}
+
+#[test]
+fn the_digests_with_the_vrc7_match() {
+    check_chip(include_str!("goldens/nes-vrc7.txt"), VRC7_SEEDS, vrc7_program);
 }
 
 #[test]
@@ -522,6 +621,18 @@ fn print() {
         println!("{seed} {audio:016x} {writes:016x}");
     }
     println!("-----END FDS GOLDENS-----");
+    println!("-----BEGIN MMC5 GOLDENS-----");
+    for seed in 0..MMC5_SEEDS {
+        let (audio, writes) = digests_of(mmc5_program(seed));
+        println!("{seed} {audio:016x} {writes:016x}");
+    }
+    println!("-----END MMC5 GOLDENS-----");
+    println!("-----BEGIN VRC7 GOLDENS-----");
+    for seed in 0..VRC7_SEEDS {
+        let (audio, writes) = digests_of(vrc7_program(seed));
+        println!("{seed} {audio:016x} {writes:016x}");
+    }
+    println!("-----END VRC7 GOLDENS-----");
     println!("-----BEGIN N163 GOLDENS-----");
     for seed in 0..N163_SEEDS {
         let (audio, writes) = digests_of(n163_program(seed));

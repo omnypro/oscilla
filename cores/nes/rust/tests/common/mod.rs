@@ -172,6 +172,13 @@ pub fn fds_machine(init: &[u8], play: &[u8]) -> Machine {
     Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
 }
 
+/// The same as `machine`, for a file that asks for the VRC7.
+pub fn vrc7_machine(init: &[u8], play: &[u8]) -> Machine {
+    let mut f = file(init, play);
+    f[0x7B] = oscilla_nsf::chips::VRC7;
+    Machine::new(&Nsf::parse(&f).unwrap(), 48000).unwrap()
+}
+
 /// The same as `machine`, for a file that asks for the MMC5.
 pub fn mmc5_machine(init: &[u8], play: &[u8]) -> Machine {
     let mut f = file(init, play);

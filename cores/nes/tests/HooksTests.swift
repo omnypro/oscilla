@@ -101,7 +101,7 @@ struct HooksTests {
     @Test func theChannelMaskSilencesAChannelAndSurvivesAReset() throws {
         let m = try #require(Support.machine(init: Support.note))
         defer { cnes_free(m) }
-        #expect(cnes_channel_mask(m) == 0x7FFFFF)
+        #expect(cnes_channel_mask(m) == 0x1FFFFFFF)
         cnes_set_channel_mask(m, 0b11110)
         _ = Support.render(m, frames: 48000)
         let tail = Support.render(m, frames: 9600)
@@ -117,7 +117,7 @@ struct HooksTests {
         }
         #expect(loudest == 15, "a muted channel still shows its level")
         cnes_set_channel_mask(m, 0xFFFF_FFFF)
-        #expect(cnes_channel_mask(m) == 0x7FFFFF, "only the bits that name a channel count")
+        #expect(cnes_channel_mask(m) == 0x1FFFFFFF, "only the bits that name a channel count")
     }
 
     @Test func theBassCutoffStartsAtTheConsoleAndAcceptsOnlyItsRange() throws {
@@ -249,7 +249,7 @@ struct HooksTests {
         #expect(loudest[3...].allSatisfy { $0 == 0 })
         let loud = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(loud > 1000)
-        cnes_set_channel_mask(m, 0x7FFFFF & ~0x100)
+        cnes_set_channel_mask(m, 0x1FFFFFFF & ~0x100)
         _ = Support.render(m, frames: 48000)
         let quiet = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(quiet < 50, "bit 8 mutes channel A")
@@ -276,7 +276,7 @@ struct HooksTests {
         #expect(loudest[0..<7].allSatisfy { $0 == 0 })
         let loud = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(loud > 500)
-        cnes_set_channel_mask(m, 0x7FFFFF & ~(1 << 18))
+        cnes_set_channel_mask(m, 0x1FFFFFFF & ~(1 << 18))
         _ = Support.render(m, frames: 48000)
         let quiet = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(quiet < 50, "bit 18 mutes channel 8")
@@ -301,7 +301,7 @@ struct HooksTests {
         #expect(levels[1...].allSatisfy { $0 == 0 })
         let loud = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(loud > 500)
-        cnes_set_channel_mask(m, 0x7FFFFF & ~(1 << 19))
+        cnes_set_channel_mask(m, 0x1FFFFFFF & ~(1 << 19))
         _ = Support.render(m, frames: 48000)
         let quiet = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(quiet < 50, "bit 19 mutes the chip")
@@ -329,10 +329,43 @@ struct HooksTests {
         #expect(levels[3...].allSatisfy { $0 == 0 })
         let loud = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(loud > 500)
-        cnes_set_channel_mask(m, 0x7FFFFF & ~(1 << 20))
+        cnes_set_channel_mask(m, 0x1FFFFFFF & ~(1 << 20))
         _ = Support.render(m, frames: 48000)
         let quiet = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
         #expect(quiet < 50, "bit 20 mutes pulse 1")
+        #expect(String(cString: cnes_warnings(m)).isEmpty)
+    }
+
+    @Test func theVRC7ChannelShowsItsLevelAndAnswersToTheMask() throws {
+        // A plain sine on channel 1: the carrier sustains at once, the
+        // modulator is nearly silent.
+        func register(_ r: UInt16, _ v: UInt8) -> [UInt8] {
+            Support.store(0x9010, UInt8(r)) + Support.store(0x9030, v)
+        }
+        var setup: [UInt8] = []
+        let regs: [(UInt16, UInt8)] = [
+            (0x00, 0x01), (0x01, 0x21), (0x02, 0x3F), (0x03, 0x00),
+            (0x04, 0xF0), (0x05, 0xF0), (0x06, 0x00), (0x07, 0x00),
+            (0x30, 0x00), (0x10, 0x00), (0x20, 0x17),
+        ]
+        for (r, v) in regs { setup += register(r, v) }
+        let m = try #require(Support.machine(init: setup, chips: 2))
+        defer { cnes_free(m) }
+        var levels = [Int32](repeating: -1, count: 8)
+        var loudest: Int32 = 0
+        for _ in 0..<400 {
+            cnes_run_cycles(m, 997)
+            cnes_expansion_levels_get(m, &levels)
+            loudest = max(loudest, levels[0])
+        }
+        #expect(loudest > 3000, "a full carrier peaks near 4088")
+        #expect(levels[1...].allSatisfy { $0 == 0 })
+        let loud = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
+        #expect(loud > 500)
+        cnes_set_channel_mask(m, 0x1FFFFFFF & ~(1 << 23))
+        _ = Support.render(m, frames: 48000)
+        let quiet = Support.render(m, frames: 4800).map { abs(Int($0)) }.max() ?? 0
+        #expect(quiet < 50, "bit 23 mutes channel 1")
         #expect(String(cString: cnes_warnings(m)).isEmpty)
     }
 }

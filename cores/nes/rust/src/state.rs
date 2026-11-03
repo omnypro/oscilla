@@ -402,6 +402,46 @@ impl Default for Mmc5 {
     }
 }
 
+/// One operator of a VRC7 channel.
+#[derive(Clone, Copy, Default)]
+pub struct Vrc7Op {
+    /// The wave's place in 19 bits: the top ten are the index of the sine.
+    pub phase: u32,
+    /// The envelope's attenuation in 1/65536 of a step of 0.375 dB.
+    pub att: u32,
+    pub state: u8,
+    /// The last two outputs, for the feedback.
+    pub prev: [i32; 2],
+}
+
+/// The sound of the VRC7 expansion chip: six channels of two operators, a
+/// modulator and a carrier.
+#[derive(Clone, Default)]
+pub struct Vrc7 {
+    /// The chip is in the file's header. Without it no event runs.
+    pub active: bool,
+    /// Bit 7 of 0x E000 is set: the chip is silent and ignores its registers.
+    pub reset: bool,
+    pub select: u8,
+    pub custom: [u8; 8],
+    pub frequency_low: [u8; 6],
+    pub frequency_high: [u8; 6],
+    pub instrument: [u8; 6],
+    pub test: u8,
+    pub key: [bool; 6],
+    pub ops: [[Vrc7Op; 2]; 6],
+    pub tremolo_step: u8,
+    pub tremolo_tick: u8,
+    pub vibrato_step: u8,
+    pub vibrato_tick: u16,
+    /// What each channel put out in the last sample.
+    pub out: [i32; 6],
+    /// The samples made so far.
+    pub k: u64,
+    pub clock: (u64, u64),
+    pub next_step: u64,
+}
+
 /// The sound of the VRC6 expansion chip.
 #[derive(Clone, Default)]
 pub struct Vrc6 {
@@ -424,6 +464,7 @@ pub struct Apu {
     pub n163: N163,
     pub fds: Fds,
     pub mmc5: Mmc5,
+    pub vrc7: Vrc7,
     /// The enable bits of $4015, bit n for channel n.
     pub enabled: u8,
     pub frame: FrameCounter,

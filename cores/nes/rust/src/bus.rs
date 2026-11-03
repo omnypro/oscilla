@@ -245,6 +245,15 @@ impl Machine {
                 }
                 self.s5b_write(address, v);
             }
+            0x9010 | 0x9030 | 0xE000 if self.chips & oscilla_nsf::chips::VRC7 != 0 => {
+                self.sync_apu();
+                let t = self.now;
+                if let Some(o) = self.observer.0.as_mut() {
+                    o.sound_write(t, address, v);
+                }
+                self.apu.vrc7_write(address, v);
+                self.apu_emit(t);
+            }
             0x5000..=0x5015 if self.chips & oscilla_nsf::chips::MMC5 != 0 => {
                 self.sync_apu();
                 let t = self.now;

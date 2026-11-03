@@ -238,7 +238,7 @@ fn a_full_volume_pulse_is_as_loud_as_one_of_the_2a03() {
 fn the_channel_mask_reaches_the_mmc5_channels() {
     let mut a = with(&steady(0xFF));
     let mut b = with(&steady(0xFF));
-    assert_eq!(b.channel_mask(), 0x7FFFFF);
+    assert_eq!(b.channel_mask(), 0x1FFFFFFF);
     b.set_channel_mask(!(1 << 20));
     assert!(a.set_highpass_hz(1.0));
     assert!(b.set_highpass_hz(1.0));
