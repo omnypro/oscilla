@@ -1,5 +1,13 @@
 # Changes
 
+## 0.3.3
+
+- The Namco 163 expansion chip: eight wavetable channels, played for files that
+  ask for it. The channel mask has bits 11 to 18 for them, and
+  `cnes_expansion_levels_get` shows their levels.
+- `cnes_channel_mask` returns `0x7FFFF` at the start, with a bit for each
+  channel of the 2A03, the VRC6, the 5B and the Namco 163.
+
 ## 0.3.2
 
 - The Sunsoft 5B expansion chip: three tone channels with noise and an
