@@ -176,13 +176,14 @@ impl Machine {
         self.dsp = Dsp::new(spc.dsp);
         self.dsp.mask = mask;
         self.dsp_address = self.ram[0xF2];
-        self.ports_in = [0; 4];
         self.ports_out = [self.ram[0xF4], self.ram[0xF5], self.ram[0xF6], self.ram[0xF7]];
         self.timers = [Timer::default(); 3];
         for (n, t) in self.timers.iter_mut().enumerate() {
             t.target = self.ram[0xFA + n];
         }
         self.set_control(self.ram[0xF1]);
+        // The reset bits of the control register act on a write, not on a load.
+        self.ports_in = [self.ram[0xF4], self.ram[0xF5], self.ram[0xF6], self.ram[0xF7]];
         for (n, t) in self.timers.iter_mut().enumerate() {
             if t.enabled {
                 t.out = self.ram[0xFD + n] & 15;

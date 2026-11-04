@@ -93,12 +93,10 @@ chooses the voices and the echo (bit 8). `--info` prints the tags and the times.
 ## Compatibility
 
 A comparison with the logs of the DSP stores that a reference player made for
-20 songs from three games gave the same stores in the same order for 19 of them,
-over 1.7 million stores, and the same SPC700 clock for each store in 17. In two
-songs the clock differs by at most 6 cycles. In the other song the first 1,652 of
-2,119 stores match, and then a pitch value differs. DESIGN.md lists the
-approximations, the unknowns and the measured differences from the reference
-player's audio.
+35 songs from six games gave the same stores in the same order for every song,
+over 3.3 million stores, and the same SPC700 clock for every store. DESIGN.md
+lists the approximations, the unknowns and the measured differences from the
+reference player's audio.
 
 Not emulated: the TEST register (wait states and the switches that stop the
 timers or the RAM writes), a boot ROM that takes blocks of more than 256 bytes,

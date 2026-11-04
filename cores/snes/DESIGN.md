@@ -45,9 +45,11 @@ the 9-bit result in V and A, and H takes the documented value.
 ## Ports and timers
 
 Ports 0xF4 to 0xF7 are four inputs and four outputs. A read returns the input
-and a write sets the output and the RAM byte. The inputs start at 0 and
-`write_port` sets them. Bits 4 and 5 of the control register clear them in
-pairs.
+and a write sets the output and the RAM byte. The inputs start with the bytes
+at 0xF4 to 0xF7 of the RAM image, and `write_port` sets them. A write to the
+control register with bit 4 or bit 5 set clears the inputs in pairs; a load does
+not apply the bits. Some drivers read a command from the ports at the start,
+and the reference logs of three of them fit only these starting values.
 
 There are three timers. Timers 0 and 1 count every 128 cycles (8 kHz) and timer
 2 every 16 cycles (64 kHz). A timer divides its input by the target (0 means
@@ -83,7 +85,8 @@ the voices. The decisions:
 - The control register comes from RAM byte 0xF1. The timer enables and the boot
   ROM switch follow it. The timer targets come from 0xFA to 0xFC. A timer that is
   on starts with its output at the low four bits of 0xFD to 0xFF and its divider
-  one count in; both fit the reference logs. The input ports start at 0.
+  one count in; both fit the reference logs. The input ports start with the
+  bytes at 0xF4 to 0xF7. The reset bits of the control byte do not apply.
 - When the boot ROM switch is on, the 64 bytes of extra RAM in the file replace
   the RAM at 0xFFC0 to 0xFFFF.
 - The DSP registers come from the file, including KON. A key-on that the file
@@ -170,16 +173,14 @@ can pass full scale and clamps there.
 
 ## Checks against a reference player
 
-The reference set is 20 songs from three games and three sound drivers, with a
+The reference set is 35 songs from six games and six sound drivers, with a
 render and a log of the SPC700's DSP stores for each.
 
-- The log of stores matches in order for 19 songs. The clock of each store
-  matches for 17 songs, over 1.7 million stores. In two songs (one file twice)
-  it differs by at most 6 cycles. In one song the first 1,652 of 2,119 stores
-  match and then a pitch value differs, after two earlier differences of 2
-  cycles. The cause is not found.
+- The log of stores matches in order for all 35 songs, and the clock of every
+  store matches: over 3.3 million stores. Three families of drivers beyond the
+  first set (three games, then three more) fit without a change.
 - The timer fits came from these logs: the initial divider and output, the
-  equality compare and the phase.
+  equality compare and the phase. So did the input ports' starting values.
 - The renders agree in shape, not sample by sample. The reference player runs
   its processor ahead of its DSP, so a store reaches the DSP a variable number
   of samples after the clock in the log. With a fixed shift of 3 or 4 samples

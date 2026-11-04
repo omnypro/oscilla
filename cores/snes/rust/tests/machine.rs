@@ -358,3 +358,20 @@ fn the_output_rate_must_be_between_8000_and_192000() {
     assert!(Machine::new(&s, 0).is_none());
     assert!(Machine::new(&s, -5).is_none());
 }
+
+#[test]
+fn a_load_keeps_the_input_ports_even_when_the_control_byte_asks_for_a_reset() {
+    // The control byte 0x31 has both reset bits set, and the file holds 5 and 6
+    // at 0xF4 and 0xF5. The reset acts on a write, not on a load.
+    let mut f = file(&[0xE4, 0xF4, 0xE4, 0xF5], ZERO, &[]);
+    f[0x100 + 0xF1] = 0x31;
+    f[0x100 + 0xF4] = 5;
+    f[0x100 + 0xF5] = 6;
+    let mut m = Machine::new(&Spc::parse(&f).unwrap(), 32000).unwrap();
+    run_instructions(&mut m, 1);
+    assert_eq!(m.cpu_state().1, 5);
+    run_instructions(&mut m, 1);
+    assert_eq!(m.cpu_state().1, 6);
+    // The output ports start with the same bytes.
+    assert_eq!((m.read_port(0), m.read_port(1)), (5, 6));
+}

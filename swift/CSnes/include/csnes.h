@@ -24,7 +24,7 @@ extern "C" {
  * An SPC file holds a moment of a running driver, not a program to start. It
  * has no voice state, so a voice that sounded when the file was made starts
  * again at the driver's next key-on. The main CPU is not part of the machine:
- * the four input ports start at 0 and csnes_write_port sets them.
+ * the four input ports start with the bytes at 0xF4 to 0xF7 of the file's RAM, and csnes_write_port sets them.
  */
 
 /* ---- Images ------------------------------------------------------------ */
@@ -135,7 +135,7 @@ uint64_t csnes_samples(const csnes_machine *machine);
  * driver reads the values that the main CPU wrote and writes values of its
  * own. csnes_write_port sets what the SPC700 reads from port 0 to 3 (the main
  * CPU's side). csnes_read_port returns what the SPC700 wrote there last. The
- * inputs start at 0. A port number outside 0 to 3 does nothing and reads 0.
+ * inputs start with the bytes at 0xF4 to 0xF7 of the file's RAM. A port number outside 0 to 3 does nothing and reads 0.
  */
 void csnes_write_port(csnes_machine *machine, int port, uint32_t value);
 uint32_t csnes_read_port(const csnes_machine *machine, int port);
