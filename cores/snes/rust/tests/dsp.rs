@@ -332,3 +332,30 @@ fn registers_above_0x80_mirror_the_lower_half_and_endx_clears_on_any_write() {
     // The block loops with the end flag every 16 samples.
     assert_eq!(m.dsp_register(0x7C) & 1, 1);
 }
+
+#[test]
+fn the_loop_address_is_read_from_the_table_when_the_voice_loops() {
+    // Source 0 loops on a loud block. After a while the driver points voice 0
+    // at source 1, whose entry names a silent block, and the voice goes
+    // quiet at its next loop.
+    let wait = vec![0xCD, 0xF0, 0x1D, 0xD0, 0xFD, 0xCD, 0xF0, 0x1D, 0xD0, 0xFD];
+    let mut program = wait;
+    program.extend(dsp_program(&[(0x04, 1)]));
+    let spc = dsp_file(
+        &program,
+        &voice0(0x1000, 0x7F, 0x40),
+        &[
+            (0x2000, block(12, 0, 3, DC)),
+            (0x1004, vec![0x00, 0x21, 0x00, 0x21]),
+            (0x2100, block(12, 0, 3, [0; 16])),
+        ],
+        0x2000,
+        0x2000,
+    );
+    let mut m = dsp_machine(&spc);
+    let early = m.dsp_samples(60);
+    assert!(early.chunks(2).skip(40).all(|c| c[0] > 0));
+    m.dsp_samples(300);
+    let late = m.dsp_samples(60);
+    assert!(late.iter().all(|&v| v == 0), "{:?}", &late[..8]);
+}

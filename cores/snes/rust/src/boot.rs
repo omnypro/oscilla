@@ -6,7 +6,7 @@
 //! to start over and to 0xFFC9 to announce again, and both addresses start an
 //! instruction here.
 //!
-//! One block takes at most 256 bytes. The stack pointer is not set.
+//! One block takes at most 256 bytes.
 
 pub const BASE: u16 = 0xFFC0;
 

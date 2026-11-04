@@ -47,11 +47,9 @@ pub(crate) struct Timer {
     pub out: u8,
 }
 
-/// The cycle, modulo 128, at which the 8 kHz timers count. An instruction here
-/// takes effect whole before its cycles pass, so a read inside an instruction
-/// sees the timers as they stand at its start; the phase is set early by about
-/// the length of an instruction to make up for it. Fitted: the register streams
-/// of the reference logs match for phases 120 to 122 and the middle is used.
+/// The cycle, modulo 128, at which the 8 kHz timers count. The reference logs
+/// fit 0 once a read inside an instruction sees the clock at the cycle of the
+/// read.
 const TIMER_PHASE: u64 = 0;
 
 /// A level unit is one step of a 16-bit sample.
@@ -122,7 +120,7 @@ impl Machine {
     }
 
     fn from_image(image: Arc<Spc>, output_rate: i32) -> Option<Machine> {
-        if output_rate <= 0 {
+        if !(8000..=192_000).contains(&output_rate) {
             return None;
         }
         let mut m = Machine {

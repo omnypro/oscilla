@@ -37,8 +37,6 @@ struct Voice {
     mode: Mode,
     /// The address of the block being played.
     block: u16,
-    /// Where the loop begins, read from the table at key-on and at each loop.
-    loop_at: u16,
     /// The flags of the block being played.
     flags: u8,
     counter: u32,
@@ -139,7 +137,6 @@ impl Dsp {
         let word = |at: usize| u16::from_le_bytes([ram[at & 0xFFFF], ram[(at + 1) & 0xFFFF]]);
         let voice = &mut self.voices[v];
         voice.block = word(entry);
-        voice.loop_at = word(entry + 2);
         voice.env = 0;
         voice.mode = Mode::Attack;
         voice.counter = 0;
@@ -201,9 +198,12 @@ impl Dsp {
 
     /// Moves a voice on to the next block, or back to the loop.
     fn next_block(&mut self, v: usize, ram: &[u8; 65536]) {
+        let dir = usize::from(self.regs[0x5D]) << 8;
+        let entry = (dir + usize::from(self.regs[v * 16 + 4]) * 4 + 2) & 0xFFFF;
+        let loop_at = u16::from_le_bytes([ram[entry], ram[(entry + 1) & 0xFFFF]]);
         let voice = &mut self.voices[v];
         if voice.flags & 1 != 0 {
-            voice.block = voice.loop_at;
+            voice.block = loop_at;
             if voice.flags == 1 {
                 voice.mode = Mode::Release;
                 voice.env = 0;

@@ -574,13 +574,27 @@ impl Machine {
                 9
             }
             0x9E => {
-                let ya = u32::from(self.y) << 8 | u32::from(self.a);
+                // The nine-step division of the documentation, with its
+                // overflow and half-carry effects.
                 let x = u32::from(self.x);
-                let overflow = x == 0 || ya / x > 0xFF;
-                self.flag(V, overflow);
-                let (q, r) = if x == 0 { (0xFFFF, ya & 0xFF) } else { (ya / x, ya % x) };
-                self.a = q as u8;
-                self.y = r as u8;
+                let divisor = x * 0x200;
+                self.flag(H, (self.x & 15) <= (self.y & 15));
+                let mut temp = u32::from(self.y) << 8 | u32::from(self.a);
+                for _ in 0..9 {
+                    temp <<= 1;
+                    if temp & 0x2_0000 != 0 {
+                        temp ^= 0x2_0001;
+                    }
+                    if temp >= divisor {
+                        temp ^= 1;
+                    }
+                    if temp & 1 != 0 {
+                        temp = temp.wrapping_sub(divisor) & 0x1_FFFF;
+                    }
+                }
+                self.a = temp as u8;
+                self.y = (temp >> 9) as u8;
+                self.flag(V, temp & 0x100 != 0);
                 self.nz(self.a);
                 12
             }

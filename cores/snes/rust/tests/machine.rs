@@ -347,3 +347,14 @@ fn quiet_cycles_count_since_the_output_last_changed() {
     m.run_cycles(10_000);
     assert!(m.quiet_cycles() >= 9_000);
 }
+
+#[test]
+fn the_output_rate_must_be_between_8000_and_192000() {
+    let s = spc(&[0x2F, 0xFE], ZERO, &[]);
+    assert!(Machine::new(&s, 7999).is_none());
+    assert!(Machine::new(&s, 8000).is_some());
+    assert!(Machine::new(&s, 192_000).is_some());
+    assert!(Machine::new(&s, 192_001).is_none());
+    assert!(Machine::new(&s, 0).is_none());
+    assert!(Machine::new(&s, -5).is_none());
+}

@@ -37,10 +37,8 @@ Direct page addresses wrap inside their page. The opcodes that the tables mark
 as storing with a dummy read do the read, because a read of a timer output
 clears it. `MOVW` and `INCW` wrap the high byte inside the page.
 
-Unknown: the results `DIV` gives on overflow, and the half-carry flag after it.
-The core sets V and leaves H alone, takes the low 8 bits of the quotient and
-the remainder, and gives 0xFFFF and the low byte of the dividend for a divisor
-of 0. A driver that checks the overflow case is rare.
+`DIV` runs the nine-step division of the documentation, so an overflow gives
+the 9-bit result in V and A, and H takes the documented value.
 
 `SLEEP` and `STOP` halt the processor. The clock, the timers and the DSP go on.
 
@@ -72,8 +70,8 @@ and 1, waits for 0xCC, and takes blocks of bytes through the ports until a
 command of 0 enters the program. Games jump to 0xFFC0 to start over and to
 0xFFC9 to announce again, and both start an instruction here.
 
-Limits of the stand-in: a block takes at most 256 bytes, and the stack pointer
-is not set. The program does not match the original byte for byte.
+Limit of the stand-in: a block takes at most 256 bytes. The program does not
+match the original byte for byte.
 
 ## Restoring a file
 
@@ -113,11 +111,14 @@ FLG puts every voice in release with the envelope at 0, every sample.
 shift of 13 to 15 the nibble becomes its sign (-1 or 0) and the shift 12. The
 four filters use the exact integer forms of the documentation. A sum past 16
 bits clamps to 0x3FFF or 0 as the documentation says, and a sum between 15 and
-16 bits wraps by 0x8000. The previous two samples feed the next block.
+16 bits wraps by 0x8000. The two rules of the documentation disagree at exactly
+0x7FFF, which wraps to -1; only a malformed block reaches it. The previous two samples feed the next block.
 
 The end flag sets the voice's bit in ENDX when the block is decoded. When the
-voice moves on from a block with the end flag it jumps to the loop address, and
-with the code 1 (end and mute) it goes to release with the envelope at 0.
+voice moves on from a block with the end flag it jumps to the loop address,
+which it reads from the sample table at that moment, so a changed DIR or SRCN
+takes effect at the next loop. With the code 1 (end and mute) the voice goes to
+release with the envelope at 0.
 
 **Pitch.** The 16-bit counter adds the 14-bit pitch each sample. Bits 15 to 12
 pick the sample and bits 11 to 4 the row of the interpolation table. A carry out

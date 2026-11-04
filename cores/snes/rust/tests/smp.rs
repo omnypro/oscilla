@@ -241,6 +241,47 @@ fn multiply_and_divide() {
 }
 
 #[test]
+fn divide_sets_the_half_carry_flag_from_the_low_nibbles() {
+    // H = (X & 15) <= (Y & 15)
+    let mut m = machine_with(&[0x9E], regs(0x10, 3, 0x05, 0));
+    step(&mut m);
+    assert_eq!(flags(&m) & H, H);
+    let mut m = machine_with(&[0x9E], regs(0x10, 9, 0x05, 0));
+    step(&mut m);
+    assert_eq!(flags(&m) & H, 0);
+}
+
+/// The division of the documentation, restated step by step.
+fn documented_divide(ya: u32, x: u32) -> (u8, u8, bool) {
+    let mut t = ya;
+    for _ in 0..9 {
+        t <<= 1;
+        if t & 0x2_0000 != 0 {
+            t ^= 0x2_0001;
+        }
+        if t >= x * 0x200 {
+            t ^= 1;
+        }
+        if t & 1 != 0 {
+            t = t.wrapping_sub(x * 0x200) & 0x1_FFFF;
+        }
+    }
+    (t as u8, (t >> 9) as u8, t & 0x100 != 0)
+}
+
+#[test]
+fn divide_follows_the_documented_steps_with_and_without_overflow() {
+    for &(ya, x) in &[(0x0100u32, 7u32), (0x0072, 0x18), (0x0200, 1), (0x1234, 0x12), (0xFFFF, 0xFF), (0x3400, 0), (0x00FF, 0x80), (0x7F00, 0x40)] {
+        let mut m = machine_with(&[0x9E], regs(ya as u8, x as u8, (ya >> 8) as u8, 0));
+        step(&mut m);
+        let (a, y, v) = documented_divide(ya, x);
+        let (_, ra, _, ry, ..) = m.cpu_state();
+        assert_eq!((ra, ry, flags(&m) & V != 0), (a, y, v), "{ya:X} / {x:X}");
+        assert_eq!(flags(&m) & Z != 0, a == 0);
+        assert_eq!(flags(&m) & N != 0, a & 0x80 != 0);
+    }
+}
+#[test]
 fn bit_instructions_use_the_thirteen_bit_address() {
     // SET1 [10].3 ; CLR1 [10].0 ; MOV1 C,[0123].5 ; MOV1 [0124].7,C ; NOT1 [0123].5
     let mut m = machine_ram(
