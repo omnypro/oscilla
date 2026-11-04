@@ -1,5 +1,19 @@
 # Changes
 
+## 0.4.0
+
+- The SNES core, which plays SPC files. It restores the RAM and the DSP
+  registers from the file and runs the SPC700 and the S-DSP: eight BRR voices
+  with envelopes, noise, pitch modulation and the echo filter, the three
+  timers and the four ports. `csnes.h` is its C interface.
+- The SPC reader covers the ID666 tags (text and binary) and the xid6 chunk,
+  with the time, the fade, the muted voices and the amplification.
+- The channel mask has nine bits: the eight voices and the echo output.
+  `csnes_channel_mask` returns `0x1FF` at the start.
+- The 64 bytes under bit 7 of the control register are a boot ROM written for
+  this core. A block it takes holds at most 256 bytes.
+- `oscilla-spc` plays an SPC file to a WAV file and writes the DSP stores.
+
 ## 0.3.8
 
 - The VT02 expansion chip: a second generator with two pulse channels, a
