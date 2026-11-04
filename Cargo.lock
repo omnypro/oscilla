@@ -98,6 +98,18 @@ name = "oscilla-resample"
 version = "0.0.0"
 
 [[package]]
+name = "oscilla-snes"
+version = "0.0.0"
+dependencies = [
+ "oscilla-resample",
+ "oscilla-spc",
+]
+
+[[package]]
+name = "oscilla-spc"
+version = "0.0.0"
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"

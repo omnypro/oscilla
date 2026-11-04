@@ -1,0 +1,9 @@
+[package]
+name = "oscilla-snes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+oscilla-spc.workspace = true
+oscilla-resample.workspace = true

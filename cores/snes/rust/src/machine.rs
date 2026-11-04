@@ -1,0 +1,477 @@
+//! The machine: the SPC700, the S-DSP and the 64 KiB of RAM that they share,
+//! with the clock that drives both and the resampler that turns the 32 kHz
+//! samples into the caller's rate.
+
+use std::sync::Arc;
+
+use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
+use oscilla_spc::Spc;
+
+use crate::dsp::{Dsp, ECHO_BIT, VOICES};
+
+/// SPC700 cycles per second. The DSP makes a sample every 32 of them.
+pub const CLOCK: u64 = 1_024_000;
+pub const CYCLES_PER_SAMPLE: u64 = 32;
+pub const SAMPLE_RATE: u32 = 32_000;
+
+/// The bits of the channel mask: one for each voice, then the echo output.
+pub const ALL_CHANNELS: u64 = (1 << (VOICES as u32 + 1)) - 1;
+
+/// Watches what the driver does to the sound hardware. Callbacks run on the
+/// rendering thread, in program order.
+pub trait Observer {
+    /// A store to the DSP through ports 0xF2 and 0xF3, at the SPC700 clock of
+    /// the store counted from the first sample.
+    fn dsp_write(&mut self, cycle: u64, register: u8, value: u8);
+    /// A store to one of the four output ports 0xF4 to 0xF7.
+    fn port_write(&mut self, cycle: u64, port: u8, value: u8);
+}
+
+/// Holds the observer outside the machine state: a copy of the state has none.
+#[derive(Default)]
+pub struct ObserverSlot(pub Option<Box<dyn Observer>>);
+
+impl Clone for ObserverSlot {
+    fn clone(&self) -> Self {
+        ObserverSlot(None)
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Timer {
+    pub enabled: bool,
+    pub target: u8,
+    /// The divider that counts the input clock up to the target.
+    pub stage: u8,
+    /// The 4-bit output that a read clears.
+    pub out: u8,
+}
+
+/// The cycle, modulo 128, at which the 8 kHz timers count. An instruction here
+/// takes effect whole before its cycles pass, so a read inside an instruction
+/// sees the timers as they stand at its start; the phase is set early by about
+/// the length of an instruction to make up for it. Fitted: the register streams
+/// of the reference logs match for phases 120 to 122 and the middle is used.
+const TIMER_PHASE: u64 = 0;
+
+/// A level unit is one step of a 16-bit sample.
+const OUT_SHIFT: u32 = BLEP_SHIFT;
+
+#[derive(Clone)]
+pub struct Machine {
+    pub(crate) a: u8,
+    pub(crate) x: u8,
+    pub(crate) y: u8,
+    pub(crate) sp: u8,
+    pub(crate) pc: u16,
+    pub(crate) psw: u8,
+    pub(crate) ram: Box<[u8; 65536]>,
+    pub(crate) dsp: Dsp,
+    pub(crate) control: u8,
+    pub(crate) dsp_address: u8,
+    pub(crate) ports_in: [u8; 4],
+    pub(crate) ports_out: [u8; 4],
+    pub(crate) timers: [Timer; 3],
+    pub(crate) now: u64,
+    pub(crate) halted: bool,
+    pub(crate) observer: ObserverSlot,
+    image: Arc<Spc>,
+    out: Resampler,
+    last: (i32, i32),
+    last_change: u64,
+    capture: Option<Vec<i16>>,
+    timer_phase: u64,
+    pub(crate) fetched: u32,
+    pub(crate) elapsed: u32,
+    pub(crate) deferred: Vec<(u8, u8)>,
+    pub(crate) deferred_ports: Vec<(u8, u8)>,
+    pending: Vec<(u8, u8)>,
+}
+
+/// A copy of everything a machine is, apart from the observer and the channel
+/// mask, which belong to the listener.
+#[derive(Clone)]
+pub struct Snapshot(Box<Machine>);
+
+impl Snapshot {
+    pub fn size(&self) -> usize {
+        std::mem::size_of::<Machine>() + 65536 + self.0.out.heap_bytes()
+    }
+}
+
+/// Why a snapshot cannot be restored into a machine.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RestoreError {
+    Rate,
+    Image,
+}
+
+/// How a song stands, for a host that decides when it has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndState {
+    Running,
+    /// The SPC700 executed SLEEP or STOP.
+    Stalled,
+}
+
+impl Machine {
+    /// A machine in the state the file holds, producing `output_rate` frames a
+    /// second. Returns None when the rate is not positive.
+    pub fn new(spc: &Spc, output_rate: i32) -> Option<Machine> {
+        Machine::from_image(Arc::new(spc.clone()), output_rate)
+    }
+
+    fn from_image(image: Arc<Spc>, output_rate: i32) -> Option<Machine> {
+        if output_rate <= 0 {
+            return None;
+        }
+        let mut m = Machine {
+            a: 0,
+            x: 0,
+            y: 0,
+            sp: 0,
+            pc: 0,
+            psw: 0,
+            ram: Box::new([0; 65536]),
+            dsp: Dsp::new([0; 128]),
+            control: 0,
+            dsp_address: 0,
+            ports_in: [0; 4],
+            ports_out: [0; 4],
+            timers: [Timer::default(); 3],
+            now: 0,
+            halted: false,
+            observer: ObserverSlot::default(),
+            image,
+            out: Resampler::with_ratio(output_rate, CLOCK, 1),
+            last: (0, 0),
+            last_change: 0,
+            capture: None,
+            timer_phase: TIMER_PHASE,
+            fetched: 0,
+            elapsed: 0,
+            deferred: Vec::new(),
+            deferred_ports: Vec::new(),
+            pending: Vec::new(),
+        };
+        m.load();
+        Some(m)
+    }
+
+    /// Puts the machine in the state of the file.
+    fn load(&mut self) {
+        let spc = Arc::clone(&self.image);
+        let r = spc.registers;
+        self.a = r.a;
+        self.x = r.x;
+        self.y = r.y;
+        self.sp = r.sp;
+        self.pc = r.pc;
+        self.psw = r.psw;
+        *self.ram = *spc.ram;
+        self.control = 0;
+        // The 64 bytes under the boot ROM are the real RAM when the ROM shows.
+        if self.ram[0xF1] & 0x80 != 0 {
+            self.ram[0xFFC0..].copy_from_slice(&spc.extra);
+        }
+        let mask = self.dsp.mask;
+        self.dsp = Dsp::new(spc.dsp);
+        self.dsp.mask = mask;
+        self.dsp_address = self.ram[0xF2];
+        self.ports_in = [0; 4];
+        self.ports_out = [self.ram[0xF4], self.ram[0xF5], self.ram[0xF6], self.ram[0xF7]];
+        self.timers = [Timer::default(); 3];
+        for (n, t) in self.timers.iter_mut().enumerate() {
+            t.target = self.ram[0xFA + n];
+        }
+        self.set_control(self.ram[0xF1]);
+        for (n, t) in self.timers.iter_mut().enumerate() {
+            if t.enabled {
+                t.out = self.ram[0xFD + n] & 15;
+                t.stage = 1;
+            }
+        }
+        self.now = 0;
+        self.halted = false;
+        self.out.reset();
+        self.last = (0, 0);
+        self.last_change = 0;
+    }
+
+    /// Starts the song again from the state of the file.
+    pub fn reset(&mut self) {
+        self.load();
+    }
+
+    /// Runs one instruction and the cycles it takes. A store to the DSP lands
+    /// in the last cycle of its instruction, and a read of a timer or of the
+    /// DSP sees the clock as the instruction has advanced it so far.
+    fn execute(&mut self) {
+        let cycles = self.step();
+        let remaining = cycles.saturating_sub(self.elapsed);
+        if self.deferred.is_empty() && self.deferred_ports.is_empty() {
+            self.tick(remaining);
+            return;
+        }
+        self.tick(remaining.saturating_sub(1));
+        for (register, value) in std::mem::take(&mut self.deferred) {
+            self.dsp.write(register, value);
+            self.pending.push((register, value));
+        }
+        self.tick(remaining.min(1));
+        let cycle = self.now;
+        let writes = std::mem::take(&mut self.pending);
+        let ports = std::mem::take(&mut self.deferred_ports);
+        if let Some(o) = self.observer.0.as_mut() {
+            for (register, value) in writes {
+                o.dsp_write(cycle, register, value);
+            }
+            for (port, value) in ports {
+                o.port_write(cycle, port, value);
+            }
+        }
+    }
+
+    /// Brings the clock up to the cycle that the running instruction has
+    /// reached.
+    pub(crate) fn catch_up(&mut self) {
+        let due = self.fetched.saturating_sub(self.elapsed);
+        self.elapsed += due;
+        self.tick(due);
+    }
+
+    /// Advances the timers and the DSP by `cycles` SPC700 cycles.
+    fn tick(&mut self, cycles: u32) {
+        for _ in 0..cycles {
+            self.now += 1;
+            let t = self.now.wrapping_sub(self.timer_phase);
+            if t.is_multiple_of(16) {
+                self.step_timer(2);
+                if t.is_multiple_of(128) {
+                    self.step_timer(0);
+                    self.step_timer(1);
+                }
+            }
+            if self.now.is_multiple_of(CYCLES_PER_SAMPLE) {
+                let (l, r) = self.dsp.sample(&mut self.ram);
+                if (l, r) != self.last {
+                    self.last_change = self.now;
+                    self.last = (l, r);
+                }
+                self.out.step(self.now, l, r);
+                if let Some(c) = self.capture.as_mut() {
+                    c.push(l.clamp(-32768, 32767) as i16);
+                    c.push(r.clamp(-32768, 32767) as i16);
+                }
+            }
+        }
+    }
+
+    /// One tick of the input clock of a timer. Timers 0 and 1 count 8 kHz and
+    /// timer 2 counts 64 kHz.
+    fn step_timer(&mut self, n: usize) {
+        let t = &mut self.timers[n];
+        if !t.enabled {
+            return;
+        }
+        t.stage = t.stage.wrapping_add(1);
+        if t.stage == t.target {
+            t.stage = 0;
+            t.out = (t.out + 1) & 15;
+        }
+    }
+
+    /// Runs until the clock reaches `end`. An instruction that starts before
+    /// `end` finishes, so the clock may pass it.
+    fn run_until(&mut self, end: u64) {
+        while self.now < end {
+            self.execute();
+        }
+    }
+
+    /// Fills `out` with interleaved left and right 16-bit samples.
+    pub fn render_s16(&mut self, out: &mut [i16]) {
+        let frames = out.len() / 2;
+        let mut at = 0;
+        while at < frames {
+            let chunk = (frames - at).min(OUT_RING / 4);
+            self.produce(chunk);
+            let got = self.out.take_s16(
+                Some(&mut out[2 * at..2 * (at + chunk)]),
+                chunk,
+                1,
+                OUT_SHIFT,
+            );
+            at += got;
+        }
+    }
+
+    /// Fills `out` with interleaved left and right floats.
+    pub fn render_f32(&mut self, out: &mut [f32]) {
+        let frames = out.len() / 2;
+        let mut at = 0;
+        let scale = 1.0 / f64::from(1u32 << 15) / f64::from(1u32 << BLEP_SHIFT);
+        while at < frames {
+            let chunk = (frames - at).min(OUT_RING / 4);
+            self.produce(chunk);
+            let got = self
+                .out
+                .take_f32(&mut out[2 * at..2 * (at + chunk)], chunk, scale);
+            at += got;
+        }
+    }
+
+    /// Runs the machine until the resampler holds `frames` more frames.
+    fn produce(&mut self, frames: usize) {
+        let rate = self.out.rate() as u64;
+        while self.out.available() < frames {
+            let missing = (frames - self.out.available()) as u64;
+            let target = self.now + (missing * CLOCK).div_ceil(rate).max(CYCLES_PER_SAMPLE);
+            self.run_until(target);
+            let t = self.now;
+            self.out.finalize(t);
+        }
+    }
+
+    /// Runs `cycles` clocks. Sound produced meanwhile is discarded.
+    pub fn run_cycles(&mut self, cycles: u64) {
+        let end = self.now.saturating_add(cycles);
+        while self.now < end {
+            let slice = (OUT_RING as u64 / 4) * CLOCK / self.out.rate() as u64;
+            self.run_until((self.now + slice).min(end));
+            let t = self.now;
+            self.out.finalize(t);
+            let available = self.out.available();
+            self.out.take_s16(None, available, 1, OUT_SHIFT);
+        }
+    }
+
+    /// Runs until the DSP has made `frames` more samples and returns them as
+    /// interleaved stereo at 32 kHz, before any resampling.
+    #[doc(hidden)]
+    pub fn dsp_samples(&mut self, frames: usize) -> Vec<i16> {
+        self.capture = Some(Vec::with_capacity(frames * 2));
+        let end = self.now + frames as u64 * CYCLES_PER_SAMPLE;
+        while self.now < end {
+            self.execute();
+        }
+        let mut out = self.capture.take().unwrap_or_default();
+        out.truncate(frames * 2);
+        out
+    }
+
+    #[doc(hidden)]
+    pub fn set_timer_phase(&mut self, phase: u64) {
+        self.timer_phase = phase;
+    }
+
+    /// Runs one SPC700 instruction.
+    #[doc(hidden)]
+    pub fn step_instruction(&mut self) {
+        self.execute();
+    }
+
+    pub fn cycles(&self) -> u64 {
+        self.now
+    }
+
+    /// DSP samples made so far.
+    pub fn samples(&self) -> u64 {
+        self.now / CYCLES_PER_SAMPLE
+    }
+
+    /// The registers: PC, A, X, Y, PSW and SP.
+    pub fn cpu_state(&self) -> (u16, u8, u8, u8, u8, u8) {
+        (self.pc, self.a, self.x, self.y, self.psw, self.sp)
+    }
+
+    pub fn set_pc(&mut self, pc: u16) {
+        self.pc = pc;
+        self.halted = false;
+    }
+
+    /// A byte of sound RAM, without side effects.
+    pub fn peek(&self, address: u16) -> u8 {
+        self.ram[usize::from(address)]
+    }
+
+    /// A DSP register.
+    pub fn dsp_register(&self, register: u8) -> u8 {
+        self.dsp.read(register)
+    }
+
+    /// Sets what the main CPU would write to an input port. Ports 0 to 3 are
+    /// 0xF4 to 0xF7.
+    pub fn write_port(&mut self, port: usize, value: u8) {
+        self.ports_in[port & 3] = value;
+    }
+
+    /// What the SPC700 has written to an output port.
+    pub fn read_port(&self, port: usize) -> u8 {
+        self.ports_out[port & 3]
+    }
+
+    pub fn set_observer(&mut self, observer: Option<Box<dyn Observer>>) {
+        self.observer.0 = observer;
+    }
+
+    pub fn end_state(&self) -> EndState {
+        if self.halted {
+            EndState::Stalled
+        } else {
+            EndState::Running
+        }
+    }
+
+    /// Cycles since the output level last changed.
+    pub fn quiet_cycles(&self) -> u64 {
+        self.now.saturating_sub(self.last_change)
+    }
+
+    /// Chooses which voices and whether the echo reach the mix. Bit n is voice
+    /// n and bit 8 is the echo output. Voices and the echo keep running
+    /// whatever the mask says.
+    pub fn set_channel_mask(&mut self, mask: u64) {
+        self.dsp.mask = mask & ALL_CHANNELS;
+    }
+
+    pub fn channel_mask(&self) -> u64 {
+        self.dsp.mask & ALL_CHANNELS
+    }
+
+    /// The signed high byte of each voice's last output, before the volumes.
+    pub fn voice_levels(&self) -> [i32; VOICES] {
+        self.dsp.levels()
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot(Box::new(self.clone()))
+    }
+
+    /// Puts the machine back where `snapshot` was taken. The snapshot must come
+    /// from a machine with the same file and output rate.
+    pub fn restore(&mut self, snapshot: &Snapshot) -> Result<(), RestoreError> {
+        let s = &snapshot.0;
+        if s.out.rate() != self.out.rate() {
+            return Err(RestoreError::Rate);
+        }
+        if !(Arc::ptr_eq(&s.image, &self.image) || s.image == self.image) {
+            return Err(RestoreError::Image);
+        }
+        let observer = std::mem::take(&mut self.observer);
+        let mask = self.dsp.mask;
+        *self = Machine::clone(s);
+        self.observer = observer;
+        self.dsp.mask = mask & ALL_CHANNELS;
+        Ok(())
+    }
+
+    /// True when the echo bit of the mask is on.
+    pub fn echo_enabled(&self) -> bool {
+        self.dsp.mask & (1 << ECHO_BIT) != 0
+    }
+
+    pub fn song_info(&self) -> &Spc {
+        &self.image
+    }
+}
