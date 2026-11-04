@@ -145,3 +145,16 @@ pub fn voice0(pitch: u16, gain: u8, vol: u8) -> Vec<(u8, u8)> {
 pub fn dsp_machine(spc: &Spc) -> Machine {
     Machine::new(spc, 32000).unwrap()
 }
+
+pub fn fnv(bytes: impl IntoIterator<Item = u8>) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+pub fn digest(samples: &[i16]) -> u64 {
+    fnv(samples.iter().flat_map(|s| s.to_le_bytes()))
+}

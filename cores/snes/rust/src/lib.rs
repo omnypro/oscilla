@@ -17,4 +17,4 @@ pub use machine::{
     ALL_CHANNELS, CLOCK, CYCLES_PER_SAMPLE, EndState, Machine, Observer, RestoreError, SAMPLE_RATE,
     Snapshot,
 };
-pub use oscilla_spc::{Spc, SpcError};
+pub use oscilla_spc::{MAX_FILE, Spc, SpcError};

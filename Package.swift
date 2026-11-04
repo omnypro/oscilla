@@ -11,9 +11,12 @@ let package = Package(
         .library(name: "CGb", type: .static, targets: ["CGb"]),
         // The NES core, in the same Rust library.
         .library(name: "CNes", type: .static, targets: ["CNes"]),
+        // The SNES core, in the same Rust library.
+        .library(name: "CSnes", type: .static, targets: ["CSnes"]),
         .executable(name: "oscilla-gsf", targets: ["OscillaGSF"]),
         .executable(name: "oscilla-gbs", targets: ["OscillaGBS"]),
         .executable(name: "oscilla-nsf", targets: ["OscillaNSF"]),
+        .executable(name: "oscilla-spc", targets: ["OscillaSPC"]),
     ],
     targets: [
         // The C header of the Rust library, and the module that Swift imports.
@@ -31,6 +34,11 @@ let package = Package(
             name: "CNes",
             dependencies: ["OscillaRust"],
             path: "swift/CNes"
+        ),
+        .target(
+            name: "CSnes",
+            dependencies: ["OscillaRust"],
+            path: "swift/CSnes"
         ),
         // The Rust library as a prebuilt XCFramework (scripts/build-xcframework.sh).
         .binaryTarget(
@@ -57,6 +65,18 @@ let package = Package(
             name: "OscillaNSF",
             dependencies: ["CNes"],
             path: "cores/nes/tools/oscilla-nsf"
+        ),
+        // Plays an SPC file to a WAV file and writes the stream of DSP
+        // register stores.
+        .executableTarget(
+            name: "OscillaSPC",
+            dependencies: ["CSnes"],
+            path: "cores/snes/tools/oscilla-spc"
+        ),
+        .testTarget(
+            name: "CSnesTests",
+            dependencies: ["CSnes"],
+            path: "cores/snes/tests"
         ),
         .testTarget(
             name: "CGbTests",

@@ -12,19 +12,22 @@ asks for.
   cartridge images.
 - `cores/gb`: Game Boy. Plays GBS files.
 - `cores/nes`: NES. Plays NSF and NSFe files.
+- `cores/snes`: SNES. Plays SPC files.
 
 ## Layout
 
 - `cores/<name>/rust`: one core, as a Rust crate with no unsafe code.
 - `cores/<name>/tests`, `tools` and `DESIGN.md`: Swift tests of the C
   interface, command-line tools and design notes.
-- `formats/psf`, `formats/gbs` and `formats/nsf`: the PSF, GBS and NSF
-  containers (`formats/nsf` reads NSFe too).
+- `formats/psf`, `formats/gbs`, `formats/nsf` and `formats/spc`: the PSF, GBS,
+  NSF and SPC containers (`formats/nsf` reads NSFe too, and `formats/spc` reads
+  the xid6 tags).
 - `audio/resample`: the band-limited rate conversion that every core uses.
 - `ffi`: the C interface. One static library exports every core, and a cargo
-  feature (`gba`, `gb`, `nes`) selects each one.
-- `swift/CGba`, `swift/CGb` and `swift/CNes`: the C headers, `cgba.h`, `cgb.h`
-  and `cnes.h`, and the modules that Swift imports.
+  feature (`gba`, `gb`, `nes`, `snes`) selects each one.
+- `swift/CGba`, `swift/CGb`, `swift/CNes` and `swift/CSnes`: the C headers,
+  `cgba.h`, `cgb.h`, `cnes.h` and `csnes.h`, and the modules that Swift
+  imports.
 - `scripts`: the XCFramework build.
 
 ## Build and test

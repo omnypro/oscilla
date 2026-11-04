@@ -1,0 +1,4 @@
+module CSnes {
+    header "csnes.h"
+    export *
+}

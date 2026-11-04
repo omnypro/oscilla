@@ -65,7 +65,8 @@ jobs:
             "build/OscillaRust-$VERSION.xcframework.zip" \
             swift/CGba/include/cgba.h \
             swift/CGb/include/cgb.h \
-            swift/CNes/include/cnes.h
+            swift/CNes/include/cnes.h \
+            swift/CSnes/include/csnes.h
       - name: Remove the key
         if: always()
         run: rm -f "$RUNNER_TEMP/release_key"

@@ -1,0 +1,1 @@
+/* The Rust library behind csnes.h supplies every function. SwiftPM needs one source file to build this module. */
