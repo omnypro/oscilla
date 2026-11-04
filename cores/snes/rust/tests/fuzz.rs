@@ -29,7 +29,7 @@ fn random_file(seed: u64) -> Vec<u8> {
         *b = r.next() as u8;
     }
     // Keep the program counter in RAM most of the time.
-    if r.next() % 4 != 0 {
+    if !r.next().is_multiple_of(4) {
         f[0x26] &= 0x7F;
     }
     f
@@ -61,7 +61,7 @@ fn random_masks_and_resets_do_not_panic() {
         for _ in 0..6 {
             m.set_channel_mask(u64::from(r.next()) << 7 | u64::from(r.next()));
             render(&mut m, 700);
-            if r.next() % 3 == 0 {
+            if r.next().is_multiple_of(3) {
                 m.reset();
             }
             m.write_port((r.next() % 4) as usize, r.next() as u8);
