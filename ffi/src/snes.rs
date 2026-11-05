@@ -240,6 +240,7 @@ pub struct CObserver {
     context: *mut c_void,
     dsp_write: Option<unsafe extern "C" fn(*mut c_void, u32, u32)>,
     port_write: Option<unsafe extern "C" fn(*mut c_void, u32, u32)>,
+    ram_write: Option<unsafe extern "C" fn(*mut c_void, u32, u32)>,
 }
 
 struct Forward {
@@ -271,6 +272,14 @@ impl Observer for Forward {
         if let Some(f) = self.observer.port_write {
             self.enter(cycle);
             unsafe { f(self.observer.context, u32::from(port), u32::from(value)) };
+            self.leave();
+        }
+    }
+
+    fn ram_write(&mut self, cycle: u64, address: u16, value: u8) {
+        if let Some(f) = self.observer.ram_write {
+            self.enter(cycle);
+            unsafe { f(self.observer.context, u32::from(address), u32::from(value)) };
             self.leave();
         }
     }
@@ -370,6 +379,19 @@ pub unsafe extern "C" fn csnes_set_observer(machine: *mut CMachine, observer: *c
             observer: unsafe { *observer },
             callback: Arc::clone(&m.callback),
         })));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_watch_ram(machine: *mut CMachine, first: u32, last: u32) {
+    if unsafe { in_callback(machine) } {
+        return;
+    }
+    let m = unsafe { &mut (*machine).machine };
+    if first > 0xFFFF || first > last {
+        m.watch_ram(1, 0);
+    } else {
+        m.watch_ram(first as u16, last.min(0xFFFF) as u16);
     }
 }
 

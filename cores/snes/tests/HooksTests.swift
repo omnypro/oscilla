@@ -5,6 +5,7 @@ import CSnes
 private final class Log {
     var dsp: [(UInt64, UInt32, UInt32)] = []
     var ports: [(UInt32, UInt32)] = []
+    var rams: [(UInt64, UInt32, UInt32)] = []
     var machine: OpaquePointer?
 }
 
@@ -22,7 +23,8 @@ struct HooksTests {
                 let log = Unmanaged<Log>.fromOpaque(context!).takeUnretainedValue()
                 log.dsp.append((csnes_cycles(log.machine), reg, value))
             },
-            port_write: nil)
+            port_write: nil,
+            ram_write: nil)
         csnes_set_observer(m, &observer)
         csnes_run_cycles(m, 200)
         #expect(log.dsp.count == 2)
@@ -45,12 +47,41 @@ struct HooksTests {
             dsp_write: nil,
             port_write: { context, port, value in
                 Unmanaged<Log>.fromOpaque(context!).takeUnretainedValue().ports.append((port, value))
-            })
+            },
+            ram_write: nil)
         csnes_set_observer(m, &observer)
         csnes_run_cycles(m, 100)
         #expect(log.ports.count == 1)
         #expect(log.ports.first?.0 == 2)
         #expect(log.ports.first?.1 == 0x42)
+        csnes_set_observer(m, nil)
+    }
+
+    @Test func theObserverSeesStoresInTheWatchedRamRangeOnly() {
+        let log = Log()
+        // MOV A,#5A ; MOV !0300,A ; MOV !0301,A ; MOV !0400,A
+        let m = Support.machine(Support.spc(program: [
+            0xE8, 0x5A, 0xC5, 0x00, 0x03, 0xC5, 0x01, 0x03, 0xC5, 0x00, 0x04, 0x2F, 0xFE]))
+        defer { csnes_free(m) }
+        log.machine = m
+        let context = Unmanaged.passUnretained(log).toOpaque()
+        var observer = csnes_observer(
+            context: context,
+            dsp_write: nil,
+            port_write: nil,
+            ram_write: { context, address, value in
+                let log = Unmanaged<Log>.fromOpaque(context!).takeUnretainedValue()
+                log.rams.append((csnes_cycles(log.machine), address, value))
+            })
+        csnes_set_observer(m, &observer)
+        csnes_watch_ram(m, 0x300, 0x3FF)
+        csnes_run_cycles(m, 17)
+        #expect(log.rams.map { $0.1 } == [0x300, 0x301])
+        #expect(log.rams.map { $0.2 } == [0x5A, 0x5A])
+        #expect(log.rams.map { $0.0 } == [7, 12])
+        csnes_watch_ram(m, 1, 0)
+        csnes_run_cycles(m, 100)
+        #expect(log.rams.count == 2)
         csnes_set_observer(m, nil)
     }
 
@@ -74,7 +105,8 @@ struct HooksTests {
                     seen.peek = csnes_peek(p.machine, 0x400)
                     seen.cycles = csnes_cycles(p.machine)
                 },
-                port_write: nil)
+                port_write: nil,
+                ram_write: nil)
             csnes_set_observer(m, &observer)
             csnes_run_cycles(m, 100)
             csnes_set_observer(m, nil)

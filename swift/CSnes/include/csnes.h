@@ -152,15 +152,26 @@ uint32_t csnes_read_port(const csnes_machine *machine, int port);
  * dsp_write sees every store to a DSP register through ports 0xF2 and 0xF3:
  * the register number and the value. port_write sees every store to one of
  * the four output ports: the port number 0 to 3 and the value.
+ *
+ * ram_write sees the SPC700's stores to the addresses that csnes_watch_ram
+ * names: the address and the value, in program order, at the clock of the end
+ * of the instruction. The DSP's own writes (the echo buffer) do not show.
  */
 typedef struct {
     void *context;
     void (*dsp_write)(void *context, uint32_t reg, uint32_t value);
     void (*port_write)(void *context, uint32_t port, uint32_t value);
+    void (*ram_write)(void *context, uint32_t address, uint32_t value);
 } csnes_observer;
 
 /* Copies the observer in. Pass NULL to stop observing. */
 void csnes_set_observer(csnes_machine *machine, const csnes_observer *observer);
+
+/* Chooses the RAM addresses `first` to `last` (both included) that ram_write
+ * reports. A `first` above `last` or above 0xFFFF turns the report off, which
+ * is the start state; a `last` above 0xFFFF counts as 0xFFFF. A snapshot
+ * restore keeps the range. */
+void csnes_watch_ram(csnes_machine *machine, uint32_t first, uint32_t last);
 
 /* ---- Inspection, for tests and tools ----------------------------------- */
 

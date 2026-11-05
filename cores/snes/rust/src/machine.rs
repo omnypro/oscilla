@@ -25,15 +25,21 @@ pub trait Observer {
     fn dsp_write(&mut self, cycle: u64, register: u8, value: u8);
     /// A store to one of the four output ports 0xF4 to 0xF7.
     fn port_write(&mut self, cycle: u64, port: u8, value: u8);
+    /// A store by the SPC700 to sound RAM inside the range of
+    /// `Machine::watch_ram`, at the clock of the end of its instruction. The
+    /// stores of one instruction arrive in program order. Stores by the DSP
+    /// (the echo buffer) are not reported.
+    fn ram_write(&mut self, _cycle: u64, _address: u16, _value: u8) {}
 }
 
-/// Holds the observer outside the machine state: a copy of the state has none.
+/// Holds the observer and the range of RAM that it watches outside the machine
+/// state: a copy of the state has neither.
 #[derive(Default)]
-pub struct ObserverSlot(pub Option<Box<dyn Observer>>);
+pub struct ObserverSlot(pub Option<Box<dyn Observer>>, pub Option<(u16, u16)>);
 
 impl Clone for ObserverSlot {
     fn clone(&self) -> Self {
-        ObserverSlot(None)
+        ObserverSlot(None, None)
     }
 }
 
@@ -83,6 +89,7 @@ pub struct Machine {
     pub(crate) elapsed: u32,
     pub(crate) deferred: Vec<(u8, u8)>,
     pub(crate) deferred_ports: Vec<(u8, u8)>,
+    pub(crate) deferred_rams: Vec<(u16, u8)>,
     pending: Vec<(u8, u8)>,
 }
 
@@ -150,6 +157,7 @@ impl Machine {
             elapsed: 0,
             deferred: Vec::new(),
             deferred_ports: Vec::new(),
+            deferred_rams: Vec::new(),
             pending: Vec::new(),
         };
         m.load();
@@ -208,7 +216,10 @@ impl Machine {
     fn execute(&mut self) {
         let cycles = self.step();
         let remaining = cycles.saturating_sub(self.elapsed);
-        if self.deferred.is_empty() && self.deferred_ports.is_empty() {
+        if self.deferred.is_empty()
+            && self.deferred_ports.is_empty()
+            && self.deferred_rams.is_empty()
+        {
             self.tick(remaining);
             return;
         }
@@ -221,12 +232,16 @@ impl Machine {
         let cycle = self.now;
         let writes = std::mem::take(&mut self.pending);
         let ports = std::mem::take(&mut self.deferred_ports);
+        let rams = std::mem::take(&mut self.deferred_rams);
         if let Some(o) = self.observer.0.as_mut() {
             for (register, value) in writes {
                 o.dsp_write(cycle, register, value);
             }
             for (port, value) in ports {
                 o.port_write(cycle, port, value);
+            }
+            for (address, value) in rams {
+                o.ram_write(cycle, address, value);
             }
         }
     }
@@ -418,6 +433,15 @@ impl Machine {
 
     pub fn set_observer(&mut self, observer: Option<Box<dyn Observer>>) {
         self.observer.0 = observer;
+    }
+
+    /// Reports the SPC700's stores to the RAM addresses `first` to `last`
+    /// (both included) through `Observer::ram_write`. A range with `first`
+    /// above `last` turns the report off, which is the start state. A
+    /// snapshot restore keeps the range.
+    pub fn watch_ram(&mut self, first: u16, last: u16) {
+        self.observer.1 = (first <= last).then_some((first, last));
+        self.deferred_rams.clear();
     }
 
     pub fn end_state(&self) -> EndState {

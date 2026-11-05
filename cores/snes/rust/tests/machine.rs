@@ -254,6 +254,70 @@ fn the_observer_sees_dsp_stores_at_the_end_of_their_instruction() {
     assert_eq!(m.dsp_register(0x0C), 0x55);
 }
 
+type RamLog = std::rc::Rc<std::cell::RefCell<Vec<(u64, u16, u8)>>>;
+
+struct RamWatch(RamLog);
+
+impl Observer for RamWatch {
+    fn dsp_write(&mut self, _: u64, _: u8, _: u8) {}
+    fn port_write(&mut self, _: u64, _: u8, _: u8) {}
+    fn ram_write(&mut self, cycle: u64, address: u16, value: u8) {
+        self.0.borrow_mut().push((cycle, address, value));
+    }
+}
+
+// MOV A,#5A ; MOV !0300,A ; MOV !0301,A ; MOV !0400,A ; CALL !0500
+const RAM_STORES: [u8; 14] = [
+    0xE8, 0x5A, 0xC5, 0x00, 0x03, 0xC5, 0x01, 0x03, 0xC5, 0x00, 0x04, 0x3F, 0x00, 0x05,
+];
+
+#[test]
+fn the_observer_sees_ram_stores_inside_the_watched_range_in_order() {
+    let mut m = machine(&RAM_STORES);
+    let seen = RamLog::default();
+    m.set_observer(Some(Box::new(RamWatch(seen.clone()))));
+    run_instructions(&mut m, 5);
+    assert!(seen.borrow().is_empty());
+
+    let mut m = machine(&RAM_STORES);
+    m.set_observer(Some(Box::new(RamWatch(seen.clone()))));
+    m.watch_ram(0x0300, 0x0301);
+    run_instructions(&mut m, 5);
+    assert_eq!(*seen.borrow(), [(7, 0x0300, 0x5A), (12, 0x0301, 0x5A)]);
+}
+
+#[test]
+fn one_instruction_reports_all_of_its_stores_in_program_order() {
+    let mut m = machine(&RAM_STORES);
+    let seen = RamLog::default();
+    m.set_observer(Some(Box::new(RamWatch(seen.clone()))));
+    m.watch_ram(0x0100, 0x01FF);
+    run_instructions(&mut m, 5);
+    // CALL pushes the high byte of the return address, then the low byte.
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 2);
+    assert_eq!((seen[0].1, seen[1].1), (0x01EF, 0x01EE));
+    assert_eq!(seen[0].0, seen[1].0);
+}
+
+#[test]
+fn an_inverted_range_turns_the_report_off_and_a_restore_keeps_the_range() {
+    let mut m = machine(&RAM_STORES);
+    let seen = RamLog::default();
+    m.set_observer(Some(Box::new(RamWatch(seen.clone()))));
+    m.watch_ram(0x0300, 0x0301);
+    let snap = m.snapshot();
+    run_instructions(&mut m, 3);
+    assert_eq!(seen.borrow().len(), 2);
+    m.restore(&snap).unwrap();
+    run_instructions(&mut m, 3);
+    assert_eq!(seen.borrow().len(), 4);
+    m.restore(&snap).unwrap();
+    m.watch_ram(1, 0);
+    run_instructions(&mut m, 3);
+    assert_eq!(seen.borrow().len(), 4);
+}
+
 #[test]
 fn reading_the_dsp_data_port_returns_the_register_that_the_address_port_names() {
     // MOV [F2],#0C ; MOV [F3],#55 ; MOV [F2],#0C ; MOV A,[F3]

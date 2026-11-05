@@ -38,6 +38,11 @@ impl Machine {
 
     pub(crate) fn write(&mut self, address: u16, value: u8) {
         self.ram[usize::from(address)] = value;
+        if let Some((first, last)) = self.observer.1
+            && (first..=last).contains(&address)
+        {
+            self.deferred_rams.push((address, value));
+        }
         if !(0xF0..=0xFF).contains(&address) {
             return;
         }
@@ -114,7 +119,7 @@ impl Machine {
     }
 
     fn push(&mut self, value: u8) {
-        self.ram[0x100 | usize::from(self.sp)] = value;
+        self.write(0x100 | u16::from(self.sp), value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
