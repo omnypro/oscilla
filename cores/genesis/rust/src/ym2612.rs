@@ -12,9 +12,14 @@ const LFO_PERIOD: [u32; 8] = [109, 78, 72, 68, 63, 45, 9, 6];
 /// 1/1024 of an F-number of 1024.
 const PM_PEAK: [i32; 8] = [0, 2, 4, 6, 8, 12, 24, 48];
 
+/// The DAC's size against an FM channel, in quarters. libgme's render of a
+/// full-scale DAC square is 1.8 dB above its render of a full-scale FM sine by
+/// RMS, where the documents give both the same 9-bit range.
+const DAC_GAIN: i32 = 5;
+
 /// How far a modulator's output is shifted down before it enters the 10-bit
 /// phase of the operator that it modulates.
-pub const MOD_SHIFT: u32 = 4;
+pub const MOD_SHIFT: u32 = 1;
 
 /// The operator behind each position in a group of registers (S1, S3, S2, S4).
 const REGISTER_ORDER: [usize; 4] = [0, 2, 1, 3];
@@ -605,7 +610,7 @@ impl Ym2612 {
 
         let mut value = carriers.clamp(-256, 255);
         if c == 5 && self.dac_on {
-            value = ((i32::from(self.dac) << 1) | i32::from(self.dac_low)) - 256;
+            value = (((i32::from(self.dac) << 1) | i32::from(self.dac_low)) - 256) * DAC_GAIN / 4;
         }
         if self.ladder && value < 0 {
             value -= LADDER;
@@ -721,12 +726,13 @@ mod tests {
         chip.write(0, 0x2B, 0x80);
         chip.write(0, 0x2A, 0xC0);
         chip.write(1, 0xB6, 0xC0);
-        // Offset binary: 0xC0 is +64, doubled to 128 in the 9-bit value.
-        assert_eq!(chip.sample(), (128, 128));
+        // Offset binary: 0xC0 is +64, doubled to 128 in the 9-bit value and
+        // then scaled by DAC_GAIN / 4.
+        assert_eq!(chip.sample(), (160, 160));
         chip.write(0, 0x2A, 0x00);
-        assert_eq!(chip.sample(), (-256, -256));
+        assert_eq!(chip.sample(), (-320, -320));
         chip.write(0, 0x2C, 0x08);
-        assert_eq!(chip.sample(), (-255, -255));
+        assert_eq!(chip.sample(), (-318, -318));
     }
 
     #[test]

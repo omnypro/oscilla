@@ -48,16 +48,20 @@ impl std::error::Error for MachineError {}
 /// channel peaks at 0.258 of full scale, as libgme renders one.
 const FM_GAIN: i32 = 33;
 
-/// The SN76489's level against the chip's own scale, in 64ths. Fitted to
-/// renders of one and three full-volume tones.
-const PSG_GAIN: i32 = 55;
+/// The SN76489's level against the chip's own scale, in 256ths. A file whose
+/// header names no FM chip plays the PSG alone at the first level. With an FM
+/// chip the PSG is 0.405 of that, the relation that libgme's renders show
+/// (the documents put the four channels together at one FM channel, which
+/// is 0.26). Fitted to renders of one and three full-volume tones.
+const PSG_GAIN_ALONE: i32 = 220;
+const PSG_GAIN_WITH_FM: i32 = 89;
 
 /// The default cutoff of the output high-pass. The documents give no value for
 /// the console's output coupling.
 const DEFAULT_HIGHPASS_HZ: f64 = 20.0;
 
-fn psg_scaled((l, r): (i32, i32)) -> (i32, i32) {
-    ((l * PSG_GAIN) >> 6, (r * PSG_GAIN) >> 6)
+fn psg_scaled((l, r): (i32, i32), gain: i32) -> (i32, i32) {
+    ((l * gain) >> 8, (r * gain) >> 8)
 }
 
 #[derive(Clone)]
@@ -108,6 +112,7 @@ pub struct Machine {
     psg_seen: (i32, i32),
     mul: i64,
     shift: u32,
+    psg_gain: i32,
     hp_hz: f64,
     hp_a: f64,
     hp_dc: [f64; 2],
@@ -139,6 +144,7 @@ impl Machine {
         let m = i32::from(vgm.volume_modifier);
         let m = if m == -63 { -64 } else { m };
         let (q, r) = (m.div_euclid(32), m.rem_euclid(32));
+        let fm_present = fm.is_some();
         let mut machine = Machine {
             pos: vgm.data_at(),
             wait_left: 0,
@@ -156,6 +162,11 @@ impl Machine {
             psg_seen: (0, 0),
             mul: GAIN[r as usize],
             shift: (BLEP_SHIFT as i32 + 16 - q) as u32,
+            psg_gain: if fm_present {
+                PSG_GAIN_WITH_FM
+            } else {
+                PSG_GAIN_ALONE
+            },
             hp_hz: 0.0,
             hp_a: 0.0,
             hp_dc: [0.0; 2],
@@ -245,7 +256,7 @@ impl Machine {
     /// Sets the resampler to the chips' level at the current time.
     fn sync(&mut self) {
         if let Some(p) = self.psg.as_ref() {
-            self.psg_seen = psg_scaled(p.chip.level());
+            self.psg_seen = psg_scaled(p.chip.level(), self.psg_gain);
         }
         let (l, r) = self.level();
         let t = self.now.max(self.last_event);
@@ -258,6 +269,7 @@ impl Machine {
             self.now = to;
             return;
         }
+        let psg_gain = self.psg_gain;
         let mut psg_events: Vec<(u64, i32, i32)> = Vec::new();
         if let Some(p) = self.psg.as_mut() {
             let per_tick = 16 * u128::from(UNIT);
@@ -265,7 +277,7 @@ impl Machine {
             let (base, clock) = (p.ticks, u128::from(p.clock));
             p.chip.run(want - base, |t, l, r| {
                 let at = (u128::from(base + t) * per_tick / clock) as u64;
-                let (l, r) = psg_scaled((l, r));
+                let (l, r) = psg_scaled((l, r), psg_gain);
                 psg_events.push((at, l, r));
             });
             p.ticks = want;

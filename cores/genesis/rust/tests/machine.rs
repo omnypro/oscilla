@@ -218,7 +218,7 @@ fn the_dac_commands_play_the_bank_bytes_on_channel_six() {
     assert!(
         out[3500..4300]
             .iter()
-            .all(|s| (i32::from(*s) - 8382).abs() <= 2)
+            .all(|s| (i32::from(*s) - 10461).abs() <= 2)
     );
 }
 
