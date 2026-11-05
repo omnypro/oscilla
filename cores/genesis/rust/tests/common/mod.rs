@@ -57,3 +57,34 @@ pub fn crossings(samples: &[i16]) -> usize {
         .filter(|w| (w[0] < 0) != (w[1] < 0))
         .count()
 }
+
+pub fn fnv(bytes: impl IntoIterator<Item = u8>) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+pub fn digest(samples: &[i16]) -> u64 {
+    fnv(samples.iter().flat_map(|s| s.to_le_bytes()))
+}
+
+pub struct Rng(pub u64);
+
+impl Rng {
+    pub fn next(&mut self) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.0 >> 33) as u32
+    }
+    pub fn byte(&mut self) -> u8 {
+        self.next() as u8
+    }
+    pub fn below(&mut self, n: u32) -> u32 {
+        self.next() % n
+    }
+}
