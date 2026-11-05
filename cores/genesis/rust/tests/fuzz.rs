@@ -40,10 +40,10 @@ fn random_headers_parse_or_fail_cleanly() {
         if r.below(2) == 0 && bytes.len() > 8 {
             bytes[..4].copy_from_slice(b"Vgm ");
         }
-        if let Ok(v) = Vgm::parse(&bytes) {
-            if let Ok(mut m) = Machine::new(&v, 44_100) {
-                render(&mut m, 2000);
-            }
+        if let Ok(v) = Vgm::parse(&bytes)
+            && let Ok(mut m) = Machine::new(&v, 44_100)
+        {
+            render(&mut m, 2000);
         }
     }
 }
