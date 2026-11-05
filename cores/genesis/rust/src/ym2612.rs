@@ -177,6 +177,8 @@ pub struct Ym2612 {
     eg_counter: u32,
     eg_divider: u32,
     dac_on: bool,
+    /// The value of $2A. Files turn the DAC on before the first sample, so the
+    /// start value must play as silence (the documents give no power-on value).
     dac: u8,
     dac_low: bool,
     mask: u8,
@@ -249,7 +251,7 @@ impl Ym2612 {
             eg_counter: 0,
             eg_divider: 0,
             dac_on: false,
-            dac: 0,
+            dac: 0x80,
             dac_low: false,
             mask: 0x3F,
             ladder: false,

@@ -44,9 +44,21 @@ impl std::fmt::Display for MachineError {
 
 impl std::error::Error for MachineError {}
 
-/// The size of a YM2612 channel's 9-bit value in the output. The four PSG
-/// channels at full volume together match one FM channel at full scale.
-const FM_GAIN: i32 = 128;
+/// The size of a YM2612 channel's 9-bit value in the output. A full-scale
+/// channel peaks at 0.258 of full scale, as libgme renders one.
+const FM_GAIN: i32 = 33;
+
+/// The SN76489's level against the chip's own scale, in 64ths. Fitted to
+/// renders of one and three full-volume tones.
+const PSG_GAIN: i32 = 55;
+
+/// The default cutoff of the output high-pass. The documents give no value for
+/// the console's output coupling.
+const DEFAULT_HIGHPASS_HZ: f64 = 20.0;
+
+fn psg_scaled((l, r): (i32, i32)) -> (i32, i32) {
+    ((l * PSG_GAIN) >> 6, (r * PSG_GAIN) >> 6)
+}
 
 #[derive(Clone)]
 struct FmSlot {
@@ -96,10 +108,17 @@ pub struct Machine {
     psg_seen: (i32, i32),
     mul: i64,
     shift: u32,
+    hp_hz: f64,
+    hp_a: f64,
+    hp_dc: [f64; 2],
 }
 
 impl Machine {
     pub fn new(vgm: &Vgm, output_rate: i32) -> Result<Machine, MachineError> {
+        Machine::from_shared(Arc::new(vgm.clone()), output_rate)
+    }
+
+    fn from_shared(vgm: Arc<Vgm>, output_rate: i32) -> Result<Machine, MachineError> {
         if !(8000..=192_000).contains(&output_rate) {
             return Err(MachineError::Rate);
         }
@@ -120,8 +139,7 @@ impl Machine {
         let m = i32::from(vgm.volume_modifier);
         let m = if m == -63 { -64 } else { m };
         let (q, r) = (m.div_euclid(32), m.rem_euclid(32));
-        Ok(Machine {
-            vgm: Arc::new(vgm.clone()),
+        let mut machine = Machine {
             pos: vgm.data_at(),
             wait_left: 0,
             now: 0,
@@ -131,13 +149,19 @@ impl Machine {
             psg,
             fm,
             banks: Arc::new(vgm.banks()),
+            vgm,
             pcm_at: 0,
             out: Resampler::with_ratio(output_rate, UNIT, 1),
             last_event: 0,
             psg_seen: (0, 0),
             mul: GAIN[r as usize],
             shift: (BLEP_SHIFT as i32 + 16 - q) as u32,
-        })
+            hp_hz: 0.0,
+            hp_a: 0.0,
+            hp_dc: [0.0; 2],
+        };
+        machine.set_highpass_hz(DEFAULT_HIGHPASS_HZ);
+        Ok(machine)
     }
 
     pub fn output_rate(&self) -> i32 {
@@ -166,6 +190,39 @@ impl Machine {
         &self.vgm
     }
 
+    /// Starts the song again with the same file, rate, channel mask and high-pass.
+    pub fn reset(&mut self) {
+        let mask = self.channel_mask();
+        if let Ok(mut m) = Machine::from_shared(Arc::clone(&self.vgm), self.out.rate()) {
+            m.set_channel_mask(mask);
+            m.set_highpass_hz(self.hp_hz);
+            *self = m;
+        }
+    }
+
+    /// Returns to the state of `saved`, a copy taken from this machine or one
+    /// of the same file and output rate.
+    pub fn restore(&mut self, saved: &Machine) -> bool {
+        if !Arc::ptr_eq(&self.vgm, &saved.vgm) || self.out.rate() != saved.out.rate() {
+            return false;
+        }
+        *self = saved.clone();
+        true
+    }
+
+    /// Chooses the channels that reach the mix: bits 0 to 5 are the YM2612's
+    /// channels 1 to 6 and bits 6 to 9 the SN76489's channels 0 to 3.
+    pub fn set_channel_mask(&mut self, mask: u64) {
+        self.set_fm_mask((mask & 0x3F) as u8);
+        self.set_psg_mask(((mask >> 6) & 0x0F) as u8);
+    }
+
+    pub fn channel_mask(&self) -> u64 {
+        let fm = self.fm.as_ref().map_or(0x3F, |f| u64::from(f.chip.mask()));
+        let psg = self.psg.as_ref().map_or(0x0F, |p| u64::from(p.chip.mask()));
+        fm | psg << 6
+    }
+
     pub fn set_psg_mask(&mut self, mask: u8) {
         if let Some(p) = self.psg.as_mut() {
             p.chip.set_mask(mask);
@@ -188,7 +245,7 @@ impl Machine {
     /// Sets the resampler to the chips' level at the current time.
     fn sync(&mut self) {
         if let Some(p) = self.psg.as_ref() {
-            self.psg_seen = p.chip.level();
+            self.psg_seen = psg_scaled(p.chip.level());
         }
         let (l, r) = self.level();
         let t = self.now.max(self.last_event);
@@ -208,6 +265,7 @@ impl Machine {
             let (base, clock) = (p.ticks, u128::from(p.clock));
             p.chip.run(want - base, |t, l, r| {
                 let at = (u128::from(base + t) * per_tick / clock) as u64;
+                let (l, r) = psg_scaled((l, r));
                 psg_events.push((at, l, r));
             });
             p.ticks = want;
@@ -377,15 +435,13 @@ impl Machine {
     pub fn render_s16(&mut self, out: &mut [i16]) {
         let frames = out.len() / 2;
         let mut at = 0;
+        let mut tmp = [0f32; OUT_RING / 2];
         while at < frames {
             let chunk = (frames - at).min(OUT_RING / 4);
-            self.produce(chunk);
-            let got = self.out.take_s16(
-                Some(&mut out[2 * at..2 * (at + chunk)]),
-                chunk,
-                self.mul,
-                self.shift,
-            );
+            let got = self.take_f32(&mut tmp[..2 * chunk], chunk);
+            for (o, v) in out[2 * at..2 * (at + got)].iter_mut().zip(&tmp) {
+                *o = (v * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
+            }
             at += got;
         }
     }
@@ -394,16 +450,43 @@ impl Machine {
     pub fn render_f32(&mut self, out: &mut [f32]) {
         let frames = out.len() / 2;
         let mut at = 0;
+        while at < frames {
+            let chunk = (frames - at).min(OUT_RING / 4);
+            at += self.take_f32(&mut out[2 * at..2 * (at + chunk)], chunk);
+        }
+    }
+
+    fn take_f32(&mut self, out: &mut [f32], chunk: usize) -> usize {
         let gain =
             self.mul as f64 / 65536.0 * (BLEP_SHIFT as f64 + 16.0 - f64::from(self.shift)).exp2();
         let scale = gain / f64::from(1u32 << 15) / f64::from(1u32 << BLEP_SHIFT);
-        while at < frames {
-            let chunk = (frames - at).min(OUT_RING / 4);
-            self.produce(chunk);
-            let got = self
-                .out
-                .take_f32(&mut out[2 * at..2 * (at + chunk)], chunk, scale);
-            at += got;
+        self.produce(chunk);
+        let got = self.out.take_f32(out, chunk, scale);
+        if self.hp_a > 0.0 {
+            for frame in out[..2 * got].chunks_exact_mut(2) {
+                for (v, dc) in frame.iter_mut().zip(self.hp_dc.iter_mut()) {
+                    let x = f64::from(*v);
+                    *dc += (x - *dc) * self.hp_a;
+                    *v = (x - *dc) as f32;
+                }
+            }
         }
+        got
+    }
+
+    /// Sets the cutoff of the high-pass that stands for the console's output
+    /// coupling and removes the DC offset that the DAC can leave. 0 turns it
+    /// off. Returns false, and changes nothing, for a value outside 0 to 1000 Hz.
+    pub fn set_highpass_hz(&mut self, hz: f64) -> bool {
+        if !(0.0..=1000.0).contains(&hz) {
+            return false;
+        }
+        self.hp_hz = hz;
+        self.hp_a = 2.0 * std::f64::consts::PI * hz / f64::from(self.out.rate());
+        true
+    }
+
+    pub fn highpass_hz(&self) -> f64 {
+        self.hp_hz
     }
 }

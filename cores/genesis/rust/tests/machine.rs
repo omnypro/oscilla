@@ -15,12 +15,13 @@ fn tone_stream() -> Vec<u8> {
 fn a_tone_plays_at_the_pitch_of_its_period() {
     let v = parse(&file(true, false, &tone_stream(), None));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     let out = left(&render(&mut m, 44_100));
     // The first samples ring from the step at time zero.
     let c = crossings(&out[200..]);
     assert!((c as i32 - 877).abs() <= 3, "{c}");
     let peak = out.iter().map(|s| i32::from(*s)).max().unwrap();
-    assert!((8192..10000).contains(&peak), "{peak}");
+    assert!((7000..8600).contains(&peak), "{peak}");
 }
 
 #[test]
@@ -53,6 +54,7 @@ fn a_stream_without_a_loop_ends_in_silence() {
     s.push(0x66);
     let v = parse(&file(true, false, &s, None));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     let out = left(&render(&mut m, 20_000));
     assert_eq!(m.end_state(), EndState::Finished);
     assert!(out[..4000].iter().any(|s| *s != 0));
@@ -71,6 +73,7 @@ fn a_loop_returns_to_its_point_and_counts_the_passes() {
     s.push(0x66);
     let v = parse(&file(true, false, &s, Some(at)));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     let out = left(&render(&mut m, 22_050));
     assert_eq!(m.end_state(), EndState::Playing);
     assert_eq!(m.loops(), 4);
@@ -84,6 +87,7 @@ fn a_loop_with_no_wait_ends_the_stream_instead_of_spinning() {
     let s = vec![0x50, 0x90, 0x66];
     let v = parse(&file(true, false, &s, Some(0)));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     render(&mut m, 1000);
     assert_eq!(m.end_state(), EndState::Finished);
 }
@@ -112,6 +116,7 @@ fn the_volume_modifier_scales_the_output() {
 fn the_mask_silences_a_channel() {
     let v = parse(&file(true, false, &tone_stream(), None));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     m.set_psg_mask(0b1110);
     let out = render(&mut m, 4000);
     assert!(out.iter().all(|s| *s == 0));
@@ -160,17 +165,19 @@ fn fm_stream_at(n: u16, tl: u8) -> Vec<u8> {
 fn an_fm_tone_plays_at_the_pitch_of_its_f_number() {
     let v = parse(&file(false, true, &fm_stream(44_100), None));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     let out = left(&render(&mut m, 44_100));
     let c = crossings(&out[400..]);
     assert!((c as i32 - 877).abs() <= 4, "{c}");
     let peak = out.iter().map(|s| i32::from(*s)).max().unwrap();
-    assert!((30_000..=32_767).contains(&peak), "{peak}");
+    assert!((7000..=8700).contains(&peak), "{peak}");
 }
 
 #[test]
 fn the_fm_mask_silences_the_chip() {
     let v = parse(&file(false, true, &fm_stream(44_100), None));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     m.set_fm_mask(0);
     assert!(render(&mut m, 4000).iter().all(|s| *s == 0));
 }
@@ -182,6 +189,7 @@ fn both_chips_play_together() {
     s.extend(&fm);
     let v = parse(&file(true, true, &s, None));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     let both = left(&render(&mut m, 8000));
     let alone = left(&render(
         &mut Machine::new(&parse(&file(false, true, &fm, None)), 44_100).unwrap(),
@@ -204,11 +212,40 @@ fn the_dac_commands_play_the_bank_bytes_on_channel_six() {
     s.push(0x66);
     let v = parse(&file(false, true, &s, None));
     let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_highpass_hz(0.0);
     let out = left(&render(&mut m, 4400));
     assert!(out[1000..2000].iter().all(|s| s.abs() <= 2));
     assert!(
         out[3500..4300]
             .iter()
-            .all(|s| (i32::from(*s) - 32_512).abs() <= 2)
+            .all(|s| (i32::from(*s) - 8382).abs() <= 2)
     );
+}
+
+#[test]
+fn the_high_pass_removes_the_dc_that_the_dac_leaves() {
+    // The DAC sits at its lowest value for a second.
+    let mut s = vec![0x52, 0x2B, 0x80, 0x52, 0x2A, 0x00];
+    s.extend(wait(44_100));
+    s.push(0x66);
+    let v = parse(&file(false, true, &s, None));
+    let mut off = Machine::new(&v, 44_100).unwrap();
+    off.set_highpass_hz(0.0);
+    let mut on = Machine::new(&v, 44_100).unwrap();
+    assert_eq!(on.highpass_hz(), 20.0);
+    let off = left(&render(&mut off, 40_000));
+    let on = left(&render(&mut on, 40_000));
+    assert!(off[30_000..].iter().all(|s| *s < -4000));
+    assert!(on[30_000..].iter().all(|s| s.abs() <= 2), "{}", on[30_000]);
+}
+
+#[test]
+fn the_high_pass_accepts_only_a_sane_cutoff() {
+    let v = parse(&file(true, false, &tone_stream(), None));
+    let mut m = Machine::new(&v, 44_100).unwrap();
+    assert!(m.set_highpass_hz(55.0));
+    assert!(!m.set_highpass_hz(-1.0));
+    assert!(!m.set_highpass_hz(1001.0));
+    assert!(!m.set_highpass_hz(f64::NAN));
+    assert_eq!(m.highpass_hz(), 55.0);
 }
