@@ -5,6 +5,8 @@
 - `csnes_ram_copy` copies the 64 KB of sound RAM into a buffer.
 - `csnes_watch_ram` and a `ram_write` callback in `csnes_observer` report the
   SPC700's stores to a range of RAM. Stores by `PUSH` and `CALL` are included.
+- `csnes_observer` has a fourth field, `ram_write`. Swift code that builds it
+  with the memberwise initializer needs `ram_write: nil`.
 
 ## 0.4.0
 
