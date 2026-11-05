@@ -4,6 +4,7 @@
 mod eg;
 mod machine;
 mod psg;
+mod stream;
 mod ym2612;
 
 pub use machine::{EndState, Machine, MachineError, UNIT};

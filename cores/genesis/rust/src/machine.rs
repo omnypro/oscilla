@@ -5,12 +5,14 @@
 //! number of 4096-unit samples, and a chip event lands on the unit nearest
 //! below its own clock cycle, which is within 6 ns of the exact time.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use oscilla_vgm::{Banks, Command, SN76489, Vgm, YM2612};
 
 use crate::psg::Psg;
+use crate::stream::{self, Stream};
 use crate::ym2612::Ym2612;
 
 /// Time units in one second.
@@ -106,6 +108,8 @@ pub struct Machine {
     banks: Arc<Banks>,
     /// The read position in the PCM data bank for the YM2612's DAC.
     pcm_at: usize,
+    /// The DAC streams that the file has set up, by stream number.
+    streams: BTreeMap<u8, Stream>,
     out: Resampler,
     last_event: u64,
     /// The PSG level that the resampler has been told.
@@ -157,6 +161,7 @@ impl Machine {
             banks: Arc::new(vgm.banks()),
             vgm,
             pcm_at: 0,
+            streams: BTreeMap::new(),
             out: Resampler::with_ratio(output_rate, UNIT, 1),
             last_event: 0,
             psg_seen: (0, 0),
@@ -410,7 +415,96 @@ impl Machine {
                     self.pos = cursor.position();
                     self.pcm_at = at as usize;
                 }
+                Command::StreamSetup {
+                    stream,
+                    chip,
+                    second,
+                    port,
+                    register,
+                } => {
+                    self.pos = cursor.position();
+                    if stream != 0xFF {
+                        self.streams
+                            .insert(stream, Stream::new(chip, second, port, register));
+                    }
+                }
+                Command::StreamData {
+                    stream,
+                    bank,
+                    step,
+                    base,
+                } => {
+                    self.pos = cursor.position();
+                    if let Some(s) = self.streams.get_mut(&stream) {
+                        s.set_data(bank, step, base);
+                    }
+                }
+                Command::StreamFrequency { stream, hz } => {
+                    self.pos = cursor.position();
+                    if let Some(s) = self.streams.get_mut(&stream) {
+                        s.set_frequency(hz);
+                    }
+                }
+                Command::StreamStart {
+                    stream,
+                    at,
+                    mode,
+                    length,
+                } => {
+                    self.pos = cursor.position();
+                    let now = self.now;
+                    if let Some(s) = self.streams.get_mut(&stream) {
+                        s.start(now, at, mode, length);
+                    }
+                }
+                Command::StreamFast {
+                    stream,
+                    block,
+                    flags,
+                } => {
+                    self.pos = cursor.position();
+                    let now = self.now;
+                    if let Some(s) = self.streams.get_mut(&stream) {
+                        let block = self.banks.blocks(s.bank()).get(usize::from(block)).copied();
+                        s.start_block(now, block, flags);
+                    }
+                }
+                Command::StreamStop { stream } => {
+                    self.pos = cursor.position();
+                    if stream == 0xFF {
+                        self.streams.values_mut().for_each(Stream::stop);
+                    } else if let Some(s) = self.streams.get_mut(&stream) {
+                        s.stop();
+                    }
+                }
                 _ => self.pos = cursor.position(),
+            }
+        }
+    }
+
+    /// The time of the next stream write.
+    fn next_stream_write(&self) -> Option<u64> {
+        self.streams.values().filter_map(Stream::due).min()
+    }
+
+    /// Makes the stream writes that are due at the current time.
+    fn write_streams(&mut self) {
+        let now = self.now;
+        let ids: Vec<u8> = self.streams.keys().copied().collect();
+        for id in ids {
+            while let Some(s) = self.streams.get_mut(&id) {
+                if s.due().is_none_or(|t| t > now) {
+                    break;
+                }
+                let byte = s.next(self.banks.bank(s.bank()));
+                let (chip, second, port, register) = (s.chip, s.second, s.port, s.register);
+                if let Some(byte) = byte
+                    && chip == stream::YM2612
+                    && !second
+                    && let Some(f) = self.fm.as_mut()
+                {
+                    f.chip.write(port, register, byte);
+                }
             }
         }
     }
@@ -421,11 +515,15 @@ impl Machine {
                 self.advance(target);
                 return;
             }
+            self.write_streams();
             if self.wait_left == 0 {
                 self.read_commands();
                 continue;
             }
-            let step = self.wait_left.min(target - self.now);
+            let mut step = self.wait_left.min(target - self.now);
+            if let Some(t) = self.next_stream_write() {
+                step = step.min(t - self.now);
+            }
             self.advance(self.now + step);
             self.wait_left -= step;
         }
