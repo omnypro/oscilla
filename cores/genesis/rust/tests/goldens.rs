@@ -42,7 +42,11 @@ fn stream(seed: u64) -> Vec<u8> {
                 let value = r.byte();
                 s.extend([0x52 + (r.below(2) as u8), reg, value]);
             }
-            5 => s.extend([0x52, 0x28, (r.byte() & 0xF0) | [0, 1, 2, 4, 5, 6][r.below(6) as usize]]),
+            5 => s.extend([
+                0x52,
+                0x28,
+                (r.byte() & 0xF0) | [0, 1, 2, 4, 5, 6][r.below(6) as usize],
+            ]),
             6 | 7 => s.extend([0x50, r.byte()]),
             8 => s.push(0x80 + r.below(16) as u8),
             _ => {
@@ -71,7 +75,10 @@ fn the_goldens_hold() {
         .lines()
         .map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            (f[0].parse().unwrap(), u64::from_str_radix(f[1], 16).unwrap())
+            (
+                f[0].parse().unwrap(),
+                u64::from_str_radix(f[1], 16).unwrap(),
+            )
         })
         .collect();
     assert_eq!(want.len() as u64, SEEDS);
