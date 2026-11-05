@@ -128,3 +128,87 @@ fn a_bad_rate_or_a_file_without_a_chip_is_refused() {
         Some(MachineError::NoChip)
     );
 }
+
+/// Channel 1, operator 1 alone (algorithm 7) at A4, then `n` samples.
+fn fm_stream(n: u16) -> Vec<u8> {
+    fm_stream_at(n, 0)
+}
+
+/// The same stream with a total level of `tl` on the sounding operator.
+fn fm_stream_at(n: u16, tl: u8) -> Vec<u8> {
+    let mut s = Vec::new();
+    let mut w = |reg: u8, val: u8| s.extend([0x52, reg, val]);
+    for (offset, level) in [(0u8, tl), (4, 127), (8, 127), (12, 127)] {
+        w(0x30 + offset, 0x01);
+        w(0x40 + offset, level);
+        w(0x50 + offset, 0x1F);
+        w(0x60 + offset, 0);
+        w(0x70 + offset, 0);
+        w(0x80 + offset, 0x0F);
+    }
+    w(0xB0, 0x07);
+    w(0xB4, 0xC0);
+    w(0xA4, 4 << 3 | 4);
+    w(0xA0, 0x3B);
+    w(0x28, 0x10);
+    s.extend(wait(n));
+    s.push(0x66);
+    s
+}
+
+#[test]
+fn an_fm_tone_plays_at_the_pitch_of_its_f_number() {
+    let v = parse(&file(false, true, &fm_stream(44_100), None));
+    let mut m = Machine::new(&v, 44_100).unwrap();
+    let out = left(&render(&mut m, 44_100));
+    let c = crossings(&out[400..]);
+    assert!((c as i32 - 877).abs() <= 4, "{c}");
+    let peak = out.iter().map(|s| i32::from(*s)).max().unwrap();
+    assert!((30_000..=32_767).contains(&peak), "{peak}");
+}
+
+#[test]
+fn the_fm_mask_silences_the_chip() {
+    let v = parse(&file(false, true, &fm_stream(44_100), None));
+    let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_fm_mask(0);
+    assert!(render(&mut m, 4000).iter().all(|s| *s == 0));
+}
+
+#[test]
+fn both_chips_play_together() {
+    let mut s = vec![0x50, 0x84, 0x50, 0x05, 0x50, 0x90];
+    let fm = fm_stream_at(44_100, 40);
+    s.extend(&fm);
+    let v = parse(&file(true, true, &s, None));
+    let mut m = Machine::new(&v, 44_100).unwrap();
+    let both = left(&render(&mut m, 8000));
+    let alone = left(&render(
+        &mut Machine::new(&parse(&file(false, true, &fm, None)), 44_100).unwrap(),
+        8000,
+    ));
+    assert_ne!(both, alone);
+    let energy = |v: &[i16]| v.iter().map(|s| i64::from(*s) * i64::from(*s)).sum::<i64>();
+    assert!(energy(&both) > energy(&alone));
+}
+
+#[test]
+fn the_dac_commands_play_the_bank_bytes_on_channel_six() {
+    // The bank holds 0x80 then 0xFF; each 0x80 command writes the next byte to register 0x2A.
+    let mut s = vec![0x67, 0x66, 0x00, 2, 0, 0, 0, 0x80, 0xFF];
+    s.extend([0x52, 0x2B, 0x80, 0x53, 0xB6, 0xC0]);
+    s.push(0x80);
+    s.extend(wait(2205));
+    s.push(0x80);
+    s.extend(wait(2205));
+    s.push(0x66);
+    let v = parse(&file(false, true, &s, None));
+    let mut m = Machine::new(&v, 44_100).unwrap();
+    let out = left(&render(&mut m, 4400));
+    assert!(out[1000..2000].iter().all(|s| s.abs() <= 2));
+    assert!(
+        out[3500..4300]
+            .iter()
+            .all(|s| (i32::from(*s) - 32_512).abs() <= 2)
+    );
+}

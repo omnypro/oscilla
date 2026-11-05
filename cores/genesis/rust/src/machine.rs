@@ -8,9 +8,10 @@
 use std::sync::Arc;
 
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
-use oscilla_vgm::{Command, SN76489, Vgm};
+use oscilla_vgm::{Banks, Command, SN76489, Vgm, YM2612};
 
 use crate::psg::Psg;
+use crate::ym2612::Ym2612;
 
 /// Time units in one second.
 pub const UNIT: u64 = oscilla_vgm::SAMPLE_RATE as u64 * 4096;
@@ -43,6 +44,19 @@ impl std::fmt::Display for MachineError {
 
 impl std::error::Error for MachineError {}
 
+/// The size of a YM2612 channel's 9-bit value in the output. The four PSG
+/// channels at full volume together match one FM channel at full scale.
+const FM_GAIN: i32 = 128;
+
+#[derive(Clone)]
+struct FmSlot {
+    chip: Ym2612,
+    clock: u64,
+    /// Samples of the chip (input clock / 144) run so far.
+    samples: u64,
+    level: (i32, i32),
+}
+
 #[derive(Clone)]
 struct PsgSlot {
     chip: Psg,
@@ -72,8 +86,14 @@ pub struct Machine {
     loops: u32,
     waited_since_loop: bool,
     psg: Option<PsgSlot>,
+    fm: Option<FmSlot>,
+    banks: Arc<Banks>,
+    /// The read position in the PCM data bank for the YM2612's DAC.
+    pcm_at: usize,
     out: Resampler,
     last_event: u64,
+    /// The PSG level that the resampler has been told.
+    psg_seen: (i32, i32),
     mul: i64,
     shift: u32,
 }
@@ -88,7 +108,13 @@ impl Machine {
             clock: u64::from(c.clock),
             ticks: 0,
         });
-        if psg.is_none() {
+        let fm = vgm.chip(YM2612).map(|c| FmSlot {
+            chip: Ym2612::new(),
+            clock: u64::from(c.clock),
+            samples: 0,
+            level: (0, 0),
+        });
+        if psg.is_none() && fm.is_none() {
             return Err(MachineError::NoChip);
         }
         let m = i32::from(vgm.volume_modifier);
@@ -103,8 +129,12 @@ impl Machine {
             loops: 0,
             waited_since_loop: false,
             psg,
+            fm,
+            banks: Arc::new(vgm.banks()),
+            pcm_at: 0,
             out: Resampler::with_ratio(output_rate, UNIT, 1),
             last_event: 0,
+            psg_seen: (0, 0),
             mul: GAIN[r as usize],
             shift: (BLEP_SHIFT as i32 + 16 - q) as u32,
         })
@@ -143,13 +173,23 @@ impl Machine {
         self.sync();
     }
 
-    /// The output level of the chips together.
+    pub fn set_fm_mask(&mut self, mask: u8) {
+        if let Some(f) = self.fm.as_mut() {
+            f.chip.set_mask(mask);
+        }
+    }
+
+    /// The output level of the chips together as the resampler knows it.
     fn level(&self) -> (i32, i32) {
-        self.psg.as_ref().map_or((0, 0), |p| p.chip.level())
+        let (fl, fr) = self.fm.as_ref().map_or((0, 0), |f| f.level);
+        (self.psg_seen.0 + fl, self.psg_seen.1 + fr)
     }
 
     /// Sets the resampler to the chips' level at the current time.
     fn sync(&mut self) {
+        if let Some(p) = self.psg.as_ref() {
+            self.psg_seen = p.chip.level();
+        }
         let (l, r) = self.level();
         let t = self.now.max(self.last_event);
         self.out.step(t, l, r);
@@ -161,21 +201,57 @@ impl Machine {
             self.now = to;
             return;
         }
+        let mut psg_events: Vec<(u64, i32, i32)> = Vec::new();
         if let Some(p) = self.psg.as_mut() {
             let per_tick = 16 * u128::from(UNIT);
             let want = (u128::from(to) * u128::from(p.clock) / per_tick) as u64;
             let (base, clock) = (p.ticks, u128::from(p.clock));
-            let mut events: Vec<(u64, i32, i32)> = Vec::new();
             p.chip.run(want - base, |t, l, r| {
                 let at = (u128::from(base + t) * per_tick / clock) as u64;
-                events.push((at, l, r));
+                psg_events.push((at, l, r));
             });
             p.ticks = want;
-            for (at, l, r) in events {
-                let at = at.max(self.last_event);
-                self.out.step(at, l, r);
-                self.last_event = at;
+        }
+        let mut fm_events: Vec<(u64, i32, i32)> = Vec::new();
+        if let Some(f) = self.fm.as_mut() {
+            let per_sample = 144 * u128::from(UNIT);
+            let want = (u128::from(to) * u128::from(f.clock) / per_sample) as u64;
+            while f.samples < want {
+                f.samples += 1;
+                let (l, r) = f.chip.sample();
+                let at = (u128::from(f.samples) * per_sample / u128::from(f.clock)) as u64;
+                fm_events.push((at, l * FM_GAIN, r * FM_GAIN));
             }
+        }
+        let (mut pi, mut fi) = (0, 0);
+        let mut fm_level = self.fm.as_ref().map_or((0, 0), |f| f.level);
+        let mut psg_now = self.psg_seen;
+        while pi < psg_events.len() || fi < fm_events.len() {
+            let take_psg = match (psg_events.get(pi), fm_events.get(fi)) {
+                (Some(p), Some(f)) => p.0 <= f.0,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            let at;
+            if take_psg {
+                let e = psg_events[pi];
+                pi += 1;
+                at = e.0;
+                psg_now = (e.1, e.2);
+            } else {
+                let e = fm_events[fi];
+                fi += 1;
+                at = e.0;
+                fm_level = (e.1, e.2);
+            }
+            let at = at.max(self.last_event);
+            self.out
+                .step(at, psg_now.0 + fm_level.0, psg_now.1 + fm_level.1);
+            self.last_event = at;
+        }
+        self.psg_seen = psg_now;
+        if let Some(f) = self.fm.as_mut() {
+            f.level = fm_level;
         }
         self.now = to;
     }
@@ -235,6 +311,34 @@ impl Machine {
                         p.chip.set_stereo(value);
                     }
                     self.sync();
+                }
+                Command::Ym2612 {
+                    second: false,
+                    port,
+                    register,
+                    value,
+                } => {
+                    self.pos = cursor.position();
+                    if let Some(f) = self.fm.as_mut() {
+                        f.chip.write(port, register, value);
+                    }
+                }
+                Command::Ym2612Dac { wait } => {
+                    self.pos = cursor.position();
+                    let byte = self.banks.bank(0).get(self.pcm_at).copied().unwrap_or(0x80);
+                    self.pcm_at += 1;
+                    if let Some(f) = self.fm.as_mut() {
+                        f.chip.write(0, 0x2A, byte);
+                    }
+                    if wait > 0 {
+                        self.wait_left = u64::from(wait) * PER_SAMPLE;
+                        self.waited_since_loop = true;
+                        return;
+                    }
+                }
+                Command::Seek(at) => {
+                    self.pos = cursor.position();
+                    self.pcm_at = at as usize;
                 }
                 _ => self.pos = cursor.position(),
             }
