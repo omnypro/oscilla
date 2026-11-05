@@ -1,5 +1,19 @@
 # Changes
 
+## 0.5.0
+
+- The Genesis core, which plays VGM and VGZ files. It runs the YM2612 (six
+  FM channels, the DAC, the LFO and the timers) and the SN76489 from the
+  file's register writes. `cgenesis.h` is its C interface.
+- The VGM reader covers the GD3 tags, the loop point, the loop modifier and
+  the volume modifier. The core ignores a second chip, the other chips a file
+  can name and the DAC stream commands.
+- The channel mask has ten bits: the six FM channels and the four PSG
+  channels. `cgenesis_channel_mask` returns `0x3FF` at the start.
+- The output has a 20 Hz high-pass filter. `cgenesis_set_highpass_hz`
+  changes it, and 0 turns it off.
+- `oscilla-vgm` plays a VGM file to a WAV file.
+
 ## 0.4.1
 
 - `csnes_ram_copy` copies the 64 KB of sound RAM into a buffer.
