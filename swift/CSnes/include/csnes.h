@@ -174,6 +174,11 @@ uint32_t csnes_register(const csnes_machine *machine, int index);
  * show: the byte is the RAM under them. */
 uint32_t csnes_peek(const csnes_machine *machine, uint32_t address);
 
+/* Copies all 65536 bytes of sound RAM into `out` with the rules of
+ * csnes_peek: no side effects, and the RAM under the boot ROM and the ports.
+ * Does nothing if `out` is NULL. */
+void csnes_ram_copy(const csnes_machine *machine, uint8_t *out);
+
 /* A DSP register, 0 to 127. A register from 128 to 255 reads as the one 128
  * below it. */
 uint32_t csnes_dsp_register(const csnes_machine *machine, uint32_t reg);

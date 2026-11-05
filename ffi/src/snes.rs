@@ -407,6 +407,15 @@ pub unsafe extern "C" fn csnes_peek(machine: *const CMachine, address: u32) -> u
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_ram_copy(machine: *const CMachine, out: *mut u8) {
+    if unsafe { in_callback(machine) } || out.is_null() {
+        return;
+    }
+    let ram = unsafe { &(*machine).machine }.ram();
+    unsafe { std::ptr::copy_nonoverlapping(ram.as_ptr(), out, ram.len()) };
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn csnes_dsp_register(machine: *const CMachine, register: u32) -> u32 {
     if unsafe { in_callback(machine) } || register > 0xFF {
         return 0;

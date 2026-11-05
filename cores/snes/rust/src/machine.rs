@@ -394,6 +394,12 @@ impl Machine {
         self.ram[usize::from(address)]
     }
 
+    /// All 64 KB of sound RAM, without side effects. Like `peek`, it is the RAM
+    /// under the boot ROM and the ports.
+    pub fn ram(&self) -> &[u8; 65536] {
+        &self.ram
+    }
+
     /// A DSP register.
     pub fn dsp_register(&self, register: u8) -> u8 {
         self.dsp.read(register)

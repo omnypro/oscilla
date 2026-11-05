@@ -35,6 +35,24 @@ struct MachineTests {
         #expect(csnes_cycles(m) == 0)
     }
 
+    @Test func theRamCopyMatchesPeekAndFollowsTheStores() {
+        // MOV A,#5A ; MOV !0300,A
+        let m = Support.machine(Support.spc(program: [0xE8, 0x5A, 0xC5, 0x00, 0x03, 0x2F, 0xFE]))
+        defer { csnes_free(m) }
+        var before = [UInt8](repeating: 0, count: 65536)
+        csnes_ram_copy(m, &before)
+        #expect(before[0x300] == 0)
+        for a in stride(from: 0, to: 65536, by: 257) {
+            #expect(UInt32(before[a]) == csnes_peek(m, UInt32(a)))
+        }
+        csnes_run_cycles(m, 100)
+        var after = [UInt8](repeating: 0, count: 65536)
+        csnes_ram_copy(m, &after)
+        #expect(after[0x300] == 0x5A)
+        #expect(UInt32(after[0x300]) == csnes_peek(m, 0x300))
+        csnes_ram_copy(m, nil)
+    }
+
     @Test func theClockAdvancesByTheCyclesRun() {
         let m = Support.machine(Support.tone())
         defer { csnes_free(m) }

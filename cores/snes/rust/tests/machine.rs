@@ -42,6 +42,22 @@ fn the_extra_ram_of_the_file_sits_under_the_rom_when_the_rom_shows() {
     assert_eq!(m.cpu_state().1, 0x99);
 }
 
+#[test]
+fn the_ram_copy_matches_peek_and_follows_the_stores() {
+    // MOV $F1,#80 ; MOV A,#5A ; MOV !FFC0,A ; MOV !0300,A ; MOV $F5,A
+    let mut m = machine(&[
+        0x8F, 0x80, 0xF1, 0xE8, 0x5A, 0xC5, 0xC0, 0xFF, 0xC5, 0x00, 0x03, 0xC4, 0xF5,
+    ]);
+    let before = m.ram().to_vec();
+    assert!((0..=0xFFFFu32).all(|a| before[a as usize] == m.peek(a as u16)));
+    run_instructions(&mut m, 5);
+    let after = m.ram();
+    assert_eq!(after[0x0300], 0x5A);
+    assert_eq!(after[0xFFC0], 0x5A);
+    assert!((0..=0xFFFFu32).all(|a| after[a as usize] == m.peek(a as u16)));
+    assert_ne!(before[0x0300], after[0x0300]);
+}
+
 /// The main CPU's side of the upload protocol.
 fn upload(m: &mut Machine, dest: u16, bytes: &[u8], entry: u16) {
     let wait = |m: &mut Machine, port: usize, want: u8| {
