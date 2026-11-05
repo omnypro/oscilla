@@ -21,13 +21,14 @@ math library.
 returns the header, the commands and the data blocks. The header gives the
 chips' clocks, the loop point, the lengths, the SN76489's feedback taps, shift
 register width and flags, the volume modifier, the loop base and the loop
-modifier. A clock with bit 30 set names a second chip, which the core does not
-play. A file may be up to 64 MiB unpacked.
+modifier. A clock with bit 30 set names a second chip. A file may be up to
+64 MiB unpacked.
 
 The core plays the commands for the YM2612 (ports 0 and 1), the SN76489
-(including the Game Gear stereo write), the waits, the data blocks of type 0
-(the YM2612's PCM bank), the 0x8n DAC commands and the seek of 0xE0. It reads and
-skips every other command by its length.
+(including the Game Gear stereo write), the second chip of either kind, the
+waits, the data blocks of type 0 (the YM2612's PCM bank), the 0x8n DAC commands,
+the seek of 0xE0 and the DAC stream commands. It reads and skips every other
+command by its length.
 
 ## Time
 
@@ -40,6 +41,33 @@ the resampler takes the sum as steps at those times.
 At the end of a stream without a loop the machine stops both chips and holds
 silence. With a loop it jumps to the loop point and counts the pass. A loop
 with no wait in it ends the stream, so a malformed file cannot spin.
+
+## Second chips
+
+A YM2612 with bit 30 set in its clock has a second instance, and so does an
+SN76489 unless bit 31 is also set (that is the T6W28 of the Neo Geo Pocket, one
+chip with two halves, which the core plays as one chip). The second chip takes
+the clock of the extra header when the file gives one and the first chip's clock
+otherwise. It has its own state and its own commands (0xA2, 0xA3 and 0x30,
+0x3F). The levels of all chips add, each at the level it has alone, and nothing
+else changes. The DAC commands 0x8n write the first YM2612. The channel mask
+has bits 10 to 15 for the second YM2612 and bits 16 to 19 for the second
+SN76489. The mask of a file without a second chip is unchanged, so 0x3FF stays
+the default there.
+
+## DAC streams
+
+Commands 0x90 to 0x95 set up streams, each a chip register, a data bank, a step
+and a base, a rate and a position. Only streams for the YM2612 (chip 0x02, or
+0x82 for the second) write anything. A stream writes one byte of its bank every
+1/rate seconds, the first at the start command's own time. A write that falls
+at the time of a command goes before that command. The start command takes a
+length in writes, in milliseconds (rounded to the nearest write) or to the end
+of the bank, with loop and reverse bits; the fast call plays a block of the
+bank. A stream stops when it passes the end or the start of the bank, or
+restarts if it loops and the restart would write something. A new rate takes
+effect from the next write. The rate is capped at 1 MHz so a corrupt file
+cannot make a looping stream spin.
 
 ## SN76489
 
@@ -128,6 +156,13 @@ These choices rest on documents that do not say, or on a single measurement.
 - The LFO's phase when it starts, and its output while it is off.
 - SSG-EG: how a held end level behaves and what a key off does. Two of the
   twelve reference songs write an SSG-EG register once each.
+- DAC streams: what start mode 0 does (the core moves the position and leaves
+  the running state alone), where a reversed fast call or a base begins (the
+  last byte of the block, less the base), and the order of a stream write and
+  a command at the same instant (the write goes first). The data of a stream
+  for another chip, and a stream for the SN76489, are ignored.
+- Whether two chips of one kind should be mixed at lower levels. The core adds
+  them at full level, as the file's other players do.
 - The ladder effect (the DAC's resistor ladder adds an offset below zero) is
   built and off. `set_ladder` is not exposed through the C interface.
 - The first sample after a key on: its phase and envelope step.

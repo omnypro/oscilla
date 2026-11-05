@@ -143,6 +143,9 @@ int cgenesis_end_state_get(const cgenesis_machine *machine);
  * Chooses the channels that reach the mix. Bits 0 to 5 are the YM2612's
  * channels 1 to 6 (channel 6 also carries the DAC), and bits 6 to 9 are the
  * SN76489's three tone channels and its noise channel. The default is 0x3FF.
+ * A file with a second YM2612 has its channels at bits 10 to 15 and a file with
+ * a second SN76489 at bits 16 to 19, and the default then includes them. Bits
+ * for a chip that the file lacks are ignored.
  * A muted channel keeps running.
  */
 void cgenesis_set_channel_mask(cgenesis_machine *machine, uint64_t mask);

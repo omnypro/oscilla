@@ -49,7 +49,8 @@ A player has three more groups of calls.
   puts a machine with the same file and output rate back to that point, and the
   same calls then render the same samples.
 - `cgenesis_set_channel_mask` chooses which of the six FM channels and four PSG
-  channels reach the mix.
+  channels reach the mix. A file with a second YM2612 or SN76489 adds bits for
+  its channels.
 - `cgenesis_set_highpass_hz` sets the cutoff of the output high-pass (20 Hz by
   default, 0 for none).
 
@@ -63,7 +64,8 @@ oscilla-vgm FILE.vgm --bench [--seconds S] [--rate HZ]
 
 The first form plays the file for S seconds (default 30) at 44,100 Hz and
 writes a 16-bit stereo WAV file. `--mask` chooses the channels: bits 0 to 5 are
-the FM channels and bits 6 to 9 the PSG's. `--info` prints the tags and the
+the FM channels and bits 6 to 9 the PSG's, then bits 10 to 15 the second
+YM2612's and bits 16 to 19 the second SN76489's. `--info` prints the tags and the
 times. `--bench` renders without output and prints the time it took.
 
 ## Tests
@@ -86,9 +88,8 @@ The levels and the modulation depth were fitted to renders from libgme of 12
 songs and 12 synthetic files. DESIGN.md lists the fits, the approximations and
 the unknowns.
 
-Not emulated: other sound chips that a VGM file can name (the second chip of a
-pair, the YM2413 and the rest), the DAC stream commands (0x90 to 0x95), the GYM
-format, and the analog stages after the chips. The output has a high-pass and
+Not emulated: other sound chips that a VGM file can name (the YM2413 and the
+rest), the GYM format, and the analog stages after the chips. The output has a high-pass and
 no low-pass.
 
 ## References

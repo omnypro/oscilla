@@ -81,6 +81,8 @@ struct PsgSlot {
     clock: u64,
     /// Ticks of the chip's own clock (input clock / 16) run so far.
     ticks: u64,
+    /// The level that the resampler has been told.
+    seen: (i32, i32),
 }
 
 /// Where the stream stands when a machine is not playing it.
@@ -103,8 +105,9 @@ pub struct Machine {
     finished: bool,
     loops: u32,
     waited_since_loop: bool,
-    psg: Option<PsgSlot>,
-    fm: Option<FmSlot>,
+    /// The first and second SN76489 and YM2612 of the file.
+    psg: [Option<PsgSlot>; 2],
+    fm: [Option<FmSlot>; 2],
     banks: Arc<Banks>,
     /// The read position in the PCM data bank for the YM2612's DAC.
     pcm_at: usize,
@@ -112,8 +115,6 @@ pub struct Machine {
     streams: BTreeMap<u8, Stream>,
     out: Resampler,
     last_event: u64,
-    /// The PSG level that the resampler has been told.
-    psg_seen: (i32, i32),
     mul: i64,
     shift: u32,
     psg_gain: i32,
@@ -131,24 +132,40 @@ impl Machine {
         if !(8000..=192_000).contains(&output_rate) {
             return Err(MachineError::Rate);
         }
-        let psg = vgm.chip(SN76489).map(|c| PsgSlot {
-            chip: Psg::new(vgm.psg_feedback, vgm.psg_width, vgm.psg_flags),
-            clock: u64::from(c.clock),
-            ticks: 0,
+        // With bit 31 set, a dual SN76489 is the T6W28 of the Neo Geo Pocket,
+        // which is one chip with two halves and not two chips.
+        let psg_clocks = |c: &oscilla_vgm::Chip| {
+            [
+                Some(c.clock),
+                (c.dual && !c.variant).then_some(c.second_clock),
+            ]
+        };
+        let fm_clocks = |c: &oscilla_vgm::Chip| [Some(c.clock), c.dual.then_some(c.second_clock)];
+        let psg_clock = vgm.chip(SN76489).map_or([None; 2], psg_clocks);
+        let fm_clock = vgm.chip(YM2612).map_or([None; 2], fm_clocks);
+        let psg = psg_clock.map(|clock| {
+            clock.map(|clock| PsgSlot {
+                chip: Psg::new(vgm.psg_feedback, vgm.psg_width, vgm.psg_flags),
+                clock: u64::from(clock),
+                ticks: 0,
+                seen: (0, 0),
+            })
         });
-        let fm = vgm.chip(YM2612).map(|c| FmSlot {
-            chip: Ym2612::new(),
-            clock: u64::from(c.clock),
-            samples: 0,
-            level: (0, 0),
+        let fm = fm_clock.map(|clock| {
+            clock.map(|clock| FmSlot {
+                chip: Ym2612::new(),
+                clock: u64::from(clock),
+                samples: 0,
+                level: (0, 0),
+            })
         });
-        if psg.is_none() && fm.is_none() {
+        if psg.iter().all(Option::is_none) && fm.iter().all(Option::is_none) {
             return Err(MachineError::NoChip);
         }
         let m = i32::from(vgm.volume_modifier);
         let m = if m == -63 { -64 } else { m };
         let (q, r) = (m.div_euclid(32), m.rem_euclid(32));
-        let fm_present = fm.is_some();
+        let fm_present = fm.iter().any(Option::is_some);
         let mut machine = Machine {
             pos: vgm.data_at(),
             wait_left: 0,
@@ -164,7 +181,6 @@ impl Machine {
             streams: BTreeMap::new(),
             out: Resampler::with_ratio(output_rate, UNIT, 1),
             last_event: 0,
-            psg_seen: (0, 0),
             mul: GAIN[r as usize],
             shift: (BLEP_SHIFT as i32 + 16 - q) as u32,
             psg_gain: if fm_present {
@@ -227,41 +243,70 @@ impl Machine {
     }
 
     /// Chooses the channels that reach the mix: bits 0 to 5 are the YM2612's
-    /// channels 1 to 6 and bits 6 to 9 the SN76489's channels 0 to 3.
+    /// channels 1 to 6 and bits 6 to 9 the SN76489's channels 0 to 3. A file
+    /// with a second YM2612 has its channels at bits 10 to 15 and a file with
+    /// a second SN76489 has its channels at bits 16 to 19.
     pub fn set_channel_mask(&mut self, mask: u64) {
         self.set_fm_mask((mask & 0x3F) as u8);
         self.set_psg_mask(((mask >> 6) & 0x0F) as u8);
+        if let Some(f) = self.fm[1].as_mut() {
+            f.chip.set_mask(((mask >> 10) & 0x3F) as u8);
+        }
+        if let Some(p) = self.psg[1].as_mut() {
+            p.chip.set_mask(((mask >> 16) & 0x0F) as u8);
+        }
+        self.sync();
     }
 
     pub fn channel_mask(&self) -> u64 {
-        let fm = self.fm.as_ref().map_or(0x3F, |f| u64::from(f.chip.mask()));
-        let psg = self.psg.as_ref().map_or(0x0F, |p| u64::from(p.chip.mask()));
-        fm | psg << 6
+        let fm = |i: usize, absent: u64| {
+            self.fm[i]
+                .as_ref()
+                .map_or(absent, |f| u64::from(f.chip.mask()))
+        };
+        let psg = |i: usize, absent: u64| {
+            self.psg[i]
+                .as_ref()
+                .map_or(absent, |p| u64::from(p.chip.mask()))
+        };
+        fm(0, 0x3F) | psg(0, 0x0F) << 6 | fm(1, 0) << 10 | psg(1, 0) << 16
     }
 
+    /// Chooses the channels of the first SN76489 that reach the mix.
     pub fn set_psg_mask(&mut self, mask: u8) {
-        if let Some(p) = self.psg.as_mut() {
+        if let Some(p) = self.psg[0].as_mut() {
             p.chip.set_mask(mask);
         }
         self.sync();
     }
 
+    /// Chooses the channels of the first YM2612 that reach the mix.
     pub fn set_fm_mask(&mut self, mask: u8) {
-        if let Some(f) = self.fm.as_mut() {
+        if let Some(f) = self.fm[0].as_mut() {
             f.chip.set_mask(mask);
         }
     }
 
     /// The output level of the chips together as the resampler knows it.
     fn level(&self) -> (i32, i32) {
-        let (fl, fr) = self.fm.as_ref().map_or((0, 0), |f| f.level);
-        (self.psg_seen.0 + fl, self.psg_seen.1 + fr)
+        let mut sum = (0, 0);
+        for (l, r) in self
+            .psg
+            .iter()
+            .flatten()
+            .map(|p| p.seen)
+            .chain(self.fm.iter().flatten().map(|f| f.level))
+        {
+            sum = (sum.0 + l, sum.1 + r);
+        }
+        sum
     }
 
     /// Sets the resampler to the chips' level at the current time.
     fn sync(&mut self) {
-        if let Some(p) = self.psg.as_ref() {
-            self.psg_seen = psg_scaled(p.chip.level(), self.psg_gain);
+        let gain = self.psg_gain;
+        for p in self.psg.iter_mut().flatten() {
+            p.seen = psg_scaled(p.chip.level(), gain);
         }
         let (l, r) = self.level();
         let t = self.now.max(self.last_event);
@@ -275,58 +320,57 @@ impl Machine {
             return;
         }
         let psg_gain = self.psg_gain;
-        let mut psg_events: Vec<(u64, i32, i32)> = Vec::new();
-        if let Some(p) = self.psg.as_mut() {
+        // The changes of level of every chip, as (time, source, left, right).
+        // The sources count the SN76489s and then the YM2612s, which is the
+        // order that equal times take.
+        let mut events: Vec<(u64, usize, i32, i32)> = Vec::new();
+        for (i, slot) in self.psg.iter_mut().enumerate() {
+            let Some(p) = slot.as_mut() else { continue };
             let per_tick = 16 * u128::from(UNIT);
             let want = (u128::from(to) * u128::from(p.clock) / per_tick) as u64;
             let (base, clock) = (p.ticks, u128::from(p.clock));
             p.chip.run(want - base, |t, l, r| {
                 let at = (u128::from(base + t) * per_tick / clock) as u64;
                 let (l, r) = psg_scaled((l, r), psg_gain);
-                psg_events.push((at, l, r));
+                events.push((at, i, l, r));
             });
             p.ticks = want;
         }
-        let mut fm_events: Vec<(u64, i32, i32)> = Vec::new();
-        if let Some(f) = self.fm.as_mut() {
+        for (i, slot) in self.fm.iter_mut().enumerate() {
+            let Some(f) = slot.as_mut() else { continue };
             let per_sample = 144 * u128::from(UNIT);
             let want = (u128::from(to) * u128::from(f.clock) / per_sample) as u64;
             while f.samples < want {
                 f.samples += 1;
                 let (l, r) = f.chip.sample();
                 let at = (u128::from(f.samples) * per_sample / u128::from(f.clock)) as u64;
-                fm_events.push((at, l * FM_GAIN, r * FM_GAIN));
+                events.push((at, 2 + i, l * FM_GAIN, r * FM_GAIN));
             }
         }
-        let (mut pi, mut fi) = (0, 0);
-        let mut fm_level = self.fm.as_ref().map_or((0, 0), |f| f.level);
-        let mut psg_now = self.psg_seen;
-        while pi < psg_events.len() || fi < fm_events.len() {
-            let take_psg = match (psg_events.get(pi), fm_events.get(fi)) {
-                (Some(p), Some(f)) => p.0 <= f.0,
-                (Some(_), None) => true,
-                _ => false,
-            };
-            let at;
-            if take_psg {
-                let e = psg_events[pi];
-                pi += 1;
-                at = e.0;
-                psg_now = (e.1, e.2);
-            } else {
-                let e = fm_events[fi];
-                fi += 1;
-                at = e.0;
-                fm_level = (e.1, e.2);
-            }
+        events.sort_by_key(|e| (e.0, e.1));
+        let mut levels = [(0, 0); 4];
+        for (i, p) in self.psg.iter().enumerate() {
+            levels[i] = p.as_ref().map_or((0, 0), |p| p.seen);
+        }
+        for (i, f) in self.fm.iter().enumerate() {
+            levels[2 + i] = f.as_ref().map_or((0, 0), |f| f.level);
+        }
+        for (at, source, l, r) in events {
+            levels[source] = (l, r);
+            let (l, r) = levels.iter().fold((0, 0), |a, v| (a.0 + v.0, a.1 + v.1));
             let at = at.max(self.last_event);
-            self.out
-                .step(at, psg_now.0 + fm_level.0, psg_now.1 + fm_level.1);
+            self.out.step(at, l, r);
             self.last_event = at;
         }
-        self.psg_seen = psg_now;
-        if let Some(f) = self.fm.as_mut() {
-            f.level = fm_level;
+        for (i, p) in self.psg.iter_mut().enumerate() {
+            if let Some(p) = p.as_mut() {
+                p.seen = levels[i];
+            }
+        }
+        for (i, f) in self.fm.iter_mut().enumerate() {
+            if let Some(f) = f.as_mut() {
+                f.level = levels[2 + i];
+            }
         }
         self.now = to;
     }
@@ -367,34 +411,28 @@ impl Machine {
                         return;
                     }
                 }
-                Command::Psg {
-                    second: false,
-                    value,
-                } => {
+                Command::Psg { second, value } => {
                     self.pos = cursor.position();
-                    if let Some(p) = self.psg.as_mut() {
+                    if let Some(p) = self.psg[usize::from(second)].as_mut() {
                         p.chip.write(value);
                     }
                     self.sync();
                 }
-                Command::PsgStereo {
-                    second: false,
-                    value,
-                } => {
+                Command::PsgStereo { second, value } => {
                     self.pos = cursor.position();
-                    if let Some(p) = self.psg.as_mut() {
+                    if let Some(p) = self.psg[usize::from(second)].as_mut() {
                         p.chip.set_stereo(value);
                     }
                     self.sync();
                 }
                 Command::Ym2612 {
-                    second: false,
+                    second,
                     port,
                     register,
                     value,
                 } => {
                     self.pos = cursor.position();
-                    if let Some(f) = self.fm.as_mut() {
+                    if let Some(f) = self.fm[usize::from(second)].as_mut() {
                         f.chip.write(port, register, value);
                     }
                 }
@@ -402,7 +440,7 @@ impl Machine {
                     self.pos = cursor.position();
                     let byte = self.banks.bank(0).get(self.pcm_at).copied().unwrap_or(0x80);
                     self.pcm_at += 1;
-                    if let Some(f) = self.fm.as_mut() {
+                    if let Some(f) = self.fm[0].as_mut() {
                         f.chip.write(0, 0x2A, byte);
                     }
                     if wait > 0 {
@@ -500,8 +538,7 @@ impl Machine {
                 let (chip, second, port, register) = (s.chip, s.second, s.port, s.register);
                 if let Some(byte) = byte
                     && chip == stream::YM2612
-                    && !second
-                    && let Some(f) = self.fm.as_mut()
+                    && let Some(f) = self.fm[usize::from(second)].as_mut()
                 {
                     f.chip.write(port, register, byte);
                 }

@@ -32,6 +32,25 @@ fn random_streams_run_and_repeat() {
 }
 
 #[test]
+fn random_streams_run_and_repeat_with_two_chips() {
+    for seed in 200..240u64 {
+        let mut bytes = file(true, true, &random_stream(seed), None);
+        bytes[0x0F] |= 0x40;
+        bytes[0x2F] |= 0x40;
+        let Ok(v) = Vgm::parse(&bytes) else { continue };
+        let mut a = Machine::new(&v, 44_100).unwrap();
+        let mut b = Machine::new(&v, 44_100).unwrap();
+        let x = render(&mut a, 20_000);
+        let y = render(&mut b, 20_000);
+        assert_eq!(digest(&x), digest(&y), "seed {seed}");
+        let saved = a.clone();
+        let rest = render(&mut a, 6000);
+        assert!(a.restore(&saved));
+        assert_eq!(digest(&rest), digest(&render(&mut a, 6000)), "seed {seed}");
+    }
+}
+
+#[test]
 fn random_headers_parse_or_fail_cleanly() {
     let mut r = Rng(99);
     for _ in 0..500 {
