@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["audio/resample", "formats/gbs", "formats/nsf", "formats/psf", "formats/spc", "formats/vgm", "cores/gba/rust", "cores/gb/rust", "cores/nes/rust", "cores/snes/rust", "ffi"]
+members = ["audio/resample", "formats/gbs", "formats/nsf", "formats/psf", "formats/spc", "formats/vgm", "cores/gba/rust", "cores/gb/rust", "cores/nes/rust", "cores/snes/rust", "cores/genesis/rust", "ffi"]
 
 [workspace.package]
 version = "0.0.0"
@@ -19,6 +19,7 @@ oscilla-gba = { path = "cores/gba/rust" }
 oscilla-gb = { path = "cores/gb/rust" }
 oscilla-nes = { path = "cores/nes/rust" }
 oscilla-snes = { path = "cores/snes/rust" }
+oscilla-genesis = { path = "cores/genesis/rust" }
 
 [profile.release]
 panic = "abort"

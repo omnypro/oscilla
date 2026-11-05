@@ -1,0 +1,9 @@
+[package]
+name = "oscilla-genesis"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+oscilla-vgm.workspace = true
+oscilla-resample.workspace = true

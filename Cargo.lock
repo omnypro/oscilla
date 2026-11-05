@@ -76,6 +76,14 @@ name = "oscilla-gbs"
 version = "0.0.0"
 
 [[package]]
+name = "oscilla-genesis"
+version = "0.0.0"
+dependencies = [
+ "oscilla-resample",
+ "oscilla-vgm",
+]
+
+[[package]]
 name = "oscilla-nes"
 version = "0.0.0"
 dependencies = [
