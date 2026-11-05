@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["audio/resample", "formats/gbs", "formats/nsf", "formats/psf", "formats/spc", "cores/gba/rust", "cores/gb/rust", "cores/nes/rust", "cores/snes/rust", "ffi"]
+members = ["audio/resample", "formats/gbs", "formats/nsf", "formats/psf", "formats/spc", "formats/vgm", "cores/gba/rust", "cores/gb/rust", "cores/nes/rust", "cores/snes/rust", "ffi"]
 
 [workspace.package]
 version = "0.0.0"
@@ -13,6 +13,7 @@ oscilla-gbs = { path = "formats/gbs" }
 oscilla-nsf = { path = "formats/nsf" }
 oscilla-psf = { path = "formats/psf" }
 oscilla-spc = { path = "formats/spc" }
+oscilla-vgm = { path = "formats/vgm" }
 oscilla-resample = { path = "audio/resample" }
 oscilla-gba = { path = "cores/gba/rust" }
 oscilla-gb = { path = "cores/gb/rust" }
