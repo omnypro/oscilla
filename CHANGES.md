@@ -1,5 +1,11 @@
 # Changes
 
+## 0.4.1
+
+- `csnes_ram_copy` copies the 64 KB of sound RAM into a buffer.
+- `csnes_watch_ram` and a `ram_write` callback in `csnes_observer` report the
+  SPC700's stores to a range of RAM. Stores by `PUSH` and `CALL` are included.
+
 ## 0.4.0
 
 - The SNES core, which plays SPC files. It restores the RAM and the DSP
