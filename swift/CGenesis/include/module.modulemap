@@ -1,0 +1,4 @@
+module CGenesis {
+    header "cgenesis.h"
+    export *
+}

@@ -1,0 +1,418 @@
+//! The C interface of `cgenesis.h`.
+
+use crate::write_error;
+use oscilla_genesis::{EndState, Machine};
+use oscilla_vgm::{MAX_FILE, SAMPLE_RATE, Vgm};
+use std::ffi::{CStr, CString, c_char, c_int};
+use std::io::Read;
+use std::{ptr, slice};
+
+const OK: c_int = 0;
+const IO: c_int = 1;
+const FORMAT: c_int = 2;
+
+/// A parsed file with its tag fields as C strings.
+pub struct CImage {
+    vgm: Vgm,
+    title: CString,
+    title_jp: CString,
+    game: CString,
+    game_jp: CString,
+    system: CString,
+    system_jp: CString,
+    author: CString,
+    author_jp: CString,
+    date: CString,
+    ripper: CString,
+    notes: CString,
+}
+
+fn c_text(text: &str) -> CString {
+    CString::new(text.replace('\0', "")).unwrap_or_default()
+}
+
+fn make_image(bytes: &[u8], error: *mut c_char, error_size: usize) -> Result<Box<CImage>, c_int> {
+    match Vgm::parse(bytes) {
+        Ok(vgm) => {
+            let tag = vgm.gd3.clone().unwrap_or_default();
+            Ok(Box::new(CImage {
+                title: c_text(&tag.title),
+                title_jp: c_text(&tag.title_jp),
+                game: c_text(&tag.game),
+                game_jp: c_text(&tag.game_jp),
+                system: c_text(&tag.system),
+                system_jp: c_text(&tag.system_jp),
+                author: c_text(&tag.author),
+                author_jp: c_text(&tag.author_jp),
+                date: c_text(&tag.date),
+                ripper: c_text(&tag.ripper),
+                notes: c_text(&tag.notes),
+                vgm,
+            }))
+        }
+        Err(e) => {
+            write_error(error, error_size, e.to_string().as_bytes());
+            Err(FORMAT)
+        }
+    }
+}
+
+#[cfg(unix)]
+fn open(path: &[u8]) -> std::io::Result<std::fs::File> {
+    use std::os::unix::ffi::OsStrExt;
+    std::fs::File::open(std::ffi::OsStr::from_bytes(path))
+}
+
+#[cfg(not(unix))]
+fn open(path: &[u8]) -> std::io::Result<std::fs::File> {
+    match std::str::from_utf8(path) {
+        Ok(text) => std::fs::File::open(text),
+        Err(_) => Err(std::io::ErrorKind::InvalidInput.into()),
+    }
+}
+
+#[cfg(unix)]
+fn is_regular_file(path: &[u8]) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    std::fs::metadata(std::ffi::OsStr::from_bytes(path)).is_ok_and(|m| m.is_file())
+}
+
+#[cfg(not(unix))]
+fn is_regular_file(path: &[u8]) -> bool {
+    std::str::from_utf8(path).is_ok_and(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file()))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_load_vgm(
+    path: *const c_char,
+    out: *mut *mut CImage,
+    error: *mut c_char,
+    error_size: usize,
+) -> c_int {
+    if out.is_null() {
+        return IO;
+    }
+    unsafe { *out = ptr::null_mut() };
+    write_error(error, error_size, b"");
+    if path.is_null() {
+        return IO;
+    }
+    let path = unsafe { CStr::from_ptr(path) }.to_bytes();
+    // A pipe or a device would block or never end, so only a regular file loads.
+    if !is_regular_file(path) {
+        write_error(error, error_size, b"Not a regular file.");
+        return IO;
+    }
+    let mut bytes = Vec::new();
+    // Reads one byte more than the largest file, so that a larger one fails
+    // the size check and no file allocates without a limit.
+    let read = open(path).and_then(|f| f.take(MAX_FILE as u64 + 1).read_to_end(&mut bytes));
+    if read.is_err() {
+        write_error(error, error_size, b"Could not read the file.");
+        return IO;
+    }
+    match make_image(&bytes, error, error_size) {
+        Ok(img) => {
+            unsafe { *out = Box::into_raw(img) };
+            OK
+        }
+        Err(code) => code,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_from_vgm(
+    bytes: *const u8,
+    size: usize,
+    out: *mut *mut CImage,
+    error: *mut c_char,
+    error_size: usize,
+) -> c_int {
+    if out.is_null() {
+        return IO;
+    }
+    unsafe { *out = ptr::null_mut() };
+    write_error(error, error_size, b"");
+    if bytes.is_null() || size == 0 {
+        write_error(error, error_size, b"Not a VGM file.");
+        return FORMAT;
+    }
+    if size > MAX_FILE {
+        write_error(error, error_size, b"The file is larger than 64 MiB.");
+        return FORMAT;
+    }
+    match make_image(
+        unsafe { slice::from_raw_parts(bytes, size) },
+        error,
+        error_size,
+    ) {
+        Ok(img) => {
+            unsafe { *out = Box::into_raw(img) };
+            OK
+        }
+        Err(code) => code,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_free(image: *mut CImage) {
+    if !image.is_null() {
+        drop(unsafe { Box::from_raw(image) });
+    }
+}
+
+macro_rules! text_getter {
+    ($name:ident, $field:ident) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(image: *const CImage) -> *const c_char {
+            if image.is_null() {
+                return ptr::null();
+            }
+            unsafe { &*image }.$field.as_ptr()
+        }
+    };
+}
+
+text_getter!(cgenesis_image_title, title);
+text_getter!(cgenesis_image_title_jp, title_jp);
+text_getter!(cgenesis_image_game, game);
+text_getter!(cgenesis_image_game_jp, game_jp);
+text_getter!(cgenesis_image_system, system);
+text_getter!(cgenesis_image_system_jp, system_jp);
+text_getter!(cgenesis_image_author, author);
+text_getter!(cgenesis_image_author_jp, author_jp);
+text_getter!(cgenesis_image_date, date);
+text_getter!(cgenesis_image_ripper, ripper);
+text_getter!(cgenesis_image_notes, notes);
+
+/// Bit 0 is the SN76489 and bit 1 the YM2612.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_chips(image: *const CImage) -> u32 {
+    if image.is_null() {
+        return 0;
+    }
+    let v = &unsafe { &*image }.vgm;
+    u32::from(v.chip(oscilla_vgm::SN76489).is_some())
+        | u32::from(v.chip(oscilla_vgm::YM2612).is_some()) << 1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_total_samples(image: *const CImage) -> u32 {
+    if image.is_null() {
+        return 0;
+    }
+    unsafe { &*image }.vgm.total_samples
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_loop_samples(image: *const CImage) -> u32 {
+    if image.is_null() {
+        return 0;
+    }
+    unsafe { &*image }.vgm.loop_samples
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_has_loop(image: *const CImage) -> c_int {
+    if image.is_null() {
+        return 0;
+    }
+    c_int::from(unsafe { &*image }.vgm.loop_at().is_some())
+}
+
+/// Samples before the loop point at 44,100 Hz, or the whole file's length
+/// when it has no loop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_intro_samples(image: *const CImage) -> u32 {
+    if image.is_null() {
+        return 0;
+    }
+    let v = &unsafe { &*image }.vgm;
+    if v.loop_at().is_some() {
+        v.total_samples.saturating_sub(v.loop_samples)
+    } else {
+        v.total_samples
+    }
+}
+
+fn to_rate(samples: u32, rate: c_int) -> i64 {
+    if rate <= 0 {
+        return -1;
+    }
+    (i64::from(samples) * i64::from(rate) + i64::from(SAMPLE_RATE) / 2) / i64::from(SAMPLE_RATE)
+}
+
+/// The intro in frames of `rate`, rounded to the nearest frame.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_intro_frames(image: *const CImage, rate: c_int) -> i64 {
+    if image.is_null() {
+        return -1;
+    }
+    to_rate(unsafe { cgenesis_image_intro_samples(image) }, rate)
+}
+
+/// The loop in frames of `rate`, or 0 when the file does not loop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_loop_frames(image: *const CImage, rate: c_int) -> i64 {
+    if image.is_null() {
+        return -1;
+    }
+    let v = &unsafe { &*image }.vgm;
+    if v.loop_at().is_none() {
+        return 0;
+    }
+    to_rate(v.loop_samples, rate)
+}
+
+/// The passes through the loop that the file's loop base and modifier ask for
+/// when a player would play `passes` of them. At least 1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_loop_count(image: *const CImage, passes: u32) -> u32 {
+    if image.is_null() {
+        return 1;
+    }
+    unsafe { &*image }.vgm.loop_count(passes)
+}
+
+/// The gain that the file's volume modifier asks for, as a multiplier. The
+/// machine applies it to its output already.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_gain(image: *const CImage) -> f64 {
+    if image.is_null() {
+        return 1.0;
+    }
+    unsafe { &*image }.vgm.gain()
+}
+
+/// The frame rate of the console that the file was recorded from (50 or 60),
+/// or 0 when the header does not say.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_frame_rate(image: *const CImage) -> u32 {
+    if image.is_null() {
+        return 0;
+    }
+    unsafe { &*image }.vgm.rate
+}
+
+// ---- Machines ---------------------------------------------------------
+
+pub struct CMachine {
+    machine: Machine,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_new(image: *const CImage, output_rate: c_int) -> *mut CMachine {
+    if image.is_null() {
+        return ptr::null_mut();
+    }
+    match Machine::new(&unsafe { &*image }.vgm, output_rate) {
+        Ok(machine) => Box::into_raw(Box::new(CMachine { machine })),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_free(machine: *mut CMachine) {
+    if !machine.is_null() {
+        drop(unsafe { Box::from_raw(machine) });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_reset(machine: *mut CMachine) {
+    unsafe { &mut (*machine).machine }.reset();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_render_s16(machine: *mut CMachine, out: *mut i16, frames: usize) {
+    if out.is_null() || frames > isize::MAX as usize / 8 {
+        return;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, frames * 2) };
+    unsafe { &mut (*machine).machine }.render_s16(out);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_render_f32(machine: *mut CMachine, out: *mut f32, frames: usize) {
+    if out.is_null() || frames > isize::MAX as usize / 8 {
+        return;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, frames * 2) };
+    unsafe { &mut (*machine).machine }.render_f32(out);
+}
+
+/// Time played so far, in samples at 44,100 Hz.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_samples(machine: *const CMachine) -> u64 {
+    unsafe { &(*machine).machine }.samples()
+}
+
+/// Passes through the loop point so far.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_loops(machine: *const CMachine) -> u32 {
+    unsafe { &(*machine).machine }.loops()
+}
+
+/// 0 while the stream runs and 1 once it has ended without a loop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_end_state_get(machine: *const CMachine) -> c_int {
+    match unsafe { &(*machine).machine }.end_state() {
+        EndState::Playing => 0,
+        EndState::Finished => 1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_set_channel_mask(machine: *mut CMachine, mask: u64) {
+    unsafe { &mut (*machine).machine }.set_channel_mask(mask);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_channel_mask(machine: *const CMachine) -> u64 {
+    unsafe { &(*machine).machine }.channel_mask()
+}
+
+/// Returns 1 and sets the cutoff, or returns 0 and changes nothing for a value
+/// outside 0 to 1000 Hz.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_set_highpass_hz(machine: *mut CMachine, hz: f64) -> c_int {
+    c_int::from(unsafe { &mut (*machine).machine }.set_highpass_hz(hz))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_highpass_hz(machine: *const CMachine) -> f64 {
+    unsafe { &(*machine).machine }.highpass_hz()
+}
+
+// ---- Snapshots --------------------------------------------------------
+
+pub struct CSnapshot(Machine);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_snapshot_take(machine: *const CMachine) -> *mut CSnapshot {
+    Box::into_raw(Box::new(CSnapshot(unsafe { &(*machine).machine }.clone())))
+}
+
+/// 0 on success and 2 when the snapshot is not from this machine's file and
+/// rate.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_snapshot_restore(
+    machine: *mut CMachine,
+    snapshot: *const CSnapshot,
+) -> c_int {
+    if snapshot.is_null() {
+        return 2;
+    }
+    if unsafe { &mut (*machine).machine }.restore(&unsafe { &*snapshot }.0) {
+        0
+    } else {
+        2
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_snapshot_free(snapshot: *mut CSnapshot) {
+    if !snapshot.is_null() {
+        drop(unsafe { Box::from_raw(snapshot) });
+    }
+}

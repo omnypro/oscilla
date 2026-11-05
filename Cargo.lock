@@ -50,9 +50,11 @@ dependencies = [
  "oscilla-gb",
  "oscilla-gba",
  "oscilla-gbs",
+ "oscilla-genesis",
  "oscilla-nes",
  "oscilla-nsf",
  "oscilla-snes",
+ "oscilla-vgm",
 ]
 
 [[package]]

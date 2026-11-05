@@ -13,10 +13,13 @@ let package = Package(
         .library(name: "CNes", type: .static, targets: ["CNes"]),
         // The SNES core, in the same Rust library.
         .library(name: "CSnes", type: .static, targets: ["CSnes"]),
+        // The Genesis core, in the same Rust library.
+        .library(name: "CGenesis", type: .static, targets: ["CGenesis"]),
         .executable(name: "oscilla-gsf", targets: ["OscillaGSF"]),
         .executable(name: "oscilla-gbs", targets: ["OscillaGBS"]),
         .executable(name: "oscilla-nsf", targets: ["OscillaNSF"]),
         .executable(name: "oscilla-spc", targets: ["OscillaSPC"]),
+        .executable(name: "oscilla-vgm", targets: ["OscillaVGM"]),
     ],
     targets: [
         // The C header of the Rust library, and the module that Swift imports.
@@ -39,6 +42,11 @@ let package = Package(
             name: "CSnes",
             dependencies: ["OscillaRust"],
             path: "swift/CSnes"
+        ),
+        .target(
+            name: "CGenesis",
+            dependencies: ["OscillaRust"],
+            path: "swift/CGenesis"
         ),
         // The Rust library as a prebuilt XCFramework (scripts/build-xcframework.sh).
         .binaryTarget(
@@ -72,6 +80,17 @@ let package = Package(
             name: "OscillaSPC",
             dependencies: ["CSnes"],
             path: "cores/snes/tools/oscilla-spc"
+        ),
+        // Plays a VGM file to a WAV file.
+        .executableTarget(
+            name: "OscillaVGM",
+            dependencies: ["CGenesis"],
+            path: "cores/genesis/tools/oscilla-vgm"
+        ),
+        .testTarget(
+            name: "CGenesisTests",
+            dependencies: ["CGenesis"],
+            path: "cores/genesis/tests"
         ),
         .testTarget(
             name: "CSnesTests",
