@@ -1,5 +1,11 @@
 # Changes
 
+## 0.5.3
+
+- The Genesis core has `cgenesis_set_observer`, a callback that hears every
+  register write that the SN76489, the YM2612 and the YM2413 get, with the
+  chip, address, value and time in samples. It does not change the sound.
+
 ## 0.5.2
 
 - The Genesis core plays the YM2413 of the Master System and the MSX: nine FM
