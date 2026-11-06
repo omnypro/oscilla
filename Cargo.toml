@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["audio/resample", "formats/gbs", "formats/gym", "formats/nsf", "formats/psf", "formats/spc", "formats/vgm", "cores/gba/rust", "cores/gb/rust", "cores/nes/rust", "cores/snes/rust", "cores/genesis/rust", "cores/hes/rust", "ffi"]
+members = ["audio/resample", "formats/gbs", "formats/gym", "formats/hes", "formats/nsf", "formats/psf", "formats/spc", "formats/vgm", "cores/gba/rust", "cores/gb/rust", "cores/nes/rust", "cores/snes/rust", "cores/genesis/rust", "cores/hes/rust", "ffi"]
 
 [workspace.package]
 version = "0.0.0"
@@ -11,6 +11,7 @@ publish = false
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 oscilla-gbs = { path = "formats/gbs" }
 oscilla-gym = { path = "formats/gym" }
+oscilla-hesfile = { path = "formats/hes" }
 oscilla-nsf = { path = "formats/nsf" }
 oscilla-psf = { path = "formats/psf" }
 oscilla-spc = { path = "formats/spc" }

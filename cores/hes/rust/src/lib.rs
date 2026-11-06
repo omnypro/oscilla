@@ -3,3 +3,7 @@
 //! code of an HES file.
 
 pub mod cpu;
+mod machine;
+pub mod psg;
+
+pub use machine::{Machine, MachineError, UNIT};
