@@ -30,4 +30,12 @@ struct ImageTests {
         #expect(cpce_new(image, 7999, 0) == nil)
         #expect(cpce_new(image, 192_001, 0) == nil)
     }
+
+    @Test func aSongOutsideZeroToTwoFiftyFiveGivesNoMachine() {
+        let image = Support.image(Support.hes(request: [0x60]))
+        defer { cpce_image_free(image) }
+        #expect(cpce_new(image, 44100, 256) == nil)
+        #expect(cpce_new(image, 44100, -1) == nil)
+        #expect(cpce_new(image, 44100, 255) != nil)
+    }
 }

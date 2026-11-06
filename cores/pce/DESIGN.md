@@ -65,8 +65,12 @@ decrements both, BSR returns to the instruction after it, DEX works on X, and
 SBC sets the carry when no borrow occurs.
 
 A block transfer runs whole inside one step, which is up to 393,233 cycles
-(about 55 ms at high speed). Timer and sync events wait until it ends, and the
-sound generator's stores inside it land at the time the transfer began.
+(about 55 ms at high speed, 0.22 s at low speed). The processor runs an
+instruction at its start and then the machine lets the instruction's time pass,
+in steps no longer than the frames that the caller asked for. The timer and the
+vertical sync go on counting during a transfer, and an interrupt that falls
+due is taken when it ends. The sound generator's stores inside it land at the
+time the transfer began.
 
 ## Sound generator
 

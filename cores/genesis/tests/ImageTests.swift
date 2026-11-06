@@ -37,6 +37,7 @@ struct ImageTests {
         #expect(cgenesis_image_chips(image) == 1)
         #expect(cgenesis_image_has_loop(image) == 0)
         #expect(cgenesis_image_loop_frames(image, 44_100) == 0)
+        #expect(cgenesis_image_loop_frames(image, 0) == -1)
         #expect(cgenesis_image_intro_samples(image) == 100)
         #expect(cgenesis_image_loop_count(image, 2) == 2)
     }

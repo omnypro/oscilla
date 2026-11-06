@@ -122,12 +122,25 @@ struct MachineTests {
 
     @Test func aSnapshotOfAnotherFileIsRefused() {
         let a = Support.machine(Support.vgm(stream: Support.wait(100)))
-        let b = Support.machine(Support.vgm(stream: Support.wait(100)))
+        let b = Support.machine(Support.vgm(stream: Support.wait(200)))
         defer { cgenesis_free(a); cgenesis_free(b) }
         let snapshot = cgenesis_snapshot_take(a)!
         defer { cgenesis_snapshot_free(snapshot) }
         #expect(cgenesis_snapshot_restore(b, snapshot) == 2)
         #expect(cgenesis_snapshot_restore(b, nil) == 2)
+    }
+
+    @Test func aSnapshotRestoresIntoAnotherMachineOfTheSameImage() {
+        let image = Support.image(Support.vgm(stream: Support.fmTone() + Support.wait(44_100)))
+        defer { cgenesis_image_free(image) }
+        let a = cgenesis_new(image, 44_100)!
+        let b = cgenesis_new(image, 44_100)!
+        defer { cgenesis_free(a); cgenesis_free(b) }
+        _ = Support.render(a, frames: 500)
+        let snapshot = cgenesis_snapshot_take(a)!
+        defer { cgenesis_snapshot_free(snapshot) }
+        #expect(cgenesis_snapshot_restore(b, snapshot) == 0)
+        #expect(Support.render(b, frames: 800) == Support.render(a, frames: 800))
     }
 
     @Test func aRateOutOfRangeMakesNoMachine() {

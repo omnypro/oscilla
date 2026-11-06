@@ -242,6 +242,11 @@ impl Bus for Io {
 #[derive(Clone)]
 pub struct Machine {
     song: u8,
+    /// The master clock at which the instruction that ran last is done. The
+    /// processor runs an instruction at its start and then the machine lets
+    /// its time pass, so a block transfer of 0.2 s does not carry the sound
+    /// generator that far ahead of the output in one step.
+    busy_until: u64,
     cpu: Cpu,
     io: Io,
     mask: u8,
@@ -293,6 +298,7 @@ impl Machine {
         cpu.pc = hes.request;
         let mut m = Machine {
             song,
+            busy_until: 0,
             cpu,
             io,
             mask: 0x3F,
@@ -325,10 +331,8 @@ impl Machine {
     /// Returns to the state of `saved`, a copy taken from this machine or one
     /// of the same file, song and output rate.
     pub fn restore(&mut self, saved: &Machine) -> bool {
-        if !Arc::ptr_eq(&self.io.hes, &saved.io.hes)
-            || self.song != saved.song
-            || self.io.out.rate() != saved.io.out.rate()
-        {
+        let same_file = Arc::ptr_eq(&self.io.hes, &saved.io.hes) || *self.io.hes == *saved.io.hes;
+        if !same_file || self.song != saved.song || self.io.out.rate() != saved.io.out.rate() {
             return false;
         }
         let observer = std::mem::take(&mut self.io.observer);
@@ -367,6 +371,12 @@ impl Machine {
 
     fn run_until(&mut self, target: u64) {
         while self.io.now < target {
+            if self.busy_until > self.io.now {
+                let to = self.busy_until.min(target);
+                self.io.now = to;
+                self.io.events(to);
+                continue;
+            }
             let idle = self.cpu.pc == IDLE;
             let can_interrupt = self.cpu.p & 0x04 == 0 && self.io.pending_interrupt().is_some();
             if idle && !can_interrupt {
@@ -378,9 +388,7 @@ impl Machine {
             self.io.sync_psg();
             let cycles = self.cpu.step(&mut self.io);
             let per = if self.cpu.high_speed { 3 } else { 12 };
-            self.io.now += u64::from(cycles.max(1)) * per;
-            let now = self.io.now;
-            self.io.events(now);
+            self.busy_until = self.io.now + u64::from(cycles.max(1)) * per;
         }
     }
 

@@ -330,6 +330,9 @@ pub unsafe extern "C" fn cgenesis_image_loop_frames(image: *const CImage, rate: 
     if image.is_null() {
         return -1;
     }
+    if rate <= 0 {
+        return -1;
+    }
     let v = &unsafe { &*image }.vgm;
     if v.loop_at().is_none() {
         return 0;

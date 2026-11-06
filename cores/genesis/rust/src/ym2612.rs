@@ -385,7 +385,7 @@ impl Ym2612 {
                 ch.block = (ch.high >> 3) & 7;
             }
             0xA4..=0xA6 => self.ch[c].high = value,
-            0xA8..=0xAA => {
+            0xA8..=0xAA if part == 0 => {
                 self.special[low] = (
                     u16::from(self.special_high[low] & 7) << 8 | u16::from(value),
                     (self.special_high[low] >> 3) & 7,

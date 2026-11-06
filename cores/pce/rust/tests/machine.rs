@@ -215,3 +215,62 @@ fn the_channel_mask_keeps_a_channel_out() {
     assert_eq!(m.channel_mask(), 0b111110);
     assert_eq!(render(&mut m, 1000)[900], 0);
 }
+
+/// Channel 1 as a 440 Hz square wave, then `code`.
+fn square_then(code: &[u8]) -> Vec<u8> {
+    let mut c = sta(PSG, 0);
+    c.extend(sta(PSG + 1, 0xFF));
+    c.extend(sta(PSG + 5, 0xFF));
+    c.extend(sta(PSG + 4, 0x40));
+    c.extend(sta(PSG + 4, 0x00));
+    for i in 0..32 {
+        c.extend(sta(PSG + 6, if i < 16 { 31 } else { 0 }));
+    }
+    c.extend(sta(PSG + 2, 254));
+    c.extend(sta(PSG + 3, 0));
+    c.extend(sta(PSG + 4, 0x9F));
+    c.extend(code);
+    c
+}
+
+fn machine_at(file: &[u8], rate: i32) -> Machine {
+    let mut m = Machine::new(&Hes::parse(file).unwrap(), rate, 0).unwrap();
+    m.set_highpass_hz(0.0);
+    m
+}
+
+#[test]
+fn a_block_transfer_of_65536_bytes_does_not_overrun_the_output_at_192_khz() {
+    // TIN of length 0 moves 65,536 bytes: 393,233 cycles, 0.22 s at the low
+    // speed. The sound before and after it must keep its pitch.
+    let code = square_then(&[0xD3, 0x00, 0xE0, 0x00, 0x22, 0x00, 0x00, 0x60]);
+    let f = program(&code, &[0x40], &[0x40]);
+    let rate = 192_000usize;
+    let mut m = machine_at(&f, rate as i32);
+    let mut out = vec![0i16; 2 * rate / 2];
+    m.render_s16(&mut out);
+    let left: Vec<i16> = out.chunks(2).map(|f| f[0]).collect();
+    // 440.45 Hz: about 2.3 crossings per 1,000 frames at 192 kHz.
+    for start in [1000usize, 17_384, 41_000, 60_000] {
+        let n = crossings(&left[start..start + 20_000]);
+        let want = 20_000.0 / 192_000.0 * 880.9;
+        assert!(
+            (n as f64 - want).abs() <= 3.0,
+            "start {start}: {n} crossings, expected about {want:.1}"
+        );
+    }
+}
+
+#[test]
+fn a_snapshot_restores_into_a_second_machine_of_the_same_file() {
+    let code = square_then(&[0x60]);
+    let f = program(&code, &[0x40], &[0x40]);
+    let mut a = machine(&f, 0);
+    let mut b = machine(&f, 0);
+    render(&mut a, 3000);
+    let saved = a.clone();
+    assert!(b.restore(&saved));
+    assert_eq!(render(&mut a, 2000), render(&mut b, 2000));
+    let other = program(&sta(PSG, 1), &[0x40], &[0x40]);
+    assert!(!machine(&other, 0).restore(&saved));
+}

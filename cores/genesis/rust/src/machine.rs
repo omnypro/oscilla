@@ -47,6 +47,11 @@ impl std::fmt::Display for MachineError {
 
 impl std::error::Error for MachineError {}
 
+/// The highest chip clock that the machine takes from a header, which is more
+/// than twice the clocks of the real chips. A header can name any 30-bit clock,
+/// and the work and memory of a render grow with it.
+const MAX_CLOCK: u32 = 16_000_000;
+
 /// The size of a YM2612 channel's 9-bit value in the output. A full-scale
 /// channel peaks at 0.258 of full scale, as libgme renders one.
 const FM_GAIN: i32 = 33;
@@ -204,10 +209,15 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(vgm: &Vgm, output_rate: i32) -> Result<Machine, MachineError> {
-        Machine::from_shared(Arc::new(vgm.clone()), output_rate)
+        let banks = Arc::new(vgm.banks());
+        Machine::from_shared(Arc::new(vgm.clone()), banks, output_rate)
     }
 
-    fn from_shared(vgm: Arc<Vgm>, output_rate: i32) -> Result<Machine, MachineError> {
+    fn from_shared(
+        vgm: Arc<Vgm>,
+        banks: Arc<Banks>,
+        output_rate: i32,
+    ) -> Result<Machine, MachineError> {
         if !(8000..=192_000).contains(&output_rate) {
             return Err(MachineError::Rate);
         }
@@ -215,11 +225,16 @@ impl Machine {
         // which is one chip with two halves and not two chips.
         let psg_clocks = |c: &oscilla_vgm::Chip| {
             [
-                Some(c.clock),
-                (c.dual && !c.variant).then_some(c.second_clock),
+                Some(c.clock.min(MAX_CLOCK)),
+                (c.dual && !c.variant).then_some(c.second_clock.min(MAX_CLOCK)),
             ]
         };
-        let fm_clocks = |c: &oscilla_vgm::Chip| [Some(c.clock), c.dual.then_some(c.second_clock)];
+        let fm_clocks = |c: &oscilla_vgm::Chip| {
+            [
+                Some(c.clock.min(MAX_CLOCK)),
+                c.dual.then_some(c.second_clock.min(MAX_CLOCK)),
+            ]
+        };
         let psg_clock = vgm.chip(SN76489).map_or([None; 2], psg_clocks);
         let fm_clock = vgm.chip(YM2612).map_or([None; 2], fm_clocks);
         let psg = psg_clock.map(|clock| {
@@ -268,7 +283,7 @@ impl Machine {
             psg,
             fm,
             opll,
-            banks: Arc::new(vgm.banks()),
+            banks,
             vgm,
             pcm_at: 0,
             streams: BTreeMap::new(),
@@ -334,7 +349,8 @@ impl Machine {
     /// Starts the song again with the same file, rate, channel mask and high-pass.
     pub fn reset(&mut self) {
         let mask = self.channel_mask();
-        if let Ok(mut m) = Machine::from_shared(Arc::clone(&self.vgm), self.out.rate()) {
+        let banks = Arc::clone(&self.banks);
+        if let Ok(mut m) = Machine::from_shared(Arc::clone(&self.vgm), banks, self.out.rate()) {
             m.set_channel_mask(mask);
             m.set_highpass_hz(self.hp_hz);
             m.observer = std::mem::take(&mut self.observer);
@@ -345,7 +361,8 @@ impl Machine {
     /// Returns to the state of `saved`, a copy taken from this machine or one
     /// of the same file and output rate.
     pub fn restore(&mut self, saved: &Machine) -> bool {
-        if !Arc::ptr_eq(&self.vgm, &saved.vgm) || self.out.rate() != saved.out.rate() {
+        let same_file = Arc::ptr_eq(&self.vgm, &saved.vgm) || *self.vgm == *saved.vgm;
+        if !same_file || self.out.rate() != saved.out.rate() {
             return false;
         }
         let observer = std::mem::take(&mut self.observer);
@@ -661,8 +678,9 @@ impl Machine {
                 }
                 Command::StreamFrequency { stream, hz } => {
                     self.pos = cursor.position();
+                    let now = self.now;
                     if let Some(s) = self.streams.get_mut(&stream) {
-                        s.set_frequency(hz);
+                        s.set_frequency(now, hz);
                     }
                 }
                 Command::StreamStart {
@@ -788,8 +806,14 @@ impl Machine {
     }
 
     fn take_f32(&mut self, out: &mut [f32], chunk: usize) -> usize {
-        let gain =
-            self.mul as f64 / 65536.0 * (BLEP_SHIFT as f64 + 16.0 - f64::from(self.shift)).exp2();
+        // The volume modifier's whole octaves, as an exact power of two.
+        let octave = BLEP_SHIFT as i32 + 16 - self.shift as i32;
+        let power = if octave >= 0 {
+            (1u64 << octave.min(62)) as f64
+        } else {
+            1.0 / (1u64 << (-octave).min(62)) as f64
+        };
+        let gain = self.mul as f64 / 65536.0 * power;
         let scale = gain / f64::from(1u32 << 15) / f64::from(1u32 << BLEP_SHIFT);
         self.produce(chunk);
         let got = self.out.take_f32(out, chunk, scale);

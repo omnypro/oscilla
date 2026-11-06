@@ -7,8 +7,10 @@ use crate::machine::UNIT;
 pub(crate) const YM2612: u8 = 0x02;
 
 /// The highest write rate. A corrupt file can name any 32-bit rate, and the
-/// writes of a looping stream would then never catch up with the clock.
-const MAX_HZ: u32 = 1_000_000;
+/// writes of a looping stream would then never catch up with the clock. The
+/// YM2612 reads its DAC register once a sample (about 53 kHz), so a faster
+/// stream makes no audible difference, and real streams run under 32 kHz.
+const MAX_HZ: u32 = 65_536;
 
 /// How a start command counts the writes to make.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -76,9 +78,11 @@ impl Stream {
         self.bank
     }
 
-    pub fn set_frequency(&mut self, hz: u32) {
+    pub fn set_frequency(&mut self, now: u64, hz: u32) {
         if self.running {
-            self.started_at = self.due().unwrap_or(self.started_at);
+            // A stream that had no rate has no write due, and starts again
+            // from the command's time.
+            self.started_at = self.due().unwrap_or(now);
             self.written = 0;
         }
         self.hz = hz.min(MAX_HZ);

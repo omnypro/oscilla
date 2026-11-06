@@ -114,8 +114,15 @@ length in writes, in milliseconds (rounded to the nearest write) or to the end
 of the bank, with loop and reverse bits; the fast call plays a block of the
 bank. A stream stops when it passes the end or the start of the bank, or
 restarts if it loops and the restart would write something. A new rate takes
-effect from the next write. The rate is capped at 1 MHz so a corrupt file
-cannot make a looping stream spin.
+effect from the next write. A stream that gets its first rate late starts from
+that command and does not write the samples that it missed. The rate is
+capped at 65,536 Hz, because the YM2612 reads its DAC register once a sample
+(about 53 kHz) and a corrupt file could otherwise make a looping stream spin.
+
+A header can name any 30-bit chip clock. The machine takes at most 16 MHz for
+a chip, which is more than twice the real clocks, because the work and memory
+of a render grow with the clock. The data blocks of a file together make at
+most 64 MiB of banks, a packed block included.
 
 ## SN76489
 

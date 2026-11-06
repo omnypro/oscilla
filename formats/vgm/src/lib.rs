@@ -354,8 +354,11 @@ impl Vgm {
 
         let (mut psg_feedback, mut psg_width) =
             (half(&file, 0x28, limit), byte(&file, 0x2A, limit));
-        if version < 0x110 {
+        // A zero in either field means that the writer left it out.
+        if version < 0x110 || psg_feedback == 0 {
             psg_feedback = 9;
+        }
+        if version < 0x110 || psg_width == 0 {
             psg_width = 16;
         }
 
@@ -441,6 +444,7 @@ impl Vgm {
             file: &self.file,
             pos: self.data_at,
             damaged: false,
+            version: self.version,
         }
     }
 
@@ -450,6 +454,7 @@ impl Vgm {
             file: &self.file,
             pos,
             damaged: false,
+            version: self.version,
         }
     }
 
@@ -542,6 +547,7 @@ pub struct Cursor<'a> {
     file: &'a [u8],
     pos: usize,
     damaged: bool,
+    version: u32,
 }
 
 impl Cursor<'_> {
@@ -689,6 +695,9 @@ impl Cursor<'_> {
                 let n = match op {
                     0x00 | 0x62 | 0x63 => 0,
                     0x30..=0x3F | 0x4F | 0x50 => 1,
+                    // The reserved commands 0x40 to 0x4E had one operand until
+                    // version 1.60.
+                    0x40..=0x4E if self.version < 0x161 => 1,
                     0x40..=0x4E | 0x51..=0x5F => 2,
                     0x64 => 3,
                     0x68 => 11,
@@ -718,6 +727,8 @@ impl Banks {
         let mut banks = vec![Vec::new(); 0x40];
         let mut blocks = vec![Vec::new(); 0x40];
         let mut tables: Vec<((u8, u8), Vec<u32>)> = Vec::new();
+        // The banks together stay within MAX_FILE: a packed block can expand.
+        let mut total = 0usize;
         let file = vgm.bytes();
         let mut cur = vgm.commands();
         loop {
@@ -728,11 +739,17 @@ impl Banks {
                     match kind {
                         0x00..=0x3F => {
                             let k = usize::from(kind);
-                            blocks[k].push((banks[k].len(), payload.len()));
-                            banks[k].extend_from_slice(payload);
+                            if total + payload.len() <= MAX_FILE {
+                                total += payload.len();
+                                blocks[k].push((banks[k].len(), payload.len()));
+                                banks[k].extend_from_slice(payload);
+                            }
                         }
                         0x40..=0x7E => {
-                            if let Some(data) = unpack(payload, &tables) {
+                            if let Some(data) = unpack(payload, &tables)
+                                && total + data.len() <= MAX_FILE
+                            {
+                                total += data.len();
                                 let k = usize::from(kind - 0x40);
                                 blocks[k].push((banks[k].len(), data.len()));
                                 banks[k].extend_from_slice(&data);
@@ -937,6 +954,55 @@ mod tests {
         let mut none = file(0x171, &[0x66]);
         set(&mut none, 0x20, 99);
         assert_eq!(Vgm::parse(&none).unwrap().loop_samples, 0);
+    }
+
+    #[test]
+    fn the_reserved_commands_have_one_operand_before_version_1_61() {
+        let stream = [0x40, 0x01, 0x50, 0x9F, 0x66];
+        let old = Vgm::parse(&file(0x160, &stream)).unwrap();
+        assert_eq!(
+            commands(&old),
+            [
+                Command::Other(0x40),
+                Command::Psg {
+                    second: false,
+                    value: 0x9F
+                }
+            ]
+        );
+        let new = Vgm::parse(&file(0x161, &[0x40, 0x01, 0x02, 0x50, 0x9F, 0x66])).unwrap();
+        assert_eq!(
+            commands(&new),
+            [
+                Command::Other(0x40),
+                Command::Psg {
+                    second: false,
+                    value: 0x9F
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn packed_data_blocks_that_expand_stay_within_the_size_limit() {
+        // A bit-packed block of 48 MiB from 1.5 MiB: bd = 32 and bc = 1.
+        let size = 48usize << 20;
+        let mut block = vec![0x00];
+        block.extend((size as u32).to_le_bytes());
+        block.extend([32, 1, 0, 0, 0]);
+        block.extend(vec![0xFFu8; size / 32]);
+        let mut stream = Vec::new();
+        for _ in 0..3 {
+            stream.extend([0x67, 0x66, 0x40]);
+            stream.extend((block.len() as u32).to_le_bytes());
+            stream.extend(&block);
+        }
+        stream.push(0x66);
+        let v = Vgm::parse(&file(0x171, &stream)).unwrap();
+        let banks = v.banks();
+        assert_eq!(banks.bank(0).len(), size);
+        assert!(banks.bank(0).len() <= MAX_FILE);
+        assert_eq!(banks.blocks(0).len(), 1);
     }
 
     #[test]

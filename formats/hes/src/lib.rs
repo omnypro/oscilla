@@ -57,7 +57,7 @@ impl Hes {
         mpr.copy_from_slice(&bytes[8..16]);
         let mut rom = vec![0xFFu8; ROM_SIZE];
         let mut at = 16;
-        while at + 16 <= bytes.len() && &bytes[at..at + 4] == b"DATA" {
+        while bytes.len() - at >= 16 && &bytes[at..at + 4] == b"DATA" {
             let word = |o: usize| {
                 u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]) as usize
             };
@@ -71,7 +71,7 @@ impl Hes {
                 return Err(HesError::Load);
             }
             rom[load..to].copy_from_slice(body);
-            at = start.saturating_add(size);
+            at = end;
         }
         Ok(Hes {
             version: bytes[4],
@@ -126,6 +126,19 @@ mod tests {
         f.truncate(f.len() - 2);
         let h = Hes::parse(&f).unwrap();
         assert_eq!(&h.rom()[..4], &[1, 2, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn a_block_size_near_the_largest_value_ends_the_blocks() {
+        let mut f = file(&[(0, &[1, 2])]);
+        f.extend(b"DATA");
+        f.extend(0xFFFF_FFF0u32.to_le_bytes());
+        f.extend(0u32.to_le_bytes());
+        f.extend([0; 4]);
+        f.extend([7, 8, 9]);
+        let h = Hes::parse(&f).unwrap();
+        // The block loads what the file holds and the blocks end there.
+        assert_eq!(&h.rom()[..3], &[7, 8, 9]);
     }
 
     #[test]

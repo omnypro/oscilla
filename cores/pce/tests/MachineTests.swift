@@ -84,6 +84,19 @@ struct MachineTests {
         #expect(cpce_snapshot_restore(m, nil) == 2)
     }
 
+    @Test func aSnapshotRestoresIntoAnotherMachineOfTheSameImage() {
+        let image = Support.image(Support.hes(request: Support.songAsWord()))
+        defer { cpce_image_free(image) }
+        let a = cpce_new(image, 44100, 5)!
+        let b = cpce_new(image, 44100, 5)!
+        defer { cpce_free(a); cpce_free(b) }
+        _ = Support.render(a, frames: 300)
+        let snapshot = cpce_snapshot_take(a)!
+        defer { cpce_snapshot_free(snapshot) }
+        #expect(cpce_snapshot_restore(b, snapshot) == 0)
+        #expect(Support.render(b, frames: 500) == Support.render(a, frames: 500))
+    }
+
     @Test func resetStartsTheSongAgain() {
         let m = Support.machine(Support.hes(request: Support.songAsWord()), song: 2)
         defer { cpce_free(m) }

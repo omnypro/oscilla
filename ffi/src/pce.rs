@@ -201,10 +201,13 @@ pub unsafe extern "C" fn cpce_new(
     output_rate: c_int,
     song: c_int,
 ) -> *mut CMachine {
+    let Ok(song) = u8::try_from(song) else {
+        return ptr::null_mut();
+    };
     if image.is_null() {
         return ptr::null_mut();
     }
-    match Machine::new(&unsafe { &*image }.hes, output_rate, song as u8) {
+    match Machine::new(&unsafe { &*image }.hes, output_rate, song) {
         Ok(machine) => Box::into_raw(Box::new(CMachine {
             machine,
             callback: Arc::new(Callback {

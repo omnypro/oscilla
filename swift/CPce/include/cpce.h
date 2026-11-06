@@ -62,8 +62,8 @@ typedef struct cpce_machine cpce_machine;
 
 /*
  * Starts the program at `song` (0 to 255, passed to the request routine in the
- * accumulator). Returns NULL when the image is NULL or the output rate is
- * outside 8000 to 192000 Hz. The image is copied, so it can be freed at once.
+ * accumulator). Returns NULL when the image is NULL, the song is outside 0 to
+ * 255 or the output rate is outside 8000 to 192000 Hz. The image is copied, so it can be freed at once.
  */
 cpce_machine *cpce_new(const cpce_image *image, int output_rate, int song);
 void cpce_free(cpce_machine *machine);
@@ -71,7 +71,11 @@ void cpce_free(cpce_machine *machine);
 /* Starts the song again. The channel mask, the high-pass and the observer stay. */
 void cpce_reset(cpce_machine *machine);
 
-/* Fills `frames` frames of interleaved left and right samples. */
+/*
+ * Fills `frames` frames of interleaved left and right samples. The 16-bit form
+ * clips at full scale. The float form does not clip, and its samples can pass
+ * 1.0: loud songs reach about 1.1 of full scale, and a few reach more.
+ */
 void cpce_render_s16(cpce_machine *machine, int16_t *out, size_t frames);
 void cpce_render_f32(cpce_machine *machine, float *out, size_t frames);
 
