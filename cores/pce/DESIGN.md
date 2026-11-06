@@ -107,6 +107,9 @@ These choices rest on documents that do not say, or on a single measurement.
 
 - The noise register's taps and length. The core uses 15 bits with taps on
   bits 0 and 1, and the output is 31 or 0 before the midpoint.
+- The unit of the noise clock formula. The core shifts the register once per
+  clock of the formula, which is every 64 times the complement of the
+  frequency bits in ticks. A shift rate 4 to 8 times as high matches libgme.
 - The period for a frequency of 0 (4,096, a full turn of the 12-bit counter),
   and for a noise frequency whose complement is 0 (32).
 - Whether a store to the waveform register in the mixing mode is dropped. The
@@ -126,8 +129,10 @@ Level and spectrum were compared with libgme's renders of 29 songs (20 s each,
 44,100 Hz). The levels agree within 0.4 dB of each other, and the bands from 20
 Hz to 16 kHz agree within about 1 dB. Above 16 kHz the core is about 9 dB
 louder, because libgme applies a treble cut that the core does not. One song
-(R-Type II, song 4) has about 6 dB more bass than libgme's render, and the
-cause is not known.
+(R-Type II, song 4) has about 6 dB more bass than libgme's render. It sweeps
+the noise frequency of channel 6. The match of its bands needs a noise shift
+rate 4 to 8 times the one that the manual's formula gives, so libgme's noise
+is brighter than the manual's. The core keeps the manual's formula.
 
 ## Snapshots
 
