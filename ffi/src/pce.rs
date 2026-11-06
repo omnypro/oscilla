@@ -271,6 +271,136 @@ pub unsafe extern "C" fn cpce_channel_levels_get(machine: *const CMachine, out: 
     unsafe { ptr::copy_nonoverlapping(l.as_ptr(), out, 6) };
 }
 
+/// One channel as a player shows it. The layout is the same in every core's
+/// header (`csnes_voice`, `cgenesis_voice` and the others follow it).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CVoice {
+    active: c_int,
+    key_on: c_int,
+    kind: c_int,
+    instrument: c_int,
+    frequency_hz: f32,
+    volume: f32,
+    pan: f32,
+    envelope: f32,
+    left: f32,
+    right: f32,
+    envelope_phase: c_int,
+    pitch_modulated: c_int,
+    echo: c_int,
+    ended: c_int,
+    mask_bit: c_int,
+    reserved: [c_int; 3],
+}
+
+fn make_voice(index: usize, v: oscilla_pce::PsgVoice) -> CVoice {
+    let (l, r) = (v.gain.0 as f32 / 65_536.0, v.gain.1 as f32 / 65_536.0);
+    let period = if v.frequency == 0 {
+        4096
+    } else {
+        u32::from(v.frequency)
+    };
+    let tone = !v.noise && !v.direct;
+    CVoice {
+        active: c_int::from(v.on && (l > 0.0 || r > 0.0)),
+        key_on: c_int::from(v.on),
+        kind: if v.noise {
+            1
+        } else if v.direct {
+            2
+        } else {
+            0
+        },
+        instrument: if tone { v.wave_id as c_int } else { -1 },
+        frequency_hz: if tone {
+            3_579_545.0 / (32.0 * period as f32)
+        } else {
+            0.0
+        },
+        volume: l.max(r),
+        pan: if l + r > 0.0 { (r - l) / (l + r) } else { 0.0 },
+        envelope: -1.0,
+        left: l,
+        right: r,
+        envelope_phase: 0,
+        pitch_modulated: c_int::from(v.lfo),
+        echo: 0,
+        ended: 0,
+        mask_bit: index as c_int,
+        reserved: [0; 3],
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_voice_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    6
+}
+
+/// Writes at most `max` voices and returns how many.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_voices_get(
+    machine: *const CMachine,
+    out: *mut CVoice,
+    max: c_int,
+) -> c_int {
+    if machine.is_null() || out.is_null() || max <= 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let m = unsafe { &(*machine).machine };
+    let n = max.min(6);
+    for i in 0..n {
+        unsafe { *out.add(i as usize) = make_voice(i as usize, m.voice_info(i as usize)) };
+    }
+    n
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_voice_name(machine: *const CMachine, index: c_int) -> *const c_char {
+    const NAMES: [&CStr; 6] = [
+        c"Wave 1",
+        c"Wave 2",
+        c"Wave 3",
+        c"Wave 4",
+        c"Wave/Noise 5",
+        c"Wave/Noise 6",
+    ];
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return ptr::null();
+    }
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| NAMES.get(i))
+        .map_or(ptr::null(), |n| n.as_ptr())
+}
+
+/// Fills `out` with the last `frames` frames of a channel. Returns `frames`, or
+/// 0 for a channel outside 0 to 5, a NULL buffer, more than 16,384 frames or a
+/// call from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_scope_get(
+    machine: *const CMachine,
+    voice: c_int,
+    out: *mut f32,
+    frames: usize,
+) -> usize {
+    if machine.is_null()
+        || out.is_null()
+        || !(0..6).contains(&voice)
+        || frames == 0
+        || frames > 16_384
+        || unsafe { in_callback(machine) }
+    {
+        return 0;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, frames) };
+    unsafe { &(*machine).machine }.scope(voice as usize, out);
+    frames
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cpce_set_channel_mask(machine: *mut CMachine, mask: u64) {
     if unsafe { in_callback(machine) } {

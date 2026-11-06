@@ -7,3 +7,4 @@ mod machine;
 pub mod psg;
 
 pub use machine::{Machine, MachineError, Observer, UNIT};
+pub use psg::{PsgVoice, SCOPE_LEN};

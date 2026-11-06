@@ -138,6 +138,17 @@ the noise frequency of channel 6. The match of its bands needs a noise shift
 rate 4 to 8 times the one that the manual's formula gives, so libgme's noise
 is brighter than the manual's. The core keeps the manual's formula.
 
+## Visualization
+
+`Psg::voice` reads a channel's registers: the pitch is 3,579,545 over 32 times
+the frequency register, the gains are the manual's three steps added (see
+Sound generator), and the waveform number is a hash of the 32 words, equal for
+equal waveforms. The scope keeps the last 4,096 samples of each channel at
+44,100 Hz, held between the generator's own steps: the channel's word about its
+midpoint times its two gains, averaged. The mask does not touch it. `scope`
+resamples it to the output rate by linear interpolation. The ring is not part
+of a copy of the machine, which starts with an empty one.
+
 ## Snapshots
 
 A snapshot is a copy of the whole machine: the processor, RAM, the timer, the

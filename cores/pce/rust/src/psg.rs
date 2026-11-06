@@ -44,6 +44,79 @@ struct Channel {
     lfsr: u16,
 }
 
+/// The samples of each channel's output that the scope keeps: 4,096 at 44,100
+/// Hz, which is 93 ms.
+pub const SCOPE_LEN: usize = 4096;
+
+/// The rate of the scope's samples.
+pub const SCOPE_HZ: u64 = 44_100;
+
+/// The recent output of each channel before the mask and the mixer: the channel's
+/// word about its midpoint times its two gains, averaged and scaled to 16 bits.
+/// It is not part of a copy of the generator, which starts with an empty one.
+#[derive(Debug)]
+struct Scope {
+    data: Box<[i16]>,
+    /// The index that the next sample goes to.
+    at: usize,
+}
+
+impl Scope {
+    fn new() -> Scope {
+        Scope {
+            data: vec![0; 6 * SCOPE_LEN].into_boxed_slice(),
+            at: 0,
+        }
+    }
+
+    /// Adds `n` samples of the same values.
+    fn push(&mut self, samples: [i16; 6], n: u64) {
+        for _ in 0..n.min(SCOPE_LEN as u64) {
+            for (c, s) in samples.iter().enumerate() {
+                self.data[c * SCOPE_LEN + self.at] = *s;
+            }
+            self.at = (self.at + 1) % SCOPE_LEN;
+        }
+    }
+
+    fn get(&self, channel: usize, back: usize) -> i16 {
+        if back >= SCOPE_LEN {
+            return 0;
+        }
+        self.data[channel * SCOPE_LEN + (self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN]
+    }
+}
+
+impl Clone for Scope {
+    fn clone(&self) -> Scope {
+        Scope::new()
+    }
+}
+
+/// What a channel is doing, from its registers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PsgVoice {
+    /// The channel's on bit.
+    pub on: bool,
+    /// Direct D/A mode: the channel plays the words that the program writes.
+    pub direct: bool,
+    /// The channel makes noise: only channels 5 and 6 can.
+    pub noise: bool,
+    /// The 12-bit frequency register.
+    pub frequency: u16,
+    /// The channel's amplitude register, 0 to 31.
+    pub amplitude: u8,
+    /// The gain to the left and to the right from the main level, the balance
+    /// and the amplitude, in 16.16 (65,536 is a gain of 1).
+    pub gain: (u32, u32),
+    /// A number that is the same for equal waveforms.
+    pub wave_id: u32,
+    /// The word that the channel puts out now, 0 to 31.
+    pub word: u8,
+    /// The low frequency oscillator modulates this channel or runs it.
+    pub lfo: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Psg {
     select: u8,
@@ -54,6 +127,10 @@ pub struct Psg {
     ch: [Channel; 6],
     mask: u8,
     level: (i32, i32),
+    scope: Scope,
+    /// Ticks of the scope's sample that have not made a whole sample yet,
+    /// counted in 1/3,579,545 of a scope sample.
+    scope_acc: u64,
 }
 
 impl Default for Psg {
@@ -79,6 +156,8 @@ impl Psg {
             ch,
             mask: 0x3F,
             level: (0, 0),
+            scope: Scope::new(),
+            scope_acc: 0,
         };
         psg.level = psg.mix();
         psg
@@ -222,6 +301,46 @@ impl Psg {
         GAIN[steps as usize]
     }
 
+    /// What each channel adds to the left and right output, with no mask.
+    fn contribution(&self, i: usize) -> (i64, i64) {
+        if !self.ch[i].on {
+            return (0, 0);
+        }
+        // The words run from 0 to 31. The output takes them about their
+        // midpoint, in half steps, so a channel puts out no offset.
+        let w = i64::from(self.word(i)) * 2 - 31;
+        (
+            w * i64::from(self.gain(i, true)),
+            w * i64::from(self.gain(i, false)),
+        )
+    }
+
+    /// The state of channel `i`.
+    pub fn voice(&self, i: usize) -> PsgVoice {
+        let i = i % 6;
+        let c = &self.ch[i];
+        let mut wave_id = 17u32;
+        for w in c.wave {
+            wave_id = wave_id.wrapping_mul(31).wrapping_add(u32::from(w));
+        }
+        PsgVoice {
+            on: c.on,
+            direct: c.dda,
+            noise: i >= 4 && c.noise_enable,
+            frequency: c.frequency,
+            amplitude: c.amplitude,
+            gain: (self.gain(i, true), self.gain(i, false)),
+            wave_id: wave_id & 0x7FFF_FFFF,
+            word: self.word(i),
+            lfo: self.lfo_active() && i < 2,
+        }
+    }
+
+    /// The sample `back` steps before the newest of a channel's scope.
+    pub fn scope_sample(&self, channel: usize, back: usize) -> i16 {
+        self.scope.get(channel % 6, back)
+    }
+
     fn mix(&self) -> (i32, i32) {
         let (mut l, mut r) = (0i64, 0i64);
         for i in 0..6 {
@@ -283,6 +402,17 @@ impl Psg {
             for c in &self.ch {
                 step = step.min(u64::from(c.wave_left.max(1)));
                 step = step.min(u64::from(c.noise_left.max(1)));
+            }
+            self.scope_acc += step * SCOPE_HZ;
+            let n = self.scope_acc / TICK_HZ;
+            self.scope_acc %= TICK_HZ;
+            if n > 0 {
+                let mut held = [0i16; 6];
+                for (c, h) in held.iter_mut().enumerate() {
+                    let (l, r) = self.contribution(c);
+                    *h = ((l + r) / 2 >> 6).clamp(-32768, 32767) as i16;
+                }
+                self.scope.push(held, n);
             }
             done += step;
             let step = step as u32;

@@ -14,7 +14,7 @@ use oscilla_hes::Hes;
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 
 use crate::cpu::{Bus, Cpu};
-use crate::psg::Psg;
+use crate::psg::{Psg, PsgVoice, SCOPE_HZ};
 
 /// Master clocks in one second.
 pub const UNIT: u64 = 21_477_273;
@@ -355,6 +355,29 @@ impl Machine {
     /// Time run so far in seconds of 44,100 samples, for display.
     pub fn samples(&self) -> u64 {
         self.io.now * 44_100 / UNIT
+    }
+
+    /// What a channel is doing.
+    pub fn voice_info(&self, channel: usize) -> PsgVoice {
+        self.io.psg.voice(channel)
+    }
+
+    /// Fills `out` with the last `out.len()` frames that a channel put out, at
+    /// the machine's output rate, as floats within -1 to 1, oldest first. The
+    /// channel's amplitude and balance are in it and the mask and the main
+    /// level are not, so a muted channel still shows. The generator keeps 4,096
+    /// samples of 44,100 Hz (93 ms), and frames that reach further back are 0.
+    pub fn scope(&self, channel: usize, out: &mut [f32]) {
+        let ratio = SCOPE_HZ as f64 / f64::from(self.io.out.rate());
+        let n = out.len();
+        for (k, o) in out.iter_mut().enumerate() {
+            let back = (n - 1 - k) as f64 * ratio;
+            let i = back as usize;
+            let frac = back - i as f64;
+            let a = f64::from(self.io.psg.scope_sample(channel, i));
+            let b = f64::from(self.io.psg.scope_sample(channel, i + 1));
+            *o = ((a + (b - a) * frac) / 32768.0) as f32;
+        }
     }
 
     /// Chooses the channels that reach the output: bit 0 is channel 1.

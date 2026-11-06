@@ -98,6 +98,75 @@ uint64_t cpce_channel_mask(const cpce_machine *machine);
 void cpce_channel_levels_get(const cpce_machine *machine, int32_t out[6]);
 
 /*
+ * What a channel is doing, for a display. Call these on the render thread,
+ * right after a render, and copy the result out; like every machine call they
+ * must not run while another thread renders. They do nothing inside an
+ * observer callback. The layout is the same in every core's header, so a
+ * viewer can treat the cores alike. The fields:
+ *
+ *   active          1 while the channel is on and its gain is above 0
+ *   key_on          1 while the channel's on bit is set
+ *   kind            0 for a waveform, 1 for noise (channels 5 and 6), 2 for
+ *                   direct D/A mode (the program writes the samples)
+ *   instrument      a number that is the same for equal waveforms (a
+ *                   non-negative hash of the 32 words), -1 for noise and
+ *                   direct D/A mode
+ *   frequency_hz    the pitch of the waveform: 3579545 / (32 * F) for the
+ *                   12-bit frequency F (0 reads as 4096), 0 for noise and
+ *                   direct D/A mode. The low frequency oscillator's change to
+ *                   channel 1 is not in it.
+ *   volume          0 to 1: the larger of the two gains (main level, balance
+ *                   and the channel's amplitude, from the sound generator
+ *                   manual's steps of 1.5 and 3 dB)
+ *   pan             -1 left to +1 right, from the two gains
+ *   envelope        -1: the chip has no envelope
+ *   left, right     the two gains, 0 to 1
+ *   envelope_phase  0
+ *   pitch_modulated 1 for channel 1 or 2 while the oscillator runs
+ *   echo, ended     0
+ *   mask_bit        the bit of the channel mask that mutes this channel
+ */
+typedef struct {
+    int32_t active;
+    int32_t key_on;
+    int32_t kind;
+    int32_t instrument;
+    float frequency_hz;
+    float volume;
+    float pan;
+    float envelope;
+    float left;
+    float right;
+    int32_t envelope_phase;
+    int32_t pitch_modulated;
+    int32_t echo;
+    int32_t ended;
+    int32_t mask_bit;
+    int32_t reserved[3];
+} cpce_voice;
+
+/* The number of channels: 6. */
+int cpce_voice_count(const cpce_machine *machine);
+
+/* Writes at most `max` channels and returns how many. */
+int cpce_voices_get(const cpce_machine *machine, cpce_voice *out, int max);
+
+/* "Wave 1" to "Wave 4", "Wave/Noise 5" and "Wave/Noise 6", or NULL for an
+ * index outside 0 to 5. The strings are static. */
+const char *cpce_voice_name(const cpce_machine *machine, int index);
+
+/*
+ * Fills `out` with the last `frames` frames that one channel put out, oldest
+ * first, as floats within -1 to 1 at the machine's output rate. The channel's
+ * amplitude and balance are in it and the mask and the main level are not, and
+ * a muted channel still shows. The machine keeps 4,096 samples of 44,100 Hz
+ * (93 ms), so frames that reach further back are 0. Returns `frames`, or 0 for
+ * a channel outside 0 to 5, a NULL buffer, 0 frames, more than 16,384 frames or
+ * a call from a callback.
+ */
+size_t cpce_scope_get(const cpce_machine *machine, int voice, float *out, size_t frames);
+
+/*
  * Sets the cutoff in Hz of the output high-pass (20 Hz by default). It stands
  * for the console's output coupling. Returns 1 and sets it, or returns 0 and
  * changes nothing for a value outside 0 to 1000 Hz. 0 turns it off.

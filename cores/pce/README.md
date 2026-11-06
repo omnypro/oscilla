@@ -39,6 +39,9 @@ machine holds all of its state and renders the same samples on every run.
 
 - `cpce_set_channel_mask` chooses which of the six channels reach the mix, and
   `cpce_channel_levels_get` reads what each puts out now, for meters.
+  `cpce_voices_get` returns what each channel is doing (its pitch, gains, pan,
+  waveform number and mode), and `cpce_scope_get` returns the last frames that
+  one channel put out, for a display.
 - `cpce_set_observer` sets a callback that hears every store to the sound
   generator, with the selected channel, the register, the value and the time in
   samples of 44,100 Hz. It does not change the sound.
@@ -73,6 +76,7 @@ output and prints the time it took.
   sync, a program that never returns, copies and the channel mask.
 - `observer`: the channel, register, value and time of every store, and no
   change to the sound.
+- `viz`: the state of a channel and its scope.
 - `fuzz`: programs of random bytes run without a panic and render the same
   samples twice.
 

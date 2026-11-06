@@ -106,4 +106,46 @@ struct MachineTests {
         #expect(cpce_samples(m) == 0)
         #expect(Support.render(m, frames: 700) == a)
     }
+
+    @Test func theChannelsReportTheirStateAndShowInTheirScopes() {
+        // Channel 1 as a direct D/A channel at full level and the word 31, and
+        // channel 2 as a waveform channel on with the default waveform.
+        let psg: UInt16 = 0x0800
+        var code: [UInt8] = []
+        code += Support.sta(psg, 0) + Support.sta(psg + 1, 0xFF) + Support.sta(psg + 5, 0xFF)
+        code += Support.sta(psg + 4, 0xDF) + Support.sta(psg + 6, 31)
+        code += Support.sta(psg, 1) + Support.sta(psg + 5, 0xFF) + Support.sta(psg + 4, 0x40)
+        code += Support.sta(psg + 4, 0x00)
+        for i in 0..<32 { code += Support.sta(psg + 6, i < 16 ? 31 : 0) }
+        code += Support.sta(psg + 2, 254) + Support.sta(psg + 3, 0) + Support.sta(psg + 4, 0x9F)
+        code.append(0x60)
+        let m = Support.machine(Support.hes(request: code), song: 0, rate: 44100)
+        defer { cpce_free(m) }
+        _ = cpce_set_highpass_hz(m, 0)
+        _ = Support.render(m, frames: 6000)
+        #expect(cpce_voice_count(m) == 6)
+        var voices = [cpce_voice](repeating: cpce_voice(), count: 6)
+        #expect(cpce_voices_get(m, &voices, 6) == 6)
+        #expect(voices[0].kind == 2 && voices[0].active == 1 && voices[0].instrument == -1)
+        #expect(voices[1].kind == 0 && voices[1].key_on == 1)
+        #expect(abs(voices[1].frequency_hz - 440.45) < 0.1)
+        #expect(voices[1].envelope == -1 && abs(voices[1].pan) < 0.001)
+        #expect(voices[1].instrument >= 0)
+        #expect(voices[2].active == 0 && voices[2].key_on == 0)
+        #expect(voices[4].mask_bit == 4)
+        #expect(String(cString: cpce_voice_name(m, 4)) == "Wave/Noise 5")
+        #expect(cpce_voice_name(m, 6) == nil)
+        cpce_set_channel_mask(m, 0x3D)
+        _ = Support.render(m, frames: 500)
+        var scope = [Float](repeating: 0, count: 2048)
+        #expect(cpce_scope_get(m, 1, &scope, 2048) == 2048)
+        #expect(scope.contains { $0 > 0.1 } && scope.contains { $0 < -0.1 })
+        var idle = [Float](repeating: 1, count: 64)
+        #expect(cpce_scope_get(m, 3, &idle, 64) == 64)
+        #expect(idle.allSatisfy { $0 == 0 })
+        #expect(cpce_scope_get(m, 6, &scope, 64) == 0)
+        #expect(cpce_scope_get(m, 1, nil, 64) == 0)
+        #expect(cpce_scope_get(m, 1, &scope, 20_000) == 0)
+        #expect(cpce_voice_count(nil) == 0)
+    }
 }
