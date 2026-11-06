@@ -16,7 +16,7 @@ const LOWPASS_HZ: f64 = 2000.0;
 const MOD_STEP: [i32; 8] = [0, 1, 2, 4, 0, -4, -2, -1];
 
 /// The master volume as a fraction: 1, 2/3, 2/4 and 2/5.
-const MASTER: [(i32, i32); 4] = [(1, 1), (2, 3), (2, 4), (2, 5)];
+pub(crate) const MASTER: [(i32, i32); 4] = [(1, 1), (2, 3), (2, 4), (2, 5)];
 
 impl Fds {
     /// The filter's share of the old output that remains after one update of

@@ -20,7 +20,7 @@ pub(crate) const DUTY: [[u8; 8]; 4] = [
     [1, 0, 0, 1, 1, 1, 1, 1],
 ];
 
-const TRIANGLE: [u8; 32] = [
+pub(crate) const TRIANGLE: [u8; 32] = [
     15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
     13, 14, 15,
 ];
@@ -307,11 +307,11 @@ impl Pulse {
     }
 
     /// Whether the channel makes no sound whatever the sequencer does.
-    fn silent(&self, channel: usize) -> bool {
+    pub(crate) fn silent(&self, channel: usize) -> bool {
         self.len == 0 || self.period < 8 || self.target(channel) > 0x7FF
     }
 
-    fn volume_out(&self) -> u8 {
+    pub(crate) fn volume_out(&self) -> u8 {
         if self.constant {
             self.volume
         } else {
@@ -424,7 +424,7 @@ impl Vrc6Saw {
 }
 
 impl Triangle {
-    fn gated(&self) -> bool {
+    pub(crate) fn gated(&self) -> bool {
         self.linear == 0 || self.len == 0
     }
 
@@ -881,6 +881,31 @@ impl Machine {
             if te > t {
                 break;
             }
+            // Some events change nothing that a channel puts out: a tick of the
+            // output filter, a step of a noise generator that reaches no
+            // output, a step of the delta channel with no sample bits, a flip
+            // of a 5B tone that is off or silent, a step of the 5B's envelope
+            // that no channel uses and a tick of a halted FDS. Before any other
+            // event the scope takes the samples that are due, while the
+            // channels still hold them.
+            let s5b = &self.apu.s5b.regs;
+            let quiet = match which {
+                4 => self.apu.noise.len == 0,
+                5 => self.apu.dmc.silent && self.apu.dmc.buffer.is_none(),
+                6 => true,
+                10..=12 => {
+                    let c = usize::from(which - 10);
+                    s5b[7] >> c & 1 != 0 || s5b[8 + c] & 0x1F == 0
+                }
+                13 => s5b[7] & 0x38 == 0x38,
+                14 => (s5b[8] | s5b[9] | s5b[10]) & 16 == 0,
+                16 => self.apu.fds.halted,
+                24 => self.apu.noise2.len == 0,
+                _ => false,
+            };
+            if !quiet {
+                self.scope_fill(te);
+            }
             self.apu.time = te;
             match which {
                 0 => self.frame_event(te),
@@ -952,7 +977,13 @@ impl Machine {
                 _ => {}
             }
             self.apu_emit(te);
+            if !quiet {
+                self.scope.stale = true;
+            }
         }
+        self.scope_fill(t);
+        // A store to a register may follow before the next event.
+        self.scope.stale = true;
         self.apu.time = t;
     }
 

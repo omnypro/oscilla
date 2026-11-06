@@ -8,6 +8,7 @@
 
 use crate::apu::{CONSOLE_HIGHPASS_HZ, Highpass, Lowpass, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 use crate::bus::WARN_STALL;
+use crate::scope::Scope;
 use crate::state::*;
 use oscilla_nsf::{Nsf, Region};
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
@@ -70,6 +71,7 @@ impl Machine {
         m.init = nsf.init;
         m.play = nsf.play;
         m.chips = nsf.chips;
+        m.scope = Scope::new(crate::viz::count(m.chips), m.clock);
         m.flags = nsf.flags;
         m.interrupts =
             m.flags & (oscilla_nsf::nsf2::IRQ | oscilla_nsf::nsf2::NON_RETURNING_INIT) != 0;
@@ -137,6 +139,7 @@ impl Machine {
             lp: Lowpass::console(clock),
             channel_mask: ALL_CHANNELS,
             last_change: 0,
+            scope: Scope::new(crate::viz::count(0), clock),
             phase: Phase::Idle,
             song: 0,
             frame: 0,
@@ -174,6 +177,7 @@ impl Machine {
             locked: false,
         };
         self.now = 0;
+        self.scope.restart();
         self.bus = 0;
         self.ram.fill(0);
         self.wram.fill(0);
@@ -490,7 +494,11 @@ impl Machine {
 
     /// Bytes of one copy of the state, as a snapshot holds them.
     pub fn size(&self) -> usize {
-        std::mem::size_of::<Machine>() + 0x800 + 0x2000 + self.out.heap_bytes()
+        std::mem::size_of::<Machine>()
+            + 0x800
+            + 0x2000
+            + self.out.heap_bytes()
+            + self.scope.heap_bytes()
     }
 
     pub fn snapshot(&self) -> Snapshot {

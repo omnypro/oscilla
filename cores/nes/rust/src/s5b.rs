@@ -24,7 +24,7 @@ pub(crate) fn amplitudes() -> [f64; 32] {
 }
 
 impl S5b {
-    fn tone_period(&self, c: usize) -> u64 {
+    pub(crate) fn tone_period(&self, c: usize) -> u64 {
         (u64::from(self.regs[2 * c]) | u64::from(self.regs[2 * c + 1] & 15) << 8).max(1)
     }
 

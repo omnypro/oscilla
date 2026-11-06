@@ -17,7 +17,7 @@ const BIAS: i32 = 8;
 impl N163 {
     /// How many channels are enabled: the top three bits of the last register
     /// plus one, counted down from channel 8.
-    fn channels(&self) -> u8 {
+    pub(crate) fn channels(&self) -> u8 {
         (self.ram[0x7F] >> 4 & 7) + 1
     }
 

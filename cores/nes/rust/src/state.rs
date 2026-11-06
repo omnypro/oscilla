@@ -590,6 +590,9 @@ pub struct Machine {
     /// The channel mask: bit n is channel n.
     pub(crate) channel_mask: u64,
     pub(crate) last_change: u64,
+    /// The recent output of each voice, for a display. A copy of the machine
+    /// starts with an empty ring.
+    pub(crate) scope: crate::scope::Scope,
 
     pub(crate) phase: Phase,
     pub(crate) song: u8,

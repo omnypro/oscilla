@@ -63,6 +63,10 @@ A player has four more groups of calls.
 - `cnes_set_channel_mask` chooses which of the thirty-four channels reach the mix. The mask is 64 bits wide.
   `cnes_channel_levels_get` shows what each channel of the 2A03 outputs, and
   `cnes_expansion_levels_get` shows the expansion chip's, muted or not.
+  `cnes_voices_get` returns what each channel of the file's chips is doing
+  (its pitch, volume, envelope, duty, waveform or patch, and its mask bit), and
+  `cnes_scope_get` returns the last frames that one of them put out, for a
+  display.
 - `cnes_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
   plays. The default is the console's own filter at 90 Hz, and
   `cnes_use_console_highpass` returns to it. `cnes_highpass_hz` reads the
@@ -103,6 +107,8 @@ and prints the time it took.
 - `mmc5`: the MMC5's pulse channels, sample register, multiplier and RAM.
 - `vrc7`: the VRC7's registers, envelope, pitch, low frequency oscillators and mix.
 - `vt02`: the VT02's second generator, output switches, raw PCM and DMA.
+- `viz`: the voices of the chips that a file has, their state and their
+  scopes, and no change to the sound.
 - `player`: the schedule of init and play calls, both consoles, bank
   switching, routines that misbehave, snapshots and the end state.
 - `goldens`: a hash of the samples and of the stores for each of 64 generated

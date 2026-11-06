@@ -16,10 +16,14 @@ mod machine;
 mod mmc5;
 mod n163;
 mod s5b;
+mod scope;
 mod state;
+mod viz;
 mod vrc7;
 
 pub use apu::{CONSOLE_HIGHPASS_HZ, MAX_HIGHPASS_HZ, MIN_HIGHPASS_HZ};
 pub use machine::{EndState, RestoreError, Snapshot};
 pub use oscilla_nsf::Region;
+pub use scope::SCOPE_LEN;
 pub use state::{Machine, NTSC_CLOCK, Observer, PAL_CLOCK};
+pub use viz::{Voice, VoiceKind};

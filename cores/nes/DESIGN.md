@@ -443,6 +443,50 @@ and one for each call of a routine. A callback reads the machine only through
 that machine returns at once with a neutral value, because the render that
 runs the callback holds the machine.
 
+## Visualization
+
+`Machine::voice` reads one channel's registers, counters and envelope. The
+voices follow the order of the channel mask, and only the chips that the header
+names have voices, so each voice carries its mask bit. A pitch is the rate at
+which the channel's own timer, as the events run it, goes through its waveform:
+8 steps of 2 (P + 1) cycles for a 2A03 or MMC5 pulse with the period P, 32
+steps of P + 1 cycles for a triangle, 16 steps of P + 1 cycles for a VRC6 pulse
+and 14 for its saw (P shifted as 0x9003 asks), 32 P cycles for a 5B tone, 2^24
+/ (64 F) updates of 16 cycles for the FDS, 65536 L / F updates of 15 n cycles
+for an N163 channel with a waveform of L samples and n channels enabled, and
+2^19 / (F 2^B) samples of 72 clocks of 3.579545 MHz for the VRC7. The FDS's
+modulation and the VRC7's vibrato are not in the pitch, and `pitch_modulated`
+is set while they move it. A volume is a volume register or an envelope over
+its largest value, and 0 while a counter, an enable bit, a period or sweep
+limit, the VRC6's halt bit or the VT02's output switch keeps the channel
+silent. The 5B's follows its volume curve, the VRC7's is the linear level of
+the carrier's attenuation and the volume register, and the FDS's is the gain
+times the master volume. A wavetable's number is a hash of its samples, so
+equal waveforms have equal numbers. The voice of an N163 channel that is not
+enabled is empty, because its registers may hold waveforms.
+
+The scope keeps the last 4,096 samples of each voice at 44,100 Hz. The channels
+change only at the sound unit's events, so the event loop takes the samples
+that are due before each event that can change a channel, and once at the end
+of each catch-up. The samples hold the values that the channels had until then,
+and the values are worked out again only after an event or a register store
+that can have changed them. A tick of the output filter, a step of a noise
+generator that reaches no output, a step of the delta channel with no bits to
+play, a flip of a 5B tone that is off or silent, a step of an envelope that no
+5B channel uses and a tick of a halted FDS change nothing, and no samples are
+taken before them. A tone or noise sample is the channel's output about the
+middle of its range at its own level, so that a tone swings about 0 and a
+silent channel is 0: a pulse is plus or minus its volume, a triangle twice its
+step less 15, a 5B channel plus or minus its amplitude, an N163 channel its
+last output (its sample less 8, times its volume), the FDS twice its sample
+less 63 times its gain and master volume, and a VRC7 channel its output. A
+triangle that its counters stop is 0, although the chip holds its last step.
+The delta channel and the PCM registers are their levels from 0. The mask does
+not touch the scope. `scope` resamples it to the output rate by linear
+interpolation. The ring is not part of a copy of the machine, which starts with
+an empty one and keeps the clock, so a restore lines the scope up with the
+restored cycle. Reading the voices and the scopes changes nothing in the sound.
+
 ## Snapshots
 
 `snapshot` copies everything a machine is except the observer, the channel

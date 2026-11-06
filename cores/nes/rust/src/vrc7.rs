@@ -23,6 +23,9 @@ pub(crate) const VRC7_GAIN: f64 = 2.32 / 4088.0;
 const MASTER_CYCLES_PER_SAMPLE: u128 = 72;
 const MASTER_HZ: u128 = 3_579_545;
 
+/// The chip's samples in a second.
+pub(crate) const SAMPLE_HZ: f64 = MASTER_HZ as f64 / MASTER_CYCLES_PER_SAMPLE as f64;
+
 /// The envelope generator's range: 127 steps of 0.375 dB, past which the
 /// channel is silent.
 const MAX_ATT: u32 = 127 << 16;
@@ -272,6 +275,25 @@ impl Vrc7 {
             0 => self.custom,
             i => PATCHES[usize::from(i) - 1],
         }
+    }
+
+    /// The carrier of channel `ch`, for a display: its attenuation in steps of
+    /// 0.375 dB (127 when it is silent), its stage (0 attack, 1 decay, 2
+    /// sustain, 3 release) and whether its patch sets the vibrato bit.
+    pub(crate) fn carrier(&self, ch: usize) -> (u32, i32, bool) {
+        let op = &self.ops[ch][1];
+        let steps = if op.state == OFF {
+            127
+        } else {
+            (op.att >> 16).min(127)
+        };
+        let stage = match op.state {
+            DAMP | ATTACK => 0,
+            DECAY => 1,
+            SUSTAIN => 2,
+            _ => 3,
+        };
+        (steps, stage, self.patch(ch)[1] & 0x40 != 0)
     }
 
     /// A store to 0xE000.

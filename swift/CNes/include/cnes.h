@@ -298,6 +298,140 @@ void cnes_expansion_levels_get(const cnes_machine *machine, int32_t out[8]);
 void cnes_set_channel_mask(cnes_machine *machine, uint64_t mask);
 uint64_t cnes_channel_mask(const cnes_machine *machine);
 
+/* ---- Voices and scopes ------------------------------------------------- */
+
+/*
+ * What each voice is doing, for a display. The voices are the channels of the
+ * chips that the file has, in the order of the channel mask, and only for the
+ * chips that the header's `chips` byte names: the 2A03's pulse 1, pulse 2,
+ * triangle, noise and DMC (every file has them), then the VRC6's pulse 1,
+ * pulse 2 and saw, the Sunsoft 5B's three channels, the Namco 163's channels
+ * 1 to 8, the FDS's channel, the MMC5's pulse 1, pulse 2 and sample register,
+ * the VRC7's six channels, and the VT02's pulse 3, pulse 4, triangle 2,
+ * noise 2 and raw PCM. A voice's index is not its mask bit when a chip before
+ * it is missing, so mask_bit gives the bit. Call these on the render thread,
+ * right after a render, and copy the result out; like every machine call they
+ * must not run while another thread renders. They do nothing inside an
+ * observer callback. The layout is the same in every core's header, so a
+ * viewer can treat the cores alike. The fields:
+ *
+ *   active          1 while the voice makes sound: its volume is above 0 (for
+ *                   the VRC7, above -46 dB). A sample voice is active while
+ *                   the DMC plays sample bits or has bytes left, or while the
+ *                   MMC5's or the VT02's PCM level is not 0.
+ *   key_on          1 while the channel is on as its chip defines it: a
+ *                   length counter above 0 (the 2A03, MMC5 and VT02 pulses and
+ *                   noise channels, and the DMC's bytes left), the length and
+ *                   linear counters both above 0 (the triangles), the enable
+ *                   bit (VRC6), a frequency above 0 in an enabled channel
+ *                   (N163), the wave running at a frequency above 0 (FDS),
+ *                   the key bit (VRC7), the envelope, or a volume above 0
+ *                   with the tone or the noise on (5B), a level above 0 (MMC5
+ *                   PCM), the raw PCM mode with bytes left (VT02 PCM)
+ *   kind            0 tone (the pulses, the triangles, the saw, the 5B's
+ *                   channels and the wavetables of the N163 and the FDS),
+ *                   1 noise (the noise channels, and a 5B channel with its
+ *                   noise on and its tone off), 2 sample (the DMC and the
+ *                   MMC5's and the VT02's PCM), 3 FM (the VRC7). The core
+ *                   has no voice of kind 4 (drum).
+ *   instrument      the duty that sounds for a 2A03, MMC5 or VT02 pulse (0
+ *                   12.5%, 1 25%, 2 50%, 3 75%; the VT02 swaps the register's
+ *                   25% and 50% settings, and the field gives the one that
+ *                   sounds); the duty setting of a VRC6 pulse (0 to 7, a
+ *                   sixteenth more each), or 8 in the mode that ignores the
+ *                   duty; the noise mode, 0 or 1; for the N163 and the FDS a
+ *                   non-negative number that is the same for equal waveforms;
+ *                   the VRC7's patch (0 the custom patch, 1 to 15 the built-in
+ *                   ones); -1 for the others
+ *   frequency_hz    the pitch that the period register names, from the CPU
+ *                   clock of the machine's region (CPU below): CPU / (16 (P +
+ *                   1)) for a 2A03, MMC5 or VT02 pulse, CPU / (32 (P + 1)) for
+ *                   a triangle, CPU / (16 (P' + 1)) for a VRC6 pulse and CPU /
+ *                   (14 (P' + 1)) for the saw, where P' is the period shifted
+ *                   right as 0x9003 asks, CPU / (32 P) for a 5B tone (a period
+ *                   of 0 reads as 1), CPU F / (15 n L 65536) for an N163
+ *                   channel with n channels enabled and a waveform of L
+ *                   samples, CPU F / 4194304 for the FDS (the modulation
+ *                   unit's change is not in it), and F 2^B 49716 / 2^19 for
+ *                   the VRC7 on both regions, because its clock is its own.
+ *                   0 for noise, samples and a 5B channel with its tone off.
+ *   volume          0 to 1: the volume register or the envelope over its
+ *                   largest value, and 0 while the chip keeps the channel
+ *                   silent (a length or linear counter at 0, a pulse period
+ *                   below 8 or a sweep target past 0x7FF, an enable bit
+ *                   clear, the VRC6's halt bit, the VT02's switch of the
+ *                   channel's generator off). A triangle's is 1 or 0. The
+ *                   5B's follows its volume curve. The FDS's is the gain
+ *                   times the master volume. The VRC7's is the carrier's
+ *                   envelope times the channel's volume register, each turned
+ *                   from decibels into a linear level. A VRC6 saw's is its
+ *                   rate over 42, the rate past which the accumulator
+ *                   overflows. A sample voice's is its level over its full
+ *                   scale (127 for the DMC, 255 for PCM).
+ *   pan             0: the machine is mono
+ *   envelope        0 to 1 while the volume comes from an envelope generator:
+ *                   the decay level of a 2A03, MMC5 or VT02 pulse or noise
+ *                   channel whose constant-volume bit is clear, the FDS's gain
+ *                   while its volume envelope runs, the 5B's envelope for a
+ *                   channel that uses it, and the VRC7 carrier's envelope.
+ *                   -1 otherwise.
+ *   left, right     the volume
+ *   envelope_phase  the VRC7 carrier's stage: 0 attack, 1 decay, 2 sustain,
+ *                   3 release. 0 for the other chips, which have no stages.
+ *   pitch_modulated 1 while something besides the period register moves the
+ *                   pitch: the FDS's modulation unit (its gain is above 0 and
+ *                   it runs or holds a counter that is not 0), or the vibrato
+ *                   bit of a VRC7 carrier's patch
+ *   echo, ended     0
+ *   mask_bit        the bit of the channel mask that mutes this voice
+ */
+typedef struct {
+    int32_t active;
+    int32_t key_on;
+    int32_t kind;
+    int32_t instrument;
+    float frequency_hz;
+    float volume;
+    float pan;
+    float envelope;
+    float left;
+    float right;
+    int32_t envelope_phase;
+    int32_t pitch_modulated;
+    int32_t echo;
+    int32_t ended;
+    int32_t mask_bit;
+    int32_t reserved[3];
+} cnes_voice;
+
+/* The number of voices that the file's chips have: 5 and the channels of each
+ * expansion chip that the header names. */
+int cnes_voice_count(const cnes_machine *machine);
+
+/* Writes at most `max` voices and returns how many. */
+int cnes_voices_get(const cnes_machine *machine, cnes_voice *out, int max);
+
+/* "Pulse 1", "Pulse 2", "Triangle", "Noise", "DMC", "VRC6 Pulse 1", "VRC6
+ * Saw", "5B 1", "N163 1", "FDS", "MMC5 Pulse 1", "MMC5 PCM", "VRC7 1", "VT02
+ * Pulse 3", "VT02 Triangle 2", "VT02 Noise 2", "VT02 PCM" and the rest in the
+ * same pattern, or NULL for an index outside the voices. The string lives as
+ * long as the machine. */
+const char *cnes_voice_name(const cnes_machine *machine, int index);
+
+/*
+ * Fills `out` with the last `frames` frames that one voice put out, oldest
+ * first, as floats within -1 to 1 at the machine's output rate. A tone or
+ * noise voice swings about 0 at its own level and is 0 while the chip keeps
+ * it silent; a triangle that its counters stopped is 0 too, although the chip
+ * holds its last step. A sample voice is its level from 0. The channel mask
+ * and the mixer are not in it, so a muted voice still shows. The machine keeps
+ * 4,096 samples of 44,100 Hz (93 ms), each the channels' state at its moment,
+ * so frames that reach further back are 0. Returns `frames`, or 0 for a voice
+ * outside the voices, a NULL buffer, 0 frames, more than 16,384 frames or a
+ * call from a callback.
+ */
+size_t cnes_scope_get(const cnes_machine *machine, int voice, float *out, size_t frames);
+
 /* ---- Bass cutoff ------------------------------------------------------- */
 
 /*
