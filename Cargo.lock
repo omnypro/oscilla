@@ -96,6 +96,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oscilla-hes"
+version = "0.0.0"
+dependencies = [
+ "oscilla-resample",
+]
+
+[[package]]
 name = "oscilla-nes"
 version = "0.0.0"
 dependencies = [
