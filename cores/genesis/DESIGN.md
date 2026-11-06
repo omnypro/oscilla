@@ -30,6 +30,34 @@ waits, the data blocks of type 0 (the YM2612's PCM bank), the 0x8n DAC commands,
 the seek of 0xE0 and the DAC stream commands. It reads and skips every other
 command by its length.
 
+## YM2413
+
+`ym2413.rs` is the OPLL of the Master System and the MSX: nine channels of
+two operators, one user tone (registers 0x00 to 0x07), 15 built-in instruments
+and a rhythm mode. A file names it with the clock word at 0x10 (3.579545 MHz)
+and writes it with command 0x51, or 0xA1 for a second chip. The chip makes one
+sample for every 72 clocks. The machine mixes it with the other chips at full
+level.
+
+Sources: the manufacturer's application manual and datasheet give the
+registers, the envelope and key scale tables, the step sizes, the slots of the
+rhythm sounds and the output of the rhythm sounds twice. The formulas of the
+log-sine and exponential tables are the YM3812 decap report's. The depths of
+the low frequency oscillators come from a hardware note on the VRC7. The 15
+instruments and the three rhythm patches are the community wiki's table, which
+was measured on the chip and checked against a die shot of a related part (the
+wiki calls it "presumably a YM2413B"). The engine follows the VRC7 core of
+`cores/nes`, which is the same chip with six channels, other instruments and no
+rhythm mode.
+
+Rhythm mode (register 0x0E bit 5) makes channels 7 to 9 the five drums. The
+bass drum is an ordinary two-operator channel with its own patch, key bit
+(0x0E bit 4) and volume (register 0x36). The snare drum, hi-hat, tom-tom and
+top cymbal need the phase of their operators, which the documents do not give:
+they say that a noise oscillator and the frequencies of channels 8 and 9
+(in a ratio of 3 to 1) make it. The core plays those four silent. Register
+stores for them are kept.
+
 ## GYM
 
 `formats/gym` reads a GYM file and writes the VGM file with the same commands.
@@ -181,6 +209,15 @@ These choices rest on documents that do not say, or on a single measurement.
   last byte of the block, less the base), and the order of a stream write and
   a command at the same instant (the write goes first). The data of a stream
   for another chip, and a stream for the SN76489, are ignored.
+- YM2413: the phase of the snare drum, hi-hat, tom-tom and top cymbal (not
+  played). The level of a YM2413 channel is set to one YM2612 channel's, and
+  the SN76489 beside a YM2413 takes the level that it has beside an FM chip in
+  libgme. No reference player renders a YM2413, so neither is a fit. Whether a
+  rhythm-mode switch in the middle of a note should cut the notes of channels
+  7 to 9 (the core cuts them).
+- YM2413: the instrument table is from a source that calls the die shot behind
+  it "presumably" of a YM2413B, so a few bytes could differ on the older
+  YM2413.
 - GYM: that a byte above 3 is an error and not something to skip. The two
   descriptions of the format that the core was written from list four commands
   and no others.

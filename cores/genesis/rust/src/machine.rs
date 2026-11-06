@@ -9,10 +9,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
-use oscilla_vgm::{Banks, Command, SN76489, Vgm, YM2612};
+use oscilla_vgm::{Banks, Command, SN76489, Vgm, YM2413, YM2612};
 
 use crate::psg::Psg;
 use crate::stream::{self, Stream};
+use crate::ym2413::{self, Ym2413};
 use crate::ym2612::Ym2612;
 
 /// Time units in one second.
@@ -58,6 +59,17 @@ const FM_GAIN: i32 = 33;
 const PSG_GAIN_ALONE: i32 = 220;
 const PSG_GAIN_WITH_FM: i32 = 89;
 
+/// The size of a YM2413 channel's value in the output, as a ratio. A full
+/// channel is about 4088 units, and 5/2 puts its peak at 0.249 of full scale,
+/// which is one YM2612 channel's 0.258 within 4 percent. No reference player
+/// renders a YM2413 (libgme refuses the file), and the documents give no level
+/// against the YM2612, so this is a choice and not a fit.
+const OPLL_GAIN: (i32, i32) = (5, 2);
+
+/// The SN76489's level in 256ths with a YM2413 and no YM2612: the relation that
+/// libgme has for any FM chip in the header.
+const PSG_GAIN_WITH_OPLL: i32 = 89;
+
 /// The default cutoff of the output high-pass. The documents give no value for
 /// the console's output coupling.
 const DEFAULT_HIGHPASS_HZ: f64 = 20.0;
@@ -71,6 +83,15 @@ struct FmSlot {
     chip: Ym2612,
     clock: u64,
     /// Samples of the chip (input clock / 144) run so far.
+    samples: u64,
+    level: (i32, i32),
+}
+
+#[derive(Clone)]
+struct OpllSlot {
+    chip: Ym2413,
+    clock: u64,
+    /// Samples of the chip (input clock / 72) run so far.
     samples: u64,
     level: (i32, i32),
 }
@@ -108,6 +129,7 @@ pub struct Machine {
     /// The first and second SN76489 and YM2612 of the file.
     psg: [Option<PsgSlot>; 2],
     fm: [Option<FmSlot>; 2],
+    opll: [Option<OpllSlot>; 2],
     banks: Arc<Banks>,
     /// The read position in the PCM data bank for the YM2612's DAC.
     pcm_at: usize,
@@ -159,13 +181,26 @@ impl Machine {
                 level: (0, 0),
             })
         });
-        if psg.iter().all(Option::is_none) && fm.iter().all(Option::is_none) {
+        let opll_clock = vgm.chip(YM2413).map_or([None; 2], fm_clocks);
+        let opll = opll_clock.map(|clock| {
+            clock.map(|clock| OpllSlot {
+                chip: Ym2413::new(),
+                clock: u64::from(clock),
+                samples: 0,
+                level: (0, 0),
+            })
+        });
+        if psg.iter().all(Option::is_none)
+            && fm.iter().all(Option::is_none)
+            && opll.iter().all(Option::is_none)
+        {
             return Err(MachineError::NoChip);
         }
         let m = i32::from(vgm.volume_modifier);
         let m = if m == -63 { -64 } else { m };
         let (q, r) = (m.div_euclid(32), m.rem_euclid(32));
         let fm_present = fm.iter().any(Option::is_some);
+        let opll_present = opll.iter().any(Option::is_some);
         let mut machine = Machine {
             pos: vgm.data_at(),
             wait_left: 0,
@@ -175,6 +210,7 @@ impl Machine {
             waited_since_loop: false,
             psg,
             fm,
+            opll,
             banks: Arc::new(vgm.banks()),
             vgm,
             pcm_at: 0,
@@ -185,6 +221,8 @@ impl Machine {
             shift: (BLEP_SHIFT as i32 + 16 - q) as u32,
             psg_gain: if fm_present {
                 PSG_GAIN_WITH_FM
+            } else if opll_present {
+                PSG_GAIN_WITH_OPLL
             } else {
                 PSG_GAIN_ALONE
             },
@@ -245,7 +283,9 @@ impl Machine {
     /// Chooses the channels that reach the mix: bits 0 to 5 are the YM2612's
     /// channels 1 to 6 and bits 6 to 9 the SN76489's channels 0 to 3. A file
     /// with a second YM2612 has its channels at bits 10 to 15 and a file with
-    /// a second SN76489 has its channels at bits 16 to 19.
+    /// a second SN76489 has its channels at bits 16 to 19. A file with a
+    /// YM2413 has its nine channels at bits 20 to 28 and a second one at bits
+    /// 29 to 37.
     pub fn set_channel_mask(&mut self, mask: u64) {
         self.set_fm_mask((mask & 0x3F) as u8);
         self.set_psg_mask(((mask >> 6) & 0x0F) as u8);
@@ -254,6 +294,12 @@ impl Machine {
         }
         if let Some(p) = self.psg[1].as_mut() {
             p.chip.set_mask(((mask >> 16) & 0x0F) as u8);
+        }
+        if let Some(o) = self.opll[0].as_mut() {
+            o.chip.set_mask(((mask >> 20) & 0x1FF) as u16);
+        }
+        if let Some(o) = self.opll[1].as_mut() {
+            o.chip.set_mask(((mask >> 29) & 0x1FF) as u16);
         }
         self.sync();
     }
@@ -269,7 +315,17 @@ impl Machine {
                 .as_ref()
                 .map_or(absent, |p| u64::from(p.chip.mask()))
         };
-        fm(0, 0x3F) | psg(0, 0x0F) << 6 | fm(1, 0) << 10 | psg(1, 0) << 16
+        let opll = |i: usize| {
+            self.opll[i]
+                .as_ref()
+                .map_or(0, |o| u64::from(o.chip.mask()))
+        };
+        fm(0, 0x3F)
+            | psg(0, 0x0F) << 6
+            | fm(1, 0) << 10
+            | psg(1, 0) << 16
+            | opll(0) << 20
+            | opll(1) << 29
     }
 
     /// What each channel of the first chips puts out now, before the mask,
@@ -312,6 +368,7 @@ impl Machine {
             .flatten()
             .map(|p| p.seen)
             .chain(self.fm.iter().flatten().map(|f| f.level))
+            .chain(self.opll.iter().flatten().map(|o| o.level))
         {
             sum = (sum.0 + l, sum.1 + r);
         }
@@ -363,13 +420,27 @@ impl Machine {
                 events.push((at, 2 + i, l * FM_GAIN, r * FM_GAIN));
             }
         }
+        for (i, slot) in self.opll.iter_mut().enumerate() {
+            let Some(o) = slot.as_mut() else { continue };
+            let per_sample = u128::from(ym2413::CYCLES_PER_SAMPLE) * u128::from(UNIT);
+            let want = (u128::from(to) * u128::from(o.clock) / per_sample) as u64;
+            while o.samples < want {
+                o.samples += 1;
+                let v = o.chip.sample() * OPLL_GAIN.0 / OPLL_GAIN.1;
+                let at = (u128::from(o.samples) * per_sample / u128::from(o.clock)) as u64;
+                events.push((at, 4 + i, v, v));
+            }
+        }
         events.sort_by_key(|e| (e.0, e.1));
-        let mut levels = [(0, 0); 4];
+        let mut levels = [(0, 0); 6];
         for (i, p) in self.psg.iter().enumerate() {
             levels[i] = p.as_ref().map_or((0, 0), |p| p.seen);
         }
         for (i, f) in self.fm.iter().enumerate() {
             levels[2 + i] = f.as_ref().map_or((0, 0), |f| f.level);
+        }
+        for (i, o) in self.opll.iter().enumerate() {
+            levels[4 + i] = o.as_ref().map_or((0, 0), |o| o.level);
         }
         for (at, source, l, r) in events {
             levels[source] = (l, r);
@@ -386,6 +457,11 @@ impl Machine {
         for (i, f) in self.fm.iter_mut().enumerate() {
             if let Some(f) = f.as_mut() {
                 f.level = levels[2 + i];
+            }
+        }
+        for (i, o) in self.opll.iter_mut().enumerate() {
+            if let Some(o) = o.as_mut() {
+                o.level = levels[4 + i];
             }
         }
         self.now = to;
@@ -463,6 +539,16 @@ impl Machine {
                         self.wait_left = u64::from(wait) * PER_SAMPLE;
                         self.waited_since_loop = true;
                         return;
+                    }
+                }
+                Command::Ym2413 {
+                    second,
+                    register,
+                    value,
+                } => {
+                    self.pos = cursor.position();
+                    if let Some(o) = self.opll[usize::from(second)].as_mut() {
+                        o.chip.write(register, value);
                     }
                 }
                 Command::Seek(at) => {

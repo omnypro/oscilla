@@ -255,7 +255,7 @@ text_getter!(cgenesis_image_date, date);
 text_getter!(cgenesis_image_ripper, ripper);
 text_getter!(cgenesis_image_notes, notes);
 
-/// Bit 0 is the SN76489 and bit 1 the YM2612.
+/// Bit 0 is the SN76489, bit 1 the YM2612 and bit 2 the YM2413.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_image_chips(image: *const CImage) -> u32 {
     if image.is_null() {
@@ -264,6 +264,7 @@ pub unsafe extern "C" fn cgenesis_image_chips(image: *const CImage) -> u32 {
     let v = &unsafe { &*image }.vgm;
     u32::from(v.chip(oscilla_vgm::SN76489).is_some())
         | u32::from(v.chip(oscilla_vgm::YM2612).is_some()) << 1
+        | u32::from(v.chip(oscilla_vgm::YM2413).is_some()) << 2
 }
 
 #[unsafe(no_mangle)]

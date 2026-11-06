@@ -149,4 +149,25 @@ struct MachineTests {
         cgenesis_reset(m)
         #expect(cgenesis_highpass_hz(m) == 55)
     }
+
+    @Test func aYm2413FilePlaysAndHasItsOwnMaskBits() {
+        // A user tone: one sine carrier at about 440 Hz on channel 1.
+        var stream: [UInt8] = []
+        let tone: [UInt8] = [0x21, 0x21, 0x3F, 0x00, 0xF0, 0xF0, 0x0F, 0x0F]
+        for (i, v) in tone.enumerated() { stream += [0x51, UInt8(i), v] }
+        stream += [0x51, 0x30, 0x00, 0x51, 0x10, 0x22, 0x51, 0x20, 0x19] + Support.wait(44_100)
+        var bytes = Support.vgm(stream: stream, psg: false, fm: false)
+        bytes.replaceSubrange(0x10..<0x14, with: [0x99, 0x9E, 0x36, 0x00])
+        let image = Support.image(bytes)
+        defer { cgenesis_image_free(image) }
+        #expect(cgenesis_image_chips(image) == 4)
+        let m = cgenesis_new(image, 44_100)!
+        defer { cgenesis_free(m) }
+        _ = cgenesis_set_highpass_hz(m, 0)
+        #expect(cgenesis_channel_mask(m) == 0x3FF | 0x1FF << 20)
+        #expect(Support.rms(Support.render(m, frames: 22_050)) > 0.02)
+        cgenesis_set_channel_mask(m, 0x3FF)
+        _ = Support.render(m, frames: 64)
+        #expect(Support.rms(Support.render(m, frames: 4410)) < 1e-6)
+    }
 }

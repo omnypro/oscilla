@@ -24,8 +24,9 @@ extern "C" {
  * cgenesis_image_loop_count says how many the file asks for. A song with no
  * loop ends, and the machine then renders silence.
  *
- * Only the SN76489 and the YM2612 play. A file that names other chips is
- * parsed, and those chips are silent.
+ * Only the SN76489, the YM2612 and the YM2413 play. A file that names other
+ * chips is parsed, and those chips are silent. The YM2413's rhythm mode plays
+ * the bass drum only.
  */
 
 /* ---- Images ------------------------------------------------------------ */
@@ -89,7 +90,7 @@ const char *cgenesis_image_date(const cgenesis_image *image);
 const char *cgenesis_image_ripper(const cgenesis_image *image);
 const char *cgenesis_image_notes(const cgenesis_image *image);
 
-/* The chips that the file drives and the machine plays: bit 0 is the SN76489, bit 1 the YM2612. */
+/* The chips that the file drives and the machine plays: bit 0 is the SN76489, bit 1 the YM2612, bit 2 the YM2413. */
 uint32_t cgenesis_image_chips(const cgenesis_image *image);
 
 /*
@@ -162,8 +163,10 @@ int cgenesis_end_state_get(const cgenesis_machine *machine);
  * channels 1 to 6 (channel 6 also carries the DAC), and bits 6 to 9 are the
  * SN76489's three tone channels and its noise channel. The default is 0x3FF.
  * A file with a second YM2612 has its channels at bits 10 to 15 and a file with
- * a second SN76489 at bits 16 to 19, and the default then includes them. Bits
- * for a chip that the file lacks are ignored.
+ * a second SN76489 at bits 16 to 19, and the default then includes them. A file
+ * with a YM2413 has its nine channels at bits 20 to 28 and a second YM2413 at
+ * bits 29 to 37 (in rhythm mode bit 26 is the bass drum). Bits for a chip that
+ * the file lacks are ignored.
  * A muted channel keeps running.
  */
 void cgenesis_set_channel_mask(cgenesis_machine *machine, uint64_t mask);
@@ -177,7 +180,7 @@ uint64_t cgenesis_channel_mask(const cgenesis_machine *machine);
  * is 256, and channel 6 shows the DAC sample while the DAC is on). A PSG value
  * is signed and lies within -8192 to 8192, and is 0 at attenuation 15. A muted
  * channel still shows its level. A chip that the file lacks reads as zeros,
- * and a second chip has no entries.
+ * a second chip has no entries, and neither has a YM2413.
  */
 void cgenesis_channel_levels_get(const cgenesis_machine *machine, int32_t out[10]);
 

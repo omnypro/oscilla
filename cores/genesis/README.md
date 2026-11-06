@@ -5,6 +5,10 @@ the log of register writes, drives a YM2612 and an SN76489 with them on one
 timeline, and returns the sound as interleaved stereo at the rate the caller
 chooses. Nothing is drawn, and nothing reads input.
 
+It also plays the YM2413 (OPLL) of the Master System and the MSX: nine FM
+channels, the 15 built-in instruments, the user tone and the bass drum of the
+rhythm mode.
+
 It covers the YM2612 (six FM channels of four operators, the envelope generator
 with SSG-EG, the LFO, the timers, CSM mode and the DAC on channel 6) and the
 SN76489 (three tones, noise, the Game Gear stereo write).
@@ -12,6 +16,7 @@ SN76489 (three tones, noise, the Game Gear stereo write).
 ## Layout
 
 - `rust/src`: `ym2612.rs` and `eg.rs` (the FM chip and its envelope generator),
+  `ym2413.rs` (the OPLL),
   `psg.rs` (the SN76489), `machine.rs` (the public type, the scheduler and the
   output).
 - `rust/tests`: the Rust tests.
@@ -84,6 +89,8 @@ times. `--bench` renders without output and prints the time it took.
   volume modifier.
 - `goldens`: a hash of the samples for each of 32 generated files. A change to
   the sound changes a hash.
+- `ym2413`: the user tone's pitch, the built-in instruments, the second chip,
+  the mask, the bass drum and random register writes.
 - `gym`: a GYM log renders the same samples as the VGM file with the same
   commands, a PAL log runs at 50 frames a second, and a loop comes round.
 - `fuzz`: files of random bytes run without a panic and render the same samples
@@ -98,9 +105,9 @@ The levels and the modulation depth were fitted to renders from libgme of 12
 songs and 12 synthetic files. DESIGN.md lists the fits, the approximations and
 the unknowns.
 
-Not emulated: other sound chips that a VGM file can name (the YM2413 and the
-rest) and the analog stages after the chips. The output has a high-pass and no
-low-pass.
+Not emulated: other sound chips that a VGM file can name, the snare drum,
+hi-hat, tom-tom and top cymbal of the YM2413's rhythm mode, and the analog
+stages after the chips. The output has a high-pass and no low-pass.
 
 ## References
 
@@ -114,3 +121,7 @@ Written from public documentation.
 - The Texas Instruments SN76489 documents and the SN76489 notes of SMS Power.
 - The formulas of the Yamaha OPL log-sine and exponent tables, which the
   YM2612 shares.
+- Yamaha's YM2413 application manual and datasheet, and the Silicon Prawn page
+  on the Yamaha OPL2, which lists the YM2413's built-in patches as measured on
+  the chip.
+- Two public descriptions of the GYM format.

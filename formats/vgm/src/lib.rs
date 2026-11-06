@@ -80,6 +80,7 @@ const CHIPS: [(usize, &str); 41] = [
 ];
 
 pub const SN76489: u8 = 0;
+pub const YM2413: u8 = 1;
 pub const YM2612: u8 = 2;
 
 /// A chip that the header names.
@@ -478,6 +479,11 @@ pub enum Command {
         register: u8,
         value: u8,
     },
+    Ym2413 {
+        second: bool,
+        register: u8,
+        value: u8,
+    },
     /// Write the next byte of the data bank to register 0x2A of the first
     /// YM2612, then wait this many samples.
     Ym2612Dac {
@@ -590,6 +596,14 @@ impl Cursor<'_> {
                 Command::Psg {
                     second: op == 0x30,
                     value,
+                }
+            }
+            0x51 | 0xA1 => {
+                let d = self.take(2)?;
+                Command::Ym2413 {
+                    second: op == 0xA1,
+                    register: d[0],
+                    value: d[1],
                 }
             }
             0x52 | 0x53 | 0xA2 | 0xA3 => {
@@ -923,6 +937,26 @@ mod tests {
         let mut none = file(0x171, &[0x66]);
         set(&mut none, 0x20, 99);
         assert_eq!(Vgm::parse(&none).unwrap().loop_samples, 0);
+    }
+
+    #[test]
+    fn the_ym2413_commands_decode_for_both_chips() {
+        let v = Vgm::parse(&file(0x171, &[0x51, 0x30, 0x1F, 0xA1, 0x0E, 0x20, 0x66])).unwrap();
+        assert_eq!(
+            commands(&v),
+            [
+                Command::Ym2413 {
+                    second: false,
+                    register: 0x30,
+                    value: 0x1F
+                },
+                Command::Ym2413 {
+                    second: true,
+                    register: 0x0E,
+                    value: 0x20
+                },
+            ]
+        );
     }
 
     #[test]
