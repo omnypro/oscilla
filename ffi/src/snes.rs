@@ -537,10 +537,11 @@ pub struct CVoice {
     pitch_modulated: c_int,
     echo: c_int,
     ended: c_int,
-    reserved: [c_int; 4],
+    mask_bit: c_int,
+    reserved: [c_int; 3],
 }
 
-fn make_voice(v: oscilla_snes::VoiceInfo) -> CVoice {
+fn make_voice(index: usize, v: oscilla_snes::VoiceInfo) -> CVoice {
     let envelope = v.envelope as f32 / 2047.0;
     let (l, r) = (f32::from(v.volume.0) / 128.0, f32::from(v.volume.1) / 128.0);
     let loud = l.abs().max(r.abs());
@@ -567,7 +568,8 @@ fn make_voice(v: oscilla_snes::VoiceInfo) -> CVoice {
         pitch_modulated: c_int::from(v.pitch_modulated),
         echo: c_int::from(v.echo),
         ended: c_int::from(v.ended),
-        reserved: [0; 4],
+        mask_bit: index as c_int,
+        reserved: [0; 3],
     }
 }
 
@@ -592,7 +594,7 @@ pub unsafe extern "C" fn csnes_voices_get(
     let m = unsafe { &(*machine).machine };
     let n = max.min(8);
     for i in 0..n {
-        unsafe { *out.add(i as usize) = make_voice(m.voice_info(i as usize)) };
+        unsafe { *out.add(i as usize) = make_voice(i as usize, m.voice_info(i as usize)) };
     }
     n
 }

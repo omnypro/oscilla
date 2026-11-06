@@ -246,6 +246,7 @@ void csnes_voice_levels_get(const csnes_machine *machine, int32_t out[8]);
  *   echo            1 when the voice feeds the echo
  *   ended           1 once the voice has reached the end of its sample, until
  *                   the program clears it
+ *   mask_bit        the bit of the channel mask that mutes this voice
  */
 typedef struct {
     int32_t active;
@@ -262,7 +263,8 @@ typedef struct {
     int32_t pitch_modulated;
     int32_t echo;
     int32_t ended;
-    int32_t reserved[4];
+    int32_t mask_bit;
+    int32_t reserved[3];
 } csnes_voice;
 
 /* The number of voices: 8. */
