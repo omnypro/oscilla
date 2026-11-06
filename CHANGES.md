@@ -1,5 +1,11 @@
 # Changes
 
+## 0.6.0
+
+- The PC Engine core, which plays HES files. It runs the HuC6280 processor
+  and its six-channel sound generator from the code that the file carries.
+  `cpce.h` is its C interface.
+
 ## 0.5.3
 
 - The Genesis core has `cgenesis_set_observer`, a callback that hears every
