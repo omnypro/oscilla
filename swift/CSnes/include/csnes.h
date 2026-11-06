@@ -221,6 +221,99 @@ void csnes_snapshot_free(csnes_snapshot *snapshot);
 void csnes_voice_levels_get(const csnes_machine *machine, int32_t out[8]);
 
 /*
+ * What a voice is doing, for a display. Call these on the render thread, right
+ * after a render, and copy the result out; like every machine call they must
+ * not run while another thread renders. They do nothing inside an observer
+ * callback. The layout is the same in every core's header, so a viewer can
+ * treat the cores alike. The fields:
+ *
+ *   active          1 while the voice makes sound (its envelope is above 0)
+ *   key_on          1 while the voice is keyed on (attack, decay or sustain)
+ *   kind            1 for noise, 2 for a sample (0 tone, 3 FM and 4 drum are
+ *                   for the other cores)
+ *   instrument      the source number, the index into the sample directory
+ *   frequency_hz    the rate at which the sample plays: 32000 * pitch / 4096.
+ *                   The pitch of the note depends on the sample, so this is not
+ *                   a note frequency. 0 for noise.
+ *   volume          0 to 1: the larger of the two volume registers over 128,
+ *                   times the envelope
+ *   pan             -1 left to +1 right, from the two volume registers
+ *   envelope        0 to 1
+ *   left, right     each volume register over 128, times the envelope; negative
+ *                   when the register is
+ *   envelope_phase  0 attack, 1 decay, 2 sustain, 3 release
+ *   pitch_modulated 1 when the voice's pitch follows the voice below it
+ *   echo            1 when the voice feeds the echo
+ *   ended           1 once the voice has reached the end of its sample, until
+ *                   the program clears it
+ */
+typedef struct {
+    int32_t active;
+    int32_t key_on;
+    int32_t kind;
+    int32_t instrument;
+    float frequency_hz;
+    float volume;
+    float pan;
+    float envelope;
+    float left;
+    float right;
+    int32_t envelope_phase;
+    int32_t pitch_modulated;
+    int32_t echo;
+    int32_t ended;
+    int32_t reserved[4];
+} csnes_voice;
+
+/* The number of voices: 8. */
+int csnes_voice_count(const csnes_machine *machine);
+
+/* Writes at most `max` voices and returns how many. */
+int csnes_voices_get(const csnes_machine *machine, csnes_voice *out, int max);
+
+/* "Voice 1" to "Voice 8", or NULL for an index outside 0 to 7. The strings are
+ * static. */
+const char *csnes_voice_name(const csnes_machine *machine, int index);
+
+/*
+ * Fills `out` with the last `frames` frames that one voice put out, oldest
+ * first, as floats within -1 to 1 at the machine's output rate. The voice's
+ * own volumes are in it and the master volume and echo are not, and a muted
+ * voice still shows. The machine keeps 4,096 samples of the DSP's 32 kHz
+ * (128 ms), so frames that reach further back are 0. Returns `frames`, or 0
+ * for a voice outside 0 to 7, a NULL buffer, 0 frames, more than 16,384 frames
+ * or a call from a callback.
+ */
+size_t csnes_scope_get(const csnes_machine *machine, int voice, float *out, size_t frames);
+
+/*
+ * The memory access map. With tracking on, each of the 65,536 bytes of the
+ * sound RAM carries these bits for what has touched it since the map was last
+ * cleared. Tracking is off by default and costs a little time when it is on.
+ * Turning it on starts with a clear map. The map belongs to the listener: a
+ * snapshot does not hold it and csnes_snapshot_restore keeps the one that is
+ * set.
+ */
+#define CSNES_ACCESS_READ 1       /* the SPC700 read it as data */
+#define CSNES_ACCESS_WRITE 2      /* the SPC700 wrote it */
+#define CSNES_ACCESS_EXEC 4       /* the SPC700 fetched it as an opcode or operand */
+#define CSNES_ACCESS_DSP_READ 8   /* the DSP read it: a sample, the directory, the echo buffer */
+#define CSNES_ACCESS_DSP_WRITE 16 /* the DSP wrote it: the echo buffer */
+
+void csnes_set_access_tracking(csnes_machine *machine, int on);
+int csnes_access_tracking(const csnes_machine *machine);
+
+/* Copies the map to `out` (65,536 bytes) and returns 1, or fills `out` with
+ * zeros and returns 0 when tracking is off. */
+int csnes_access_map_get(const csnes_machine *machine, uint8_t *out);
+
+void csnes_access_map_clear(csnes_machine *machine);
+
+/* Copies the map and clears it in one call, so each call shows the accesses
+ * since the one before. Returns as csnes_access_map_get does. */
+int csnes_access_map_take(csnes_machine *machine, uint8_t *out);
+
+/*
  * Chooses the voices and the echo that reach the mix. Bit n is voice n for
  * bits 0 to 7, and bit 8 is the echo output. A voice that the mask leaves out
  * still runs (its envelope, its end flag and its pitch modulation of the next

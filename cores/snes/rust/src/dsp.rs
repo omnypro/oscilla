@@ -19,6 +19,78 @@ const KEY_ON_DELAY: u8 = 5;
 
 pub const VOICES: usize = 8;
 
+/// The samples of each voice's output that the scope keeps: 4,096 of the
+/// DSP's 32 kHz, which is 128 ms.
+pub const SCOPE_LEN: usize = 4096;
+
+/// What the DSP did to the sound RAM in the last sample: a range of addresses
+/// and the kind of access.
+pub const DSP_READ: u8 = 8;
+pub const DSP_WRITE: u8 = 16;
+
+/// The recent output of each voice, as the listener hears it before the master
+/// volume: the voice's output times its two volumes, averaged. It is not part
+/// of a copy of the DSP, which starts with an empty one.
+struct Scope {
+    data: Box<[i16]>,
+    /// The index that the next sample goes to.
+    at: usize,
+}
+
+impl Scope {
+    fn new() -> Scope {
+        Scope {
+            data: vec![0; VOICES * SCOPE_LEN].into_boxed_slice(),
+            at: 0,
+        }
+    }
+
+    fn push(&mut self, samples: [i16; VOICES]) {
+        for (v, s) in samples.into_iter().enumerate() {
+            self.data[v * SCOPE_LEN + self.at] = s;
+        }
+        self.at = (self.at + 1) % SCOPE_LEN;
+    }
+
+    /// The sample `back` steps before the newest, 0 for the newest.
+    fn get(&self, voice: usize, back: usize) -> i16 {
+        if back >= SCOPE_LEN {
+            return 0;
+        }
+        self.data[voice * SCOPE_LEN + (self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN]
+    }
+}
+
+impl Clone for Scope {
+    fn clone(&self) -> Scope {
+        Scope::new()
+    }
+}
+
+/// What a voice is doing, read from its registers and its envelope.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VoiceInfo {
+    /// 0 attack, 1 decay, 2 sustain, 3 release.
+    pub phase: u8,
+    /// The envelope level, 0 to 0x7FF.
+    pub envelope: i32,
+    /// The source number, the index into the sample directory.
+    pub source: u8,
+    /// The 14-bit pitch register: 0x1000 plays the sample at 32 kHz.
+    pub pitch: u16,
+    /// The left and right volume registers.
+    pub volume: (i8, i8),
+    pub adsr: (u8, u8),
+    pub gain: u8,
+    pub noise: bool,
+    pub pitch_modulated: bool,
+    pub echo: bool,
+    /// The voice has reached the end of its sample since the last read of the
+    /// ENDX register.
+    pub ended: bool,
+    /// The last output of the voice before the volumes, signed 16-bit.
+    pub output: i32,
+}
 /// Bit of the channel mask that controls the echo output.
 pub const ECHO_BIT: u32 = 8;
 
@@ -65,6 +137,9 @@ pub struct Dsp {
     samples: u64,
     pub mask: u64,
     levels: [i32; VOICES],
+    scope: Scope,
+    /// The ranges of sound RAM that the DSP read or wrote in the last sample.
+    pub(crate) accesses: Vec<(u16, u16, u8)>,
 }
 
 fn clamp16(v: i32) -> i32 {
@@ -91,6 +166,8 @@ impl Dsp {
             samples: 0,
             mask: u64::MAX,
             levels: [0; VOICES],
+            scope: Scope::new(),
+            accesses: Vec::new(),
         };
         d.regs[0x7C] = d.endx;
         d
@@ -121,6 +198,37 @@ impl Dsp {
         self.levels
     }
 
+    /// The state of a voice.
+    pub fn voice_info(&self, v: usize) -> VoiceInfo {
+        let v = v % VOICES;
+        let r = |i: usize| self.regs[v * 16 + i];
+        let voice = &self.voices[v];
+        VoiceInfo {
+            phase: match voice.mode {
+                Mode::Attack => 0,
+                Mode::Decay => 1,
+                Mode::Sustain => 2,
+                Mode::Release => 3,
+            },
+            envelope: voice.env,
+            source: r(4),
+            pitch: u16::from_le_bytes([r(2), r(3) & 0x3F]),
+            volume: (r(0) as i8, r(1) as i8),
+            adsr: (r(5), r(6)),
+            gain: r(7),
+            noise: self.regs[0x3D] & (1 << v) != 0,
+            pitch_modulated: v > 0 && self.regs[0x2D] & (1 << v) != 0,
+            echo: self.regs[0x4D] & (1 << v) != 0,
+            ended: self.endx & (1 << v) != 0,
+            output: voice.out,
+        }
+    }
+
+    /// The sample `back` steps before the newest of a voice's scope.
+    pub fn scope_sample(&self, voice: usize, back: usize) -> i16 {
+        self.scope.get(voice % VOICES, back)
+    }
+
     /// The next sample of the noise generator, as a signed 15-bit value.
     fn noise_out(&self) -> i32 {
         (self.noise << 17) >> 17
@@ -135,6 +243,7 @@ impl Dsp {
         let dir = usize::from(self.regs[0x5D]) << 8;
         let entry = (dir + usize::from(self.regs[v * 16 + 4]) * 4) & 0xFFFF;
         let word = |at: usize| u16::from_le_bytes([ram[at & 0xFFFF], ram[(at + 1) & 0xFFFF]]);
+        self.accesses.push((entry as u16, 4, DSP_READ));
         let voice = &mut self.voices[v];
         voice.block = word(entry);
         voice.env = 0;
@@ -152,6 +261,7 @@ impl Dsp {
     fn decode(&mut self, v: usize, ram: &[u8; 65536]) {
         let voice = &mut self.voices[v];
         let at = usize::from(voice.block);
+        self.accesses.push((at as u16, 9, DSP_READ));
         let header = ram[at];
         let range = i32::from(header >> 4);
         let filter = (header >> 2) & 3;
@@ -201,6 +311,7 @@ impl Dsp {
         let dir = usize::from(self.regs[0x5D]) << 8;
         let entry = (dir + usize::from(self.regs[v * 16 + 4]) * 4 + 2) & 0xFFFF;
         let loop_at = u16::from_le_bytes([ram[entry], ram[(entry + 1) & 0xFFFF]]);
+        self.accesses.push((entry as u16, 2, DSP_READ));
         let voice = &mut self.voices[v];
         if voice.flags & 1 != 0 {
             voice.block = loop_at;
@@ -270,6 +381,7 @@ impl Dsp {
     /// Makes one stereo sample. `ram` is the sound RAM, which holds the
     /// samples, the sample table and the echo buffer.
     pub fn sample(&mut self, ram: &mut [u8; 65536]) -> (i32, i32) {
+        self.accesses.clear();
         let flg = self.regs[0x6C];
         let koff = self.regs[0x5C];
         let pmon = self.regs[0x2D];
@@ -303,6 +415,9 @@ impl Dsp {
         let mut main = [0i32; 2];
         let mut echo = [0i32; 2];
         let mut previous = 0;
+        let mut heard = [0i16; VOICES];
+        // The voice number indexes the registers, the voices and the scope.
+        #[allow(clippy::needless_range_loop)]
         for v in 0..VOICES {
             let mut out = 0;
             if self.voices[v].delay > 0 {
@@ -346,8 +461,9 @@ impl Dsp {
             self.regs[v * 16 + 8] = (self.voices[v].env >> 4) as u8;
             self.regs[v * 16 + 9] = (out >> 7) as u8;
             self.levels[v] = out >> 7;
+            let (l, r) = (self.regs[v * 16] as i8, self.regs[v * 16 + 1] as i8);
+            heard[v] = clamp16(((out * i32::from(l)) >> 7) + ((out * i32::from(r)) >> 7)) as i16;
             if self.mask & (1 << v) != 0 {
-                let (l, r) = (self.regs[v * 16] as i8, self.regs[v * 16 + 1] as i8);
                 main[0] = clamp16(main[0] + ((out * i32::from(l)) >> 6));
                 main[1] = clamp16(main[1] + ((out * i32::from(r)) >> 6));
                 if eon & (1 << v) != 0 {
@@ -357,9 +473,11 @@ impl Dsp {
             }
         }
         self.regs[0x7C] = self.endx;
+        self.scope.push(heard);
 
         let esa = usize::from(self.regs[0x6D]) << 8;
         let at = (esa + self.echo_index as usize * 4) & 0xFFFF;
+        self.accesses.push((at as u16, 4, DSP_READ));
         let mut fir_out = [0i32; 2];
         for ch in 0..2usize {
             let lo = usize::from(ram[(at + ch * 2) & 0xFFFF]);
@@ -379,6 +497,7 @@ impl Dsp {
 
         let efb = i32::from(self.regs[0x0D] as i8);
         if flg & 0x20 == 0 {
+            self.accesses.push((at as u16, 4, DSP_WRITE));
             for ch in 0..2usize {
                 let value = clamp16(echo[ch] + ((fir_out[ch] * efb) >> 7)) & !1;
                 ram[(at + ch * 2) & 0xFFFF] = value as u8;

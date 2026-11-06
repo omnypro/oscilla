@@ -3,7 +3,7 @@
 //! the instruction takes.
 
 use crate::boot;
-use crate::machine::Machine;
+use crate::machine::{CPU_READ, CPU_WRITE, EXECUTED, Machine};
 
 const N: u8 = 0x80;
 const V: u8 = 0x40;
@@ -16,6 +16,13 @@ const C: u8 = 0x01;
 
 impl Machine {
     pub(crate) fn read(&mut self, address: u16) -> u8 {
+        if let Some(map) = self.access.0.as_mut() {
+            map[usize::from(address)] |= CPU_READ;
+        }
+        self.read_raw(address)
+    }
+
+    fn read_raw(&mut self, address: u16) -> u8 {
         match address {
             0xF0 | 0xF1 => 0,
             0xF2 => self.dsp_address,
@@ -37,6 +44,9 @@ impl Machine {
     }
 
     pub(crate) fn write(&mut self, address: u16, value: u8) {
+        if let Some(map) = self.access.0.as_mut() {
+            map[usize::from(address)] |= CPU_WRITE;
+        }
         self.ram[usize::from(address)] = value;
         if let Some((first, last)) = self.observer.1
             && (first..=last).contains(&address)
@@ -91,7 +101,10 @@ impl Machine {
 
     fn fetch(&mut self) -> u8 {
         self.fetched += 1;
-        let v = self.read(self.pc);
+        if let Some(map) = self.access.0.as_mut() {
+            map[usize::from(self.pc)] |= EXECUTED;
+        }
+        let v = self.read_raw(self.pc);
         self.pc = self.pc.wrapping_add(1);
         v
     }
@@ -125,6 +138,9 @@ impl Machine {
 
     fn pop(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
+        if let Some(map) = self.access.0.as_mut() {
+            map[0x100 | usize::from(self.sp)] |= CPU_READ;
+        }
         self.ram[0x100 | usize::from(self.sp)]
     }
 

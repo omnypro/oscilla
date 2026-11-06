@@ -7,7 +7,7 @@ use std::sync::Arc;
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use oscilla_spc::Spc;
 
-use crate::dsp::{Dsp, ECHO_BIT, VOICES};
+use crate::dsp::{Dsp, ECHO_BIT, VOICES, VoiceInfo};
 
 /// SPC700 cycles per second. The DSP makes a sample every 32 of them.
 pub const CLOCK: u64 = 1_024_000;
@@ -61,6 +61,24 @@ const TIMER_PHASE: u64 = 0;
 /// A level unit is one step of a 16-bit sample.
 const OUT_SHIFT: u32 = BLEP_SHIFT;
 
+/// Holds the access map outside the machine state: a copy of the state has none.
+#[derive(Default)]
+pub(crate) struct AccessMap(pub Option<Box<[u8; 65536]>>);
+
+impl Clone for AccessMap {
+    fn clone(&self) -> AccessMap {
+        AccessMap(None)
+    }
+}
+
+/// The bits of the access map. A byte has a bit for each kind of access since
+/// the last clear: the SPC700 reading it as data, writing it, or fetching it as
+/// an instruction or operand, and the DSP reading or writing it.
+pub const CPU_READ: u8 = 1;
+pub const CPU_WRITE: u8 = 2;
+pub const EXECUTED: u8 = 4;
+pub use crate::dsp::{DSP_READ, DSP_WRITE};
+
 #[derive(Clone)]
 pub struct Machine {
     pub(crate) a: u8,
@@ -79,6 +97,9 @@ pub struct Machine {
     pub(crate) now: u64,
     pub(crate) halted: bool,
     pub(crate) observer: ObserverSlot,
+    /// One byte for each address of the sound RAM, with a bit for each kind of
+    /// access since the last clear, when tracking is on.
+    pub(crate) access: AccessMap,
     image: Arc<Spc>,
     out: Resampler,
     last: (i32, i32),
@@ -147,6 +168,7 @@ impl Machine {
             now: 0,
             halted: false,
             observer: ObserverSlot::default(),
+            access: AccessMap::default(),
             image,
             out: Resampler::with_ratio(output_rate, CLOCK, 1),
             last: (0, 0),
@@ -268,6 +290,13 @@ impl Machine {
             }
             if self.now.is_multiple_of(CYCLES_PER_SAMPLE) {
                 let (l, r) = self.dsp.sample(&mut self.ram);
+                if let Some(map) = self.access.0.as_mut() {
+                    for &(first, len, kind) in &self.dsp.accesses {
+                        for n in 0..usize::from(len) {
+                            map[(usize::from(first) + n) & 0xFFFF] |= kind;
+                        }
+                    }
+                }
                 if (l, r) != self.last {
                     self.last_change = self.now;
                     self.last = (l, r);
@@ -488,11 +517,59 @@ impl Machine {
             return Err(RestoreError::Image);
         }
         let observer = std::mem::take(&mut self.observer);
+        let access = std::mem::take(&mut self.access);
         let mask = self.dsp.mask;
         *self = Machine::clone(s);
         self.observer = observer;
+        self.access = access;
         self.dsp.mask = mask & ALL_CHANNELS;
         Ok(())
+    }
+
+    /// Turns the tracking of memory accesses on or off. Turning it on starts
+    /// with a clear map. The map belongs to the listener, so a copy of the
+    /// machine has none, and `restore` keeps the one that is set.
+    pub fn set_access_tracking(&mut self, on: bool) {
+        self.access.0 = on.then(|| Box::new([0; 65536]));
+    }
+
+    pub fn access_tracking(&self) -> bool {
+        self.access.0.is_some()
+    }
+
+    /// The access map, or `None` when tracking is off.
+    pub fn access_map(&self) -> Option<&[u8; 65536]> {
+        self.access.0.as_deref()
+    }
+
+    /// Clears the access map.
+    pub fn clear_access_map(&mut self) {
+        if let Some(map) = self.access.0.as_mut() {
+            map.fill(0);
+        }
+    }
+
+    /// What a voice is doing.
+    pub fn voice_info(&self, voice: usize) -> VoiceInfo {
+        self.dsp.voice_info(voice)
+    }
+
+    /// Fills `out` with the last `out.len()` frames of a voice's output at the
+    /// machine's output rate, as floats within -1 to 1, oldest first. The
+    /// samples come from the DSP's 32 kHz by linear interpolation, and ones
+    /// older than 4,096 DSP samples (128 ms) are 0. The voice's volumes are in
+    /// it and the master volume is not, and a muted voice still shows.
+    pub fn scope(&self, voice: usize, out: &mut [f32]) {
+        let ratio = 32_000.0 / f64::from(self.out.rate());
+        let n = out.len();
+        for (k, o) in out.iter_mut().enumerate() {
+            let back = (n - 1 - k) as f64 * ratio;
+            let i = back as usize;
+            let frac = back - i as f64;
+            let a = f64::from(self.dsp.scope_sample(voice, i));
+            let b = f64::from(self.dsp.scope_sample(voice, i + 1));
+            *o = ((a + (b - a) * frac) / 32768.0) as f32;
+        }
     }
 
     /// True when the echo bit of the mask is on.

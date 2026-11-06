@@ -517,6 +517,179 @@ pub unsafe extern "C" fn csnes_voice_levels_get(machine: *const CMachine, out: *
     unsafe { ptr::copy_nonoverlapping(l.as_ptr(), out, 8) };
 }
 
+/// One voice as a player shows it. The layout is the same in every core's
+/// header (`cgenesis_voice`, `cpce_voice` and the others follow it), so a viewer
+/// can treat them alike.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CVoice {
+    active: c_int,
+    key_on: c_int,
+    kind: c_int,
+    instrument: c_int,
+    frequency_hz: f32,
+    volume: f32,
+    pan: f32,
+    envelope: f32,
+    left: f32,
+    right: f32,
+    envelope_phase: c_int,
+    pitch_modulated: c_int,
+    echo: c_int,
+    ended: c_int,
+    reserved: [c_int; 4],
+}
+
+fn make_voice(v: oscilla_snes::VoiceInfo) -> CVoice {
+    let envelope = v.envelope as f32 / 2047.0;
+    let (l, r) = (f32::from(v.volume.0) / 128.0, f32::from(v.volume.1) / 128.0);
+    let loud = l.abs().max(r.abs());
+    CVoice {
+        active: c_int::from(v.envelope > 0),
+        key_on: c_int::from(v.phase < 3),
+        kind: if v.noise { 1 } else { 2 },
+        instrument: c_int::from(v.source),
+        frequency_hz: if v.noise {
+            0.0
+        } else {
+            32_000.0 * f32::from(v.pitch) / 4096.0
+        },
+        volume: loud * envelope,
+        pan: if l.abs() + r.abs() > 0.0 {
+            (r.abs() - l.abs()) / (l.abs() + r.abs())
+        } else {
+            0.0
+        },
+        envelope,
+        left: l * envelope,
+        right: r * envelope,
+        envelope_phase: c_int::from(v.phase),
+        pitch_modulated: c_int::from(v.pitch_modulated),
+        echo: c_int::from(v.echo),
+        ended: c_int::from(v.ended),
+        reserved: [0; 4],
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_voice_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    8
+}
+
+/// Writes at most `max` voices and returns how many.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_voices_get(
+    machine: *const CMachine,
+    out: *mut CVoice,
+    max: c_int,
+) -> c_int {
+    if machine.is_null() || out.is_null() || max <= 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let m = unsafe { &(*machine).machine };
+    let n = max.min(8);
+    for i in 0..n {
+        unsafe { *out.add(i as usize) = make_voice(m.voice_info(i as usize)) };
+    }
+    n
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_voice_name(machine: *const CMachine, index: c_int) -> *const c_char {
+    const NAMES: [&CStr; 8] = [
+        c"Voice 1", c"Voice 2", c"Voice 3", c"Voice 4", c"Voice 5", c"Voice 6", c"Voice 7",
+        c"Voice 8",
+    ];
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return ptr::null();
+    }
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| NAMES.get(i))
+        .map_or(ptr::null(), |n| n.as_ptr())
+}
+
+/// Fills `out` with the last `frames` frames of a voice. Returns `frames`, or 0
+/// for a voice outside 0 to 7, a NULL buffer, more than 16,384 frames or a call
+/// from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_scope_get(
+    machine: *const CMachine,
+    voice: c_int,
+    out: *mut f32,
+    frames: usize,
+) -> usize {
+    if machine.is_null()
+        || out.is_null()
+        || !(0..8).contains(&voice)
+        || frames == 0
+        || frames > 16_384
+        || unsafe { in_callback(machine) }
+    {
+        return 0;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, frames) };
+    unsafe { &(*machine).machine }.scope(voice as usize, out);
+    frames
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_set_access_tracking(machine: *mut CMachine, on: c_int) {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return;
+    }
+    unsafe { &mut (*machine).machine }.set_access_tracking(on != 0);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_access_tracking(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    c_int::from(unsafe { &(*machine).machine }.access_tracking())
+}
+
+/// Copies the map and returns 1, or fills `out` with zeros and returns 0 when
+/// tracking is off.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_access_map_get(machine: *const CMachine, out: *mut u8) -> c_int {
+    if machine.is_null() || out.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    match unsafe { &(*machine).machine }.access_map() {
+        Some(map) => {
+            unsafe { ptr::copy_nonoverlapping(map.as_ptr(), out, 65536) };
+            1
+        }
+        None => {
+            unsafe { ptr::write_bytes(out, 0, 65536) };
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_access_map_clear(machine: *mut CMachine) {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return;
+    }
+    unsafe { &mut (*machine).machine }.clear_access_map();
+}
+
+/// Copies the map and clears it, so that each call returns the accesses since
+/// the one before. Returns 1, or 0 with zeros when tracking is off.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_access_map_take(machine: *mut CMachine, out: *mut u8) -> c_int {
+    let got = unsafe { csnes_access_map_get(machine, out) };
+    if got == 1 {
+        unsafe { &mut (*machine).machine }.clear_access_map();
+    }
+    got
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn csnes_set_channel_mask(machine: *mut CMachine, mask: u64) {
     if unsafe { in_callback(machine) } {

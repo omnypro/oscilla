@@ -195,6 +195,25 @@ render and a log of the SPC700's DSP stores for each.
 The observer sees every store to a DSP register and every store to an output
 port, in program order, with the clock at the end of the instruction.
 
+## Visualization
+
+The DSP keeps what a display needs. `voice_info` reads a voice's registers and
+its envelope, and the C interface turns them into floats: the playback rate is
+32,000 Hz times the pitch register over 4,096, and the volume is the larger
+volume register over 128 times the envelope over 2,047. The scope keeps the
+last 4,096 samples of each voice at the DSP's 32 kHz: the voice's output times
+its two volumes, averaged. `scope` resamples them to the output rate by linear
+interpolation. The ring is not part of a copy of the machine, which starts with
+an empty one.
+
+The access map has one byte for each address of the sound RAM, with a bit for
+the SPC700 reading, writing or fetching it and for the DSP reading or writing
+it. The SPC700 marks an instruction's opcode and operands as fetched and not as
+read, and a store marks only the write (the instruction's own dummy read of the
+address still marks it as read). The DSP's accesses are the directory entry
+and the block of a voice, and the echo buffer. Tracking is off until asked for,
+and the map is not part of a copy of the machine.
+
 ## Snapshots
 
 A snapshot copies the whole machine apart from the observer and the channel

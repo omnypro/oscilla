@@ -45,13 +45,19 @@ and fade in milliseconds, the length as the two added, the voices that the file
 asks a player to mute, and the amplification of the xid6 chunk. A value that the
 file leaves out is an empty string, -1 or the unchanged value.
 
-A player has four more groups of calls.
+A player has five more groups of calls.
 
 - `csnes_snapshot_take` copies the whole machine. `csnes_snapshot_restore` puts
   a machine with the same file and output rate back to that point, and the same
   calls then render the same samples.
 - `csnes_set_channel_mask` chooses which of the eight voices and the echo reach
   the mix. `csnes_voice_levels_get` shows what each voice outputs, muted or not.
+- `csnes_voices_get` returns what each voice is doing (its pitch, volume, pan,
+  envelope and phase, source number, noise, echo and pitch modulation), and
+  `csnes_scope_get` returns the last frames that one voice put out, for a
+  display. `csnes_set_access_tracking` turns on a map of the memory that the
+  SPC700 read, wrote and executed and the DSP read and wrote, which
+  `csnes_access_map_get` and `csnes_access_map_take` return.
 - `csnes_write_port` and `csnes_read_port` stand in for the main CPU: they set
   what the SPC700 reads at 0xF4 to 0xF7 and show what it wrote there.
 - `csnes_end_state_get` reports a processor that executed SLEEP or STOP.
@@ -83,6 +89,8 @@ chooses the voices and the echo (bit 8). `--info` prints the tags and the times.
   the rendered output.
 - `goldens`: a hash of the samples and of the DSP stores for each of 32
   generated files. A change to the sound or to the stores changes a hash.
+- `viz`: the state of a voice, its scope and the access map, and no change to
+  the sound.
 - `fuzz`: files of random bytes run without a panic and render the same samples
   twice.
 - `reference`: a comparison with renders and store logs of a reference player.
