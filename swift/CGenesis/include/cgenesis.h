@@ -193,6 +193,49 @@ void cgenesis_channel_levels_get(const cgenesis_machine *machine, int32_t out[10
 int cgenesis_set_highpass_hz(cgenesis_machine *machine, double hz);
 double cgenesis_highpass_hz(const cgenesis_machine *machine);
 
+/* ---- Observation ------------------------------------------------------- */
+
+typedef enum {
+    CGENESIS_CHIP_SN76489 = 0,
+    CGENESIS_CHIP_SN76489_SECOND = 1,
+    CGENESIS_CHIP_YM2612 = 2,
+    CGENESIS_CHIP_YM2612_SECOND = 3,
+    CGENESIS_CHIP_YM2413 = 4,
+    CGENESIS_CHIP_YM2413_SECOND = 5
+} cgenesis_chip;
+
+/*
+ * A callback that hears every register write that the machine applies to a
+ * chip, in program order, at the time the chip gets it. It runs on the
+ * rendering thread, inside cgenesis_render_*. It does not change the sound or
+ * the levels. An observer set before the first render sees every write from
+ * the first. A write to a chip that the file lacks is not applied and is not
+ * reported.
+ *
+ * `address` is 0 for the SN76489's data port and 1 for its stereo port. For
+ * the YM2612 it is the port number shifted left by 8, with the register: 0x02A
+ * is the DAC register, written by the 0x8n commands and by the DAC streams as
+ * well as by the 0x52 command, and 0x1B4 is register 0xB4 of port 1. For the
+ * YM2413 it is the register. `sample` is the time of the write in samples of
+ * 44,100 Hz since the song started (or since cgenesis_reset): one frame is 735
+ * samples at 60 Hz and 882 at 50 Hz (see cgenesis_image_frame_rate).
+ *
+ * A callback may call cgenesis_samples, which returns the sample of the write.
+ * Any other call that takes the machine does nothing there and returns zero or
+ * NULL (cgenesis_snapshot_restore returns 3).
+ */
+typedef struct {
+    void *context;
+    void (*register_write)(void *context, int chip, uint32_t address, uint32_t value, uint64_t sample);
+} cgenesis_observer;
+
+/*
+ * Copies the observer in. Pass NULL to stop observing. The observer belongs to
+ * the listener: cgenesis_reset and cgenesis_snapshot_restore keep it, and a
+ * snapshot does not hold it.
+ */
+void cgenesis_set_observer(cgenesis_machine *machine, const cgenesis_observer *observer);
+
 /* ---- Snapshots --------------------------------------------------------- */
 
 typedef struct cgenesis_snapshot cgenesis_snapshot;

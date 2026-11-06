@@ -8,7 +8,7 @@ mod stream;
 mod ym2413;
 mod ym2612;
 
-pub use machine::{EndState, Machine, MachineError, UNIT};
+pub use machine::{Chip, EndState, Machine, MachineError, Observer, UNIT};
 pub use psg::Psg;
 pub use ym2413::Ym2413;
 pub use ym2612::Ym2612;

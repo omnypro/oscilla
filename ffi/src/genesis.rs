@@ -1,11 +1,13 @@
 //! The C interface of `cgenesis.h`.
 
 use crate::write_error;
-use oscilla_genesis::{EndState, Machine};
+use oscilla_genesis::{Chip, EndState, Machine, Observer};
 use oscilla_gym::Gym;
 use oscilla_vgm::{MAX_FILE, SAMPLE_RATE, Vgm};
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::Read;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{ptr, slice};
 
 const OK: c_int = 0;
@@ -367,8 +369,62 @@ pub unsafe extern "C" fn cgenesis_image_frame_rate(image: *const CImage) -> u32 
 
 // ---- Machines ---------------------------------------------------------
 
+/// The sample that a running observer callback should see. A callback may call
+/// `cgenesis_samples`, which then returns the time of the write, and no other
+/// call that takes the machine does anything while a callback runs.
+struct Callback {
+    active: AtomicBool,
+    sample: AtomicU64,
+}
+
+unsafe fn in_callback(machine: *const CMachine) -> bool {
+    unsafe { &*ptr::addr_of!((*machine).callback) }
+        .active
+        .load(Ordering::Relaxed)
+}
+
 pub struct CMachine {
     machine: Machine,
+    callback: Arc<Callback>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CObserver {
+    context: *mut c_void,
+    register_write: Option<unsafe extern "C" fn(*mut c_void, c_int, u32, u32, u64)>,
+}
+
+struct Forward {
+    observer: CObserver,
+    callback: Arc<Callback>,
+}
+
+impl Observer for Forward {
+    fn register_write(&mut self, chip: Chip, address: u16, value: u8, sample: u64) {
+        if let Some(f) = self.observer.register_write {
+            self.callback.sample.store(sample, Ordering::Relaxed);
+            self.callback.active.store(true, Ordering::Relaxed);
+            let chip = match chip {
+                Chip::Sn76489 => 0,
+                Chip::Sn76489Second => 1,
+                Chip::Ym2612 => 2,
+                Chip::Ym2612Second => 3,
+                Chip::Ym2413 => 4,
+                Chip::Ym2413Second => 5,
+            };
+            unsafe {
+                f(
+                    self.observer.context,
+                    chip,
+                    u32::from(address),
+                    u32::from(value),
+                    sample,
+                )
+            };
+            self.callback.active.store(false, Ordering::Relaxed);
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -377,26 +433,35 @@ pub unsafe extern "C" fn cgenesis_new(image: *const CImage, output_rate: c_int) 
         return ptr::null_mut();
     }
     match Machine::new(&unsafe { &*image }.vgm, output_rate) {
-        Ok(machine) => Box::into_raw(Box::new(CMachine { machine })),
+        Ok(machine) => Box::into_raw(Box::new(CMachine {
+            machine,
+            callback: Arc::new(Callback {
+                active: AtomicBool::new(false),
+                sample: AtomicU64::new(0),
+            }),
+        })),
         Err(_) => ptr::null_mut(),
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_free(machine: *mut CMachine) {
-    if !machine.is_null() {
+    if !machine.is_null() && !unsafe { in_callback(machine) } {
         drop(unsafe { Box::from_raw(machine) });
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_reset(machine: *mut CMachine) {
+    if unsafe { in_callback(machine) } {
+        return;
+    }
     unsafe { &mut (*machine).machine }.reset();
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_render_s16(machine: *mut CMachine, out: *mut i16, frames: usize) {
-    if out.is_null() || frames > isize::MAX as usize / 8 {
+    if unsafe { in_callback(machine) } || out.is_null() || frames > isize::MAX as usize / 8 {
         return;
     }
     let out = unsafe { slice::from_raw_parts_mut(out, frames * 2) };
@@ -405,7 +470,7 @@ pub unsafe extern "C" fn cgenesis_render_s16(machine: *mut CMachine, out: *mut i
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_render_f32(machine: *mut CMachine, out: *mut f32, frames: usize) {
-    if out.is_null() || frames > isize::MAX as usize / 8 {
+    if unsafe { in_callback(machine) } || out.is_null() || frames > isize::MAX as usize / 8 {
         return;
     }
     let out = unsafe { slice::from_raw_parts_mut(out, frames * 2) };
@@ -415,18 +480,28 @@ pub unsafe extern "C" fn cgenesis_render_f32(machine: *mut CMachine, out: *mut f
 /// Time played so far, in samples at 44,100 Hz.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_samples(machine: *const CMachine) -> u64 {
-    unsafe { &(*machine).machine }.samples()
+    let callback = unsafe { &*ptr::addr_of!((*machine).callback) };
+    if callback.active.load(Ordering::Relaxed) {
+        return callback.sample.load(Ordering::Relaxed);
+    }
+    unsafe { &*ptr::addr_of!((*machine).machine) }.samples()
 }
 
 /// Passes through the loop point so far.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_loops(machine: *const CMachine) -> u32 {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
     unsafe { &(*machine).machine }.loops()
 }
 
 /// 0 while the stream runs and 1 once it has ended without a loop.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_end_state_get(machine: *const CMachine) -> c_int {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
     match unsafe { &(*machine).machine }.end_state() {
         EndState::Playing => 0,
         EndState::Finished => 1,
@@ -435,7 +510,7 @@ pub unsafe extern "C" fn cgenesis_end_state_get(machine: *const CMachine) -> c_i
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_channel_levels_get(machine: *const CMachine, out: *mut i32) {
-    if machine.is_null() || out.is_null() {
+    if machine.is_null() || out.is_null() || unsafe { in_callback(machine) } {
         return;
     }
     let l = unsafe { &(*machine).machine }.channel_levels();
@@ -444,11 +519,17 @@ pub unsafe extern "C" fn cgenesis_channel_levels_get(machine: *const CMachine, o
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_set_channel_mask(machine: *mut CMachine, mask: u64) {
+    if unsafe { in_callback(machine) } {
+        return;
+    }
     unsafe { &mut (*machine).machine }.set_channel_mask(mask);
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_channel_mask(machine: *const CMachine) -> u64 {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
     unsafe { &(*machine).machine }.channel_mask()
 }
 
@@ -456,12 +537,35 @@ pub unsafe extern "C" fn cgenesis_channel_mask(machine: *const CMachine) -> u64 
 /// outside 0 to 1000 Hz.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_set_highpass_hz(machine: *mut CMachine, hz: f64) -> c_int {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
     c_int::from(unsafe { &mut (*machine).machine }.set_highpass_hz(hz))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_highpass_hz(machine: *const CMachine) -> f64 {
+    if unsafe { in_callback(machine) } {
+        return 0.0;
+    }
     unsafe { &(*machine).machine }.highpass_hz()
+}
+
+/// Copies the observer in. NULL stops observing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_set_observer(machine: *mut CMachine, observer: *const CObserver) {
+    if unsafe { in_callback(machine) } {
+        return;
+    }
+    let m = unsafe { &mut *machine };
+    if observer.is_null() {
+        m.machine.set_observer(None);
+    } else {
+        m.machine.set_observer(Some(Box::new(Forward {
+            observer: unsafe { *observer },
+            callback: Arc::clone(&m.callback),
+        })));
+    }
 }
 
 // ---- Snapshots --------------------------------------------------------
@@ -470,6 +574,9 @@ pub struct CSnapshot(Machine);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_snapshot_take(machine: *const CMachine) -> *mut CSnapshot {
+    if unsafe { in_callback(machine) } {
+        return ptr::null_mut();
+    }
     Box::into_raw(Box::new(CSnapshot(unsafe { &(*machine).machine }.clone())))
 }
 
@@ -480,6 +587,9 @@ pub unsafe extern "C" fn cgenesis_snapshot_restore(
     machine: *mut CMachine,
     snapshot: *const CSnapshot,
 ) -> c_int {
+    if unsafe { in_callback(machine) } {
+        return 3;
+    }
     if snapshot.is_null() {
         return 2;
     }

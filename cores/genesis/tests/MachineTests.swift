@@ -170,4 +170,44 @@ struct MachineTests {
         _ = Support.render(m, frames: 64)
         #expect(Support.rms(Support.render(m, frames: 4410)) < 1e-6)
     }
+
+    final class Seen {
+        var writes: [(Int32, UInt32, UInt32, UInt64)] = []
+        var insideSamples: [UInt64] = []
+        var machine: OpaquePointer?
+    }
+
+    @Test func anObserverHearsTheRegisterWritesAndChangesNothing() {
+        var stream: [UInt8] = [0x50, 0x9F, 0x52, 0x28, 0xF0] + Support.wait(441)
+        stream += [0x53, 0xB4, 0xC0] + Support.wait(441)
+        let bytes = Support.vgm(stream: stream)
+        let plain = Support.machine(bytes)
+        defer { cgenesis_free(plain) }
+        let expected = Support.render(plain, frames: 1500)
+
+        let m = Support.machine(bytes)
+        defer { cgenesis_free(m) }
+        let seen = Seen()
+        seen.machine = m
+        var observer = cgenesis_observer(
+            context: Unmanaged.passUnretained(seen).toOpaque(),
+            register_write: { context, chip, address, value, sample in
+                let seen = Unmanaged<Seen>.fromOpaque(context!).takeUnretainedValue()
+                seen.writes.append((chip, address, value, sample))
+                seen.insideSamples.append(cgenesis_samples(seen.machine))
+                cgenesis_reset(seen.machine)
+            })
+        cgenesis_set_observer(m, &observer)
+        let got = Support.render(m, frames: 1500)
+        #expect(got == expected)
+        #expect(seen.writes.count == 3)
+        #expect(seen.writes[0] == (Int32(CGENESIS_CHIP_SN76489.rawValue), 0, 0x9F, 0))
+        #expect(seen.writes[1] == (Int32(CGENESIS_CHIP_YM2612.rawValue), 0x028, 0xF0, 0))
+        #expect(seen.writes[2] == (Int32(CGENESIS_CHIP_YM2612.rawValue), 0x1B4, 0xC0, 441))
+        #expect(seen.insideSamples == [0, 0, 441])
+        cgenesis_set_observer(m, nil)
+        cgenesis_reset(m)
+        _ = Support.render(m, frames: 100)
+        #expect(seen.writes.count == 3)
+    }
 }

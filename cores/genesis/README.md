@@ -63,6 +63,10 @@ A player has three more groups of calls.
   its channels.
 - `cgenesis_channel_levels_get` reads what each of the ten channels of the first
   chips puts out now, for meters.
+- `cgenesis_set_observer` sets a callback that hears every register write that
+  a chip gets (the SN76489, the YM2612 and the YM2413, each first or second),
+  with its address, its value and its time in samples of 44,100 Hz. It does not
+  change the sound.
 - `cgenesis_set_highpass_hz` sets the cutoff of the output high-pass (20 Hz by
   default, 0 for none).
 
@@ -93,6 +97,8 @@ times. `--bench` renders without output and prints the time it took.
   the mask, the bass drum and random register writes.
 - `gym`: a GYM log renders the same samples as the VGM file with the same
   commands, a PAL log runs at 50 frames a second, and a loop comes round.
+- `observer`: the chip, address, value and time of every write, DAC streams
+  and second chips included, and no change to the sound.
 - `fuzz`: files of random bytes run without a panic and render the same samples
   twice.
 

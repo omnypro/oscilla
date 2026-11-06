@@ -78,6 +78,30 @@ fn psg_scaled((l, r): (i32, i32), gain: i32) -> (i32, i32) {
     ((l * gain) >> 8, (r * gain) >> 8)
 }
 
+fn psg_chip(second: bool) -> Chip {
+    if second {
+        Chip::Sn76489Second
+    } else {
+        Chip::Sn76489
+    }
+}
+
+fn fm_chip(second: bool) -> Chip {
+    if second {
+        Chip::Ym2612Second
+    } else {
+        Chip::Ym2612
+    }
+}
+
+fn opll_chip(second: bool) -> Chip {
+    if second {
+        Chip::Ym2413Second
+    } else {
+        Chip::Ym2413
+    }
+}
+
 #[derive(Clone)]
 struct FmSlot {
     chip: Ym2612,
@@ -104,6 +128,38 @@ struct PsgSlot {
     ticks: u64,
     /// The level that the resampler has been told.
     seen: (i32, i32),
+}
+
+/// The chips whose register writes an observer sees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Chip {
+    Sn76489,
+    Sn76489Second,
+    Ym2612,
+    Ym2612Second,
+    Ym2413,
+    Ym2413Second,
+}
+
+/// Hears every register write that the machine applies to a chip, in the
+/// order and at the time that the chip gets it. It cannot change the sound.
+///
+/// The address is 0 for the SN76489's data port and 1 for its stereo port, the
+/// port number shifted left by 8 with the register for the YM2612 (the DAC's
+/// 0x2A included, whether a command or a stream wrote it), and the register for
+/// the YM2413. `sample` is the time in samples of 44,100 Hz.
+pub trait Observer {
+    fn register_write(&mut self, chip: Chip, address: u16, value: u8, sample: u64);
+}
+
+/// Holds the observer outside the machine state: a copy of the state has none.
+#[derive(Default)]
+struct ObserverSlot(Option<Box<dyn Observer>>);
+
+impl Clone for ObserverSlot {
+    fn clone(&self) -> ObserverSlot {
+        ObserverSlot(None)
+    }
 }
 
 /// Where the stream stands when a machine is not playing it.
@@ -136,6 +192,7 @@ pub struct Machine {
     /// The DAC streams that the file has set up, by stream number.
     streams: BTreeMap<u8, Stream>,
     out: Resampler,
+    observer: ObserverSlot,
     last_event: u64,
     mul: i64,
     shift: u32,
@@ -216,6 +273,7 @@ impl Machine {
             pcm_at: 0,
             streams: BTreeMap::new(),
             out: Resampler::with_ratio(output_rate, UNIT, 1),
+            observer: ObserverSlot::default(),
             last_event: 0,
             mul: GAIN[r as usize],
             shift: (BLEP_SHIFT as i32 + 16 - q) as u32,
@@ -232,6 +290,19 @@ impl Machine {
         };
         machine.set_highpass_hz(DEFAULT_HIGHPASS_HZ);
         Ok(machine)
+    }
+
+    /// Sets the observer, or removes it with `None`. A copy of the machine has
+    /// none, and `reset` and `restore` keep the one that is set.
+    pub fn set_observer(&mut self, observer: Option<Box<dyn Observer>>) {
+        self.observer.0 = observer;
+    }
+
+    fn notify(&mut self, chip: Chip, address: u16, value: u8) {
+        let sample = self.now / PER_SAMPLE;
+        if let Some(o) = self.observer.0.as_mut() {
+            o.register_write(chip, address, value, sample);
+        }
     }
 
     pub fn output_rate(&self) -> i32 {
@@ -266,6 +337,7 @@ impl Machine {
         if let Ok(mut m) = Machine::from_shared(Arc::clone(&self.vgm), self.out.rate()) {
             m.set_channel_mask(mask);
             m.set_highpass_hz(self.hp_hz);
+            m.observer = std::mem::take(&mut self.observer);
             *self = m;
         }
     }
@@ -276,7 +348,9 @@ impl Machine {
         if !Arc::ptr_eq(&self.vgm, &saved.vgm) || self.out.rate() != saved.out.rate() {
             return false;
         }
+        let observer = std::mem::take(&mut self.observer);
         *self = saved.clone();
+        self.observer = observer;
         true
     }
 
@@ -507,6 +581,7 @@ impl Machine {
                     self.pos = cursor.position();
                     if let Some(p) = self.psg[usize::from(second)].as_mut() {
                         p.chip.write(value);
+                        self.notify(psg_chip(second), 0, value);
                     }
                     self.sync();
                 }
@@ -514,6 +589,7 @@ impl Machine {
                     self.pos = cursor.position();
                     if let Some(p) = self.psg[usize::from(second)].as_mut() {
                         p.chip.set_stereo(value);
+                        self.notify(psg_chip(second), 1, value);
                     }
                     self.sync();
                 }
@@ -526,6 +602,8 @@ impl Machine {
                     self.pos = cursor.position();
                     if let Some(f) = self.fm[usize::from(second)].as_mut() {
                         f.chip.write(port, register, value);
+                        let address = u16::from(port) << 8 | u16::from(register);
+                        self.notify(fm_chip(second), address, value);
                     }
                 }
                 Command::Ym2612Dac { wait } => {
@@ -534,6 +612,7 @@ impl Machine {
                     self.pcm_at += 1;
                     if let Some(f) = self.fm[0].as_mut() {
                         f.chip.write(0, 0x2A, byte);
+                        self.notify(Chip::Ym2612, 0x2A, byte);
                     }
                     if wait > 0 {
                         self.wait_left = u64::from(wait) * PER_SAMPLE;
@@ -549,6 +628,7 @@ impl Machine {
                     self.pos = cursor.position();
                     if let Some(o) = self.opll[usize::from(second)].as_mut() {
                         o.chip.write(register, value);
+                        self.notify(opll_chip(second), u16::from(register), value);
                     }
                 }
                 Command::Seek(at) => {
@@ -643,6 +723,8 @@ impl Machine {
                     && let Some(f) = self.fm[usize::from(second)].as_mut()
                 {
                     f.chip.write(port, register, byte);
+                    let address = u16::from(port) << 8 | u16::from(register);
+                    self.notify(fm_chip(second), address, byte);
                 }
             }
         }
