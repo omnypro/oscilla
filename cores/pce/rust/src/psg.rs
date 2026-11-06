@@ -410,7 +410,7 @@ impl Psg {
                 let mut held = [0i16; 6];
                 for (c, h) in held.iter_mut().enumerate() {
                     let (l, r) = self.contribution(c);
-                    *h = ((l + r) / 2 >> 6).clamp(-32768, 32767) as i16;
+                    *h = (((l + r) / 2) >> 6).clamp(-32768, 32767) as i16;
                 }
                 self.scope.push(held, n);
             }
