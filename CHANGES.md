@@ -1,5 +1,17 @@
 # Changes
 
+## 0.7.0
+
+- Every core shows what a display needs. `csnes_voices_get`, `cnes_voices_get`,
+  `cgb_voices_get`, `cgba_voices_get`, `cgenesis_voices_get` and
+  `cpce_voices_get` return what each voice is doing (pitch, volume, pan,
+  envelope and phase, instrument, and the channel-mask bit that mutes it), with
+  `*_voice_count` and `*_voice_name`. `*_scope_get` returns the last frames that
+  one voice put out.
+- The SNES core also has a map of its sound RAM: `csnes_set_access_tracking`
+  and `csnes_access_map_get` show what the SPC700 read, wrote and executed and
+  what the DSP read and wrote.
+
 ## 0.6.1
 
 - A snapshot restores into any machine that plays the same file, in the
