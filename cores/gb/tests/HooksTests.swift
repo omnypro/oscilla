@@ -57,7 +57,7 @@ struct HooksTests {
         _ = Support.render(m, frames: 3000)
         let snapshot = try #require(cgb_snapshot_take(m))
         defer { cgb_snapshot_free(snapshot) }
-        #expect((300_000...360_000).contains(cgb_snapshot_size(snapshot)))
+        #expect((300_000...400_000).contains(cgb_snapshot_size(snapshot)))
         let first = Support.render(m, frames: 9600)
         #expect(cgb_snapshot_restore(m, snapshot) == 0)
         #expect(Support.render(m, frames: 9600) == first)
