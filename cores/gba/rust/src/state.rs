@@ -1,6 +1,7 @@
 //! The machine's data: everything that decides what the machine does next,
 //! grouped by the hardware unit that owns each field.
 
+use crate::scope::Scope;
 use oscilla_resample::Resampler;
 use std::sync::Arc;
 
@@ -224,6 +225,9 @@ pub struct Machine {
     pub(crate) dma: [DmaChannel; 4],
     pub(crate) timer: [TimerChannel; 4],
     pub(crate) apu: ApuState,
+    /// The recent output of each channel, for a display. It does not change
+    /// the sound.
+    pub(crate) scope: Scope,
     pub(crate) out: Resampler,
     /// Channels that reach the mix: bits 0 to 3 are the tone, wave and noise
     /// channels, bits 4 and 5 are Direct Sound A and B. A listener's setting,

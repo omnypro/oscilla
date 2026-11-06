@@ -22,12 +22,14 @@ mod exact;
 pub mod image;
 mod machine;
 mod resample;
+mod scope;
 mod state;
 mod system;
 mod tables;
 
 pub use bios::reference_sincos14;
-pub use machine::{ChannelLevels, EndState, RestoreError, Snapshot};
+pub use machine::{ChannelLevels, EndState, RestoreError, Snapshot, Voice, VoiceKind};
+pub use scope::{SCOPE_HZ, SCOPE_LEN};
 pub use state::{CLOCK_HZ, Machine, Observer};
 
 /// The constant tables, for the tests that compare them with libm.

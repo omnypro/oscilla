@@ -54,6 +54,24 @@ impl Machine {
         };
     }
 
+    /// The overflows of timer `i` in a second: the clock over the prescaler
+    /// and the count from the reload value to the overflow, or for a cascaded
+    /// timer the previous timer's rate over that count. 0 for a timer that is
+    /// stopped.
+    pub(crate) fn timer_hz(&self, i: usize) -> f64 {
+        let Some(t) = self.timer.get(i) else {
+            return 0.0;
+        };
+        let period = f64::from(0x1_0000u32 - u32::from(t.reload));
+        if t.running {
+            f64::from(CLOCK_HZ) / f64::from(1u32 << t.shift) / period
+        } else if t.cascade && i > 0 {
+            self.timer_hz(i - 1) / period
+        } else {
+            0.0
+        }
+    }
+
     pub(crate) fn timer_read(&self, i: usize) -> u16 {
         let t = &self.timer[i];
         if !t.running {

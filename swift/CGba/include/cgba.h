@@ -192,6 +192,104 @@ void cgba_channel_levels_get(const cgba_machine *machine, cgba_channel_levels *o
 void cgba_set_channel_mask(cgba_machine *machine, uint32_t mask);
 uint32_t cgba_channel_mask(const cgba_machine *machine);
 
+/* ---- Voices ------------------------------------------------------------ */
+
+/*
+ * What each channel is doing, for a display. The six voices are the channels
+ * of the mask, in its order: Pulse 1 (the square channel with the sweep),
+ * Pulse 2, Wave, Noise, Direct A and Direct B. Call these on the render
+ * thread, right after a render, and copy the result out; like every machine
+ * call they must not run while another thread renders. They do nothing inside
+ * an observer callback. The layout is the same in every core's header, so a
+ * viewer can treat the cores alike. Every field comes from the sound registers
+ * and the channels' own state. The fields:
+ *
+ *   active          1 while the channel plays at a volume above 0 to at least
+ *                   one side
+ *   key_on          1 while the channel plays: for Pulse 1 to Noise, its bit
+ *                   in SOUNDCNT_X (a trigger sets it; a length that runs out,
+ *                   a DAC that is turned off, a sweep past 2047 or sound
+ *                   turned off clears it); for Direct A and B, sound is on, a
+ *                   side hears the FIFO (SOUNDCNT_H) and its timer runs
+ *   kind            0 tone (Pulse 1, Pulse 2, Wave), 1 noise, 2 sample (Direct
+ *                   A and B)
+ *   instrument      the duty of a pulse channel (0 12.5%, 1 25%, 2 50%, 3
+ *                   75%); for Wave, a number that is the same for equal
+ *                   samples (a non-negative hash of the bank that plays, or of
+ *                   both banks in 64-sample mode); for Noise, 1 for 7-bit
+ *                   noise and 0 for 15-bit; -1 for Direct A and B
+ *   frequency_hz    the pitch of the note from the frequency register X:
+ *                   131072 / (2048 - X) for a pulse channel (the sweep's
+ *                   changes to Pulse 1 are in it), 65536 / (2048 - X) for Wave
+ *                   (32768 / (2048 - X) in 64-sample mode), 0 for Noise. For
+ *                   Direct A and B, the rate of the timer that SOUNDCNT_H
+ *                   selects: 16777216 / (65536 - reload) / prescaler, or for a
+ *                   cascaded timer 1 the rate of timer 0 / (65536 - reload),
+ *                   and 0 while that timer is stopped.
+ *   volume          0 to 1, and 0 while the channel does not play: the
+ *                   envelope volume over 15 for Pulse 1, Pulse 2 and Noise;
+ *                   Wave's output level (0, 0.25, 0.5, 0.75 or 1); 0.5 or 1
+ *                   for Direct A and B from their SOUNDCNT_H volume bits. The
+ *                   mixer applies the master volume of SOUNDCNT_L and the
+ *                   ratio of SOUNDCNT_H for the tone channels after the mask,
+ *                   to the sum of the channels, so neither is in it.
+ *   pan             -1 left to +1 right, from the two sides
+ *   envelope        the envelope volume over 15 for Pulse 1, Pulse 2 and
+ *                   Noise (0 while the channel does not play), -1 for Wave,
+ *                   Direct A and Direct B
+ *   left, right     the volume, to each side that the channel is on
+ *                   (SOUNDCNT_L for Pulse 1 to Noise, SOUNDCNT_H for Direct A
+ *                   and B), and 0 to a side that it is not on
+ *   envelope_phase  0
+ *   pitch_modulated, echo, ended  0
+ *   mask_bit        the bit of the channel mask that mutes this channel (0 to
+ *                   5, the voice's index)
+ */
+typedef struct {
+    int32_t active;
+    int32_t key_on;
+    int32_t kind;
+    int32_t instrument;
+    float frequency_hz;
+    float volume;
+    float pan;
+    float envelope;
+    float left;
+    float right;
+    int32_t envelope_phase;
+    int32_t pitch_modulated;
+    int32_t echo;
+    int32_t ended;
+    int32_t mask_bit;
+    int32_t reserved[3];
+} cgba_voice;
+
+/* The number of voices: 6. */
+int cgba_voice_count(const cgba_machine *machine);
+
+/* Writes at most `max` voices and returns how many. */
+int cgba_voices_get(const cgba_machine *machine, cgba_voice *out, int max);
+
+/* "Pulse 1", "Pulse 2", "Wave", "Noise", "Direct A" and "Direct B", or NULL
+ * for an index outside 0 to 5. The strings are static. */
+const char *cgba_voice_name(const cgba_machine *machine, int index);
+
+/*
+ * Fills `out` with the last `frames` frames that one channel put out, oldest
+ * first, as floats within -1 to 1 at the machine's output rate. A sample is
+ * the channel's own output about the middle of its swing, once for each side
+ * that it is on, averaged: Pulse 1 to Noise from their level (a pulse channel
+ * at volume 15 swings from -1 to 1 when both sides hear it), Direct A and B
+ * from the last byte that the FIFO played, times its 50 or 100 percent. Pulse
+ * 1 to Noise are 0 while they do not play, and Direct A and B keep their last
+ * byte. The mask and the mixer's volumes are not in it, so a muted channel
+ * still shows. The machine keeps 4,096 samples of 44,100 Hz (93 ms), each the
+ * level that the sound unit held then, and frames that reach further back are
+ * 0. Returns `frames`, or 0 for a channel outside 0 to 5, a NULL buffer, 0
+ * frames, more than 16,384 frames or a call from a callback.
+ */
+size_t cgba_scope_get(const cgba_machine *machine, int voice, float *out, size_t frames);
+
 /* ---- The end of a song ------------------------------------------------- */
 
 typedef enum {

@@ -50,6 +50,9 @@ A player has three more groups of calls.
   a short render.
 - `cgba_set_channel_mask` chooses which of the six channels reach the mix.
   `cgba_channel_levels_get` shows what each channel outputs, muted or not.
+  `cgba_voices_get` returns what each channel is doing (its pitch, volume,
+  sides, envelope and duty or wave number), and `cgba_scope_get` returns the
+  last frames that one channel put out, for a display.
 - `cgba_end_state_get` reports a CPU that waits for an interrupt that no
   register enables, and a CPU that runs a branch to itself with interrupts
   off. `cgba_quiet_cycles` counts the cycles since the output level changed.
@@ -85,6 +88,7 @@ took.
   ends, make sound and touch every kind of memory.
 - `hooks` and `bios_edges`: snapshots, channel masks, end-of-song signals and
   BIOS arguments at the edge of the cost arithmetic.
+- `viz`: the state of each channel and its scope, and no change to the sound.
 - `libm_equivalence` and `tables`: the platform-independent arithmetic and the
   constant tables against the platform's math library. The check of every
   ArcTan2 argument pair takes two minutes and runs with `--ignored`.

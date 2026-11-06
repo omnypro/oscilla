@@ -80,6 +80,32 @@ integral does not drift.
 One level unit is 48 steps of a 16-bit sample, so the 10-bit range fills
 three quarters of it. Float output uses the same scale.
 
+## Visualization
+
+`voice` reads a channel's registers and the state that the mixer reads, in the
+order of the channel mask. A pitch comes from the periods that the channel
+timers use: a pulse cycle is eight duty steps, so 131,072 / (2048 - X) Hz, and
+a wave cycle is 32 samples, or 64 when SOUND3CNT_L selects both banks. A FIFO's
+rate is its timer's overflow rate, worked out from the reload value and the
+prescaler, or for a cascaded timer 1 from timer 0's rate. A channel's volume
+is its envelope over 15, the wave channel's output level, or a FIFO's 50 or
+100 percent. The master volume and the ratio for the tone channels are left
+out, because the mixer applies them to the sum after the mask. The wave number
+is a hash of the bank that plays (both banks in 64-sample mode).
+
+The scope keeps the last 4,096 samples of each channel at 44,100 Hz. The tap
+is in `apu_sample`: each native sample adds the scope samples that fall due by
+its cycle and holds the channel's level between them. The count follows the
+cycles, so a change of the native rate does not change the scope's rate. A
+pulse, wave or noise sample is the level about the middle of its swing (twice
+the level less the level of a high step), so a square at volume 15 swings
+from -1 to 1. A FIFO sample is its latch at 50 or 100 percent. Each is taken
+once for each side that the channel is on, averaged, and the mask is not in
+it. `scope` resamples to the output rate by linear interpolation. The ring is
+not part of a copy of the machine, which starts with an empty one, and a reset
+clears it. It allocates with the machine, and taking a sample allocates
+nothing.
+
 ## Arithmetic
 
 The resampler's kernel and four BIOS calls (sine and cosine in the affine

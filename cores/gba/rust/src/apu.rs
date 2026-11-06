@@ -7,6 +7,8 @@
 //! after the volume shift. A FIFO spans +/-0x200. A channel that stops keeps
 //! outputting its last level until it plays again.
 
+use crate::machine::{Voice, VoiceKind};
+use crate::scope::VOICES;
 use crate::state::*;
 
 /// The Game Boy's duty waveforms, step by step.
@@ -28,6 +30,17 @@ fn noise_period(c: &PsgChannel) -> i64 {
         16i64 << c.ns
     } else {
         i64::from(32 * c.nr) << c.ns
+    }
+}
+
+/// The wave channel's output for the 4-bit sample `s` at the output level that
+/// SOUND3CNT_H (`h`) selects.
+fn wave_out(s: i32, h: u16) -> i32 {
+    if h & 0x8000 != 0 {
+        (s * 3) >> 2
+    } else {
+        const SHIFT: [i32; 4] = [4, 0, 1, 2];
+        s >> SHIFT[((h >> 13) & 3) as usize]
     }
 }
 
@@ -475,14 +488,7 @@ impl Machine {
         }
         let w = &self.apu.ch[2];
         if w.on && w.sample >= 0 {
-            let h = self.reg(0x72);
-            let s = w.sample;
-            if h & 0x8000 != 0 {
-                lv[2] = (s * 3) >> 2;
-            } else {
-                const SHIFT: [i32; 4] = [4, 0, 1, 2];
-                lv[2] = s >> SHIFT[((h >> 13) & 3) as usize];
-            }
+            lv[2] = wave_out(w.sample, self.reg(0x72));
         }
         let n = &self.apu.ch[3];
         if n.on {
@@ -494,6 +500,11 @@ impl Machine {
 
         let l = self.reg(0x80);
         let h = self.reg(0x82);
+        let due = self.scope.due(now);
+        if due > 0 {
+            let levels = self.scope_levels(&lv, l, h);
+            self.scope.push(&levels, due);
+        }
         let (mut psg_r, mut psg_l) = (0i32, 0i32);
         let mask = self.channel_mask;
         for i in 0..4 {
@@ -535,6 +546,134 @@ impl Machine {
         right = (right >> drop) << drop;
         self.apu.last_level = [left - 0x200, right - 0x200];
         self.out_step(now, left - 0x200, right - 0x200);
+    }
+
+    /// What each channel puts out now, as its scope keeps it: the channel's
+    /// level about the middle of its swing, once for each side that it is on,
+    /// averaged. The mask and the mixer's volumes are not in it. `lv` holds
+    /// the four tone, wave and noise levels that the mixer reads.
+    fn scope_levels(&self, lv: &[i32; 4], l: u16, h: u16) -> [i16; VOICES] {
+        let mut out = [0i16; VOICES];
+        let wave_top = wave_out(15, self.reg(0x72));
+        for i in 0..4 {
+            let c = &self.apu.ch[i];
+            // A stopped channel holds its last level, which is no sound.
+            if !c.on || (i == 2 && c.sample < 0) {
+                continue;
+            }
+            let top = if i == 2 { wave_top } else { c.volume };
+            let sides = i32::from(l & (0x100 << i) != 0) + i32::from(l & (0x1000 << i) != 0);
+            // 2 * level - top runs from -15 to 15, and 1092 is 32,768 over 30,
+            // so a channel at 15 on both sides reaches full scale.
+            out[i] = ((2 * lv[i] - top) * sides * 1092) as i16;
+        }
+        for ch in 0..2 {
+            let sides =
+                i32::from(h & (0x100 << (4 * ch)) != 0) + i32::from(h & (0x200 << (4 * ch)) != 0);
+            let unit = if h & (4 << ch) != 0 { 128 } else { 64 };
+            out[4 + ch] = (i32::from(self.apu.fifo[ch].latch) * unit * sides) as i16;
+        }
+        out
+    }
+
+    /// A number that is the same for equal samples in the wave channel's
+    /// playing bank, or in both banks when it plays 64 samples.
+    fn wave_id(&self, span: i64) -> i32 {
+        let mut id = 17u32;
+        for k in 0..(span / 2) as usize {
+            let bank = (self.apu.wave_bank as usize ^ (k >> 4)) & 1;
+            id = id
+                .wrapping_mul(31)
+                .wrapping_add(u32::from(self.apu.wave[bank][k & 15]));
+        }
+        (id & 0x7FFF_FFFF) as i32
+    }
+
+    /// What channel `i` is doing, in the order of the channel mask, from the
+    /// registers and the channel state that the mixer reads.
+    pub(crate) fn apu_voice(&self, i: usize) -> Option<Voice> {
+        const NAMES: [&str; VOICES] = [
+            "Pulse 1", "Pulse 2", "Wave", "Noise", "Direct A", "Direct B",
+        ];
+        let name = *NAMES.get(i)?;
+        let side = |on: bool, volume: f32| if on { volume } else { 0.0 };
+        if i >= 4 {
+            let ch = i - 4;
+            let h = self.reg(0x82);
+            let right = h & (0x100 << (4 * ch)) != 0;
+            let left = h & (0x200 << (4 * ch)) != 0;
+            let hz = self.timer_hz(usize::from((h >> (10 + 4 * ch)) & 1));
+            // A timer overflow takes a byte only while the sound unit is on
+            // and a side hears the FIFO.
+            let playing = self.io[0x84] & 0x80 != 0 && (left || right) && hz > 0.0;
+            let volume = match (playing, h & (4 << ch) != 0) {
+                (false, _) => 0.0,
+                (true, true) => 1.0,
+                (true, false) => 0.5,
+            };
+            return Some(Voice {
+                name,
+                mask_bit: i as u32,
+                kind: VoiceKind::Sample,
+                active: playing,
+                key_on: playing,
+                frequency_hz: hz as f32,
+                volume,
+                envelope: -1.0,
+                left: side(left, volume),
+                right: side(right, volume),
+                instrument: -1,
+                phase: 0,
+            });
+        }
+        let c = &self.apu.ch[i];
+        let l = self.reg(0x80);
+        let right = l & (0x100 << i) != 0;
+        let left = l & (0x1000 << i) != 0;
+        let clock = f64::from(CLOCK_HZ);
+        let env = if c.on { c.volume as f32 / 15.0 } else { 0.0 };
+        let (kind, level, hz, envelope, instrument) = match i {
+            // Eight steps of the duty make one cycle.
+            0 | 1 => (
+                VoiceKind::Tone,
+                env,
+                clock / (tone_period(c) * 8) as f64,
+                env,
+                c.duty,
+            ),
+            2 => {
+                let span: i64 = if self.reg(0x70) & 0x20 != 0 { 64 } else { 32 };
+                let h = self.reg(0x72);
+                let level = if h & 0x8000 != 0 {
+                    0.75
+                } else {
+                    [0.0, 1.0, 0.5, 0.25][usize::from((h >> 13) & 3)]
+                };
+                (
+                    VoiceKind::Tone,
+                    level,
+                    clock / (wave_period(c) * span) as f64,
+                    -1.0,
+                    self.wave_id(span),
+                )
+            }
+            _ => (VoiceKind::Noise, env, 0.0, env, i32::from(c.narrow)),
+        };
+        let volume = if c.on { level } else { 0.0 };
+        Some(Voice {
+            name,
+            mask_bit: i as u32,
+            kind,
+            active: volume > 0.0 && (left || right),
+            key_on: c.on,
+            frequency_hz: hz as f32,
+            volume,
+            envelope,
+            left: side(left, volume),
+            right: side(right, volume),
+            instrument,
+            phase: 0,
+        })
     }
 
     pub(crate) fn apu_reset(&mut self) {

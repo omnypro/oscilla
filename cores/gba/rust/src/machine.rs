@@ -1,6 +1,7 @@
 //! The public machine: creation, reset, rendering and inspection.
 
 use crate::image::Image;
+use crate::scope::{SCOPE_HZ, Scope, VOICES};
 use crate::state::*;
 use oscilla_resample::{OUT_RING, Resampler};
 use std::sync::Arc;
@@ -66,6 +67,7 @@ impl Machine {
             dma: Default::default(),
             timer: Default::default(),
             apu: ApuState::default(),
+            scope: Scope::new(),
             out: Resampler::new(output_rate, 24),
             channel_mask: 0x3F,
             last_change: 0,
@@ -87,6 +89,7 @@ impl Machine {
         self.warned_swi = [0; 8];
         self.warned_undefined = false;
         self.warned_misc = false;
+        self.scope.clear();
         self.sys_reset();
     }
 
@@ -216,6 +219,7 @@ impl Snapshot {
             + crate::state::VRAM_SIZE
             + crate::state::OAM_SIZE
             + self.0.out.heap_bytes()
+            + self.0.scope.heap_bytes()
     }
 }
 
@@ -235,6 +239,50 @@ pub enum RestoreError {
 pub struct ChannelLevels {
     pub psg: [i32; 4],
     pub fifo: [i32; 2],
+}
+
+/// What kind of sound a voice makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceKind {
+    Tone = 0,
+    Noise = 1,
+    Sample = 2,
+}
+
+/// One channel of the sound unit as a display shows it. The voices follow the
+/// channel mask: the two square channels, the wave channel, the noise channel,
+/// then Direct Sound A and B. Every field comes from the sound registers and
+/// the channel's own state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Voice {
+    pub name: &'static str,
+    /// The bit of the channel mask that mutes this voice.
+    pub mask_bit: u32,
+    pub kind: VoiceKind,
+    /// The channel plays at a volume above 0 to at least one side.
+    pub active: bool,
+    /// The channel plays: for the tone, wave and noise channels, their bit in
+    /// SOUNDCNT_X; for a FIFO, the sound unit is on, a side hears it and its
+    /// timer runs.
+    pub key_on: bool,
+    /// The pitch of the note in Hz, from the frequency register, and 0 for
+    /// noise. For a FIFO, the rate of the timer that drives it.
+    pub frequency_hz: f32,
+    /// 0 to 1: the envelope, the wave channel's output level or a FIFO's 50 or
+    /// 100 percent, and 0 while the channel does not play. The mixer's master
+    /// volume and its ratio for the tone channels are not in it.
+    pub volume: f32,
+    /// 0 to 1: the envelope volume over 15 of a square or noise channel, 0
+    /// while it does not play, and -1 for the wave channel and the FIFOs.
+    pub envelope: f32,
+    /// The volume to each side, 0 for a side that the channel is not on.
+    pub left: f32,
+    pub right: f32,
+    /// A square channel's duty (0 to 3), a hash of the wave channel's samples,
+    /// 1 for 7-bit noise and 0 for 15-bit, and -1 for a FIFO.
+    pub instrument: i32,
+    /// 0: the sound unit has no envelope phases.
+    pub phase: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +348,40 @@ impl Machine {
 
     pub fn channel_mask(&self) -> u8 {
         self.channel_mask
+    }
+
+    /// The number of voices: the six channels of the mask.
+    pub fn voice_count(&self) -> usize {
+        VOICES
+    }
+
+    /// What voice `index` is doing, or None for an index past the last.
+    pub fn voice(&self, index: usize) -> Option<Voice> {
+        self.apu_voice(index)
+    }
+
+    /// Fills `out` with the last `out.len()` frames that voice `index` put
+    /// out, at the machine's output rate, as floats within -1 to 1, oldest
+    /// first. The channel's own level and its sides are in it, and the mask
+    /// and the mixer's volumes are not, so a muted voice still shows. The
+    /// machine keeps 4,096 samples of 44,100 Hz (93 ms), and frames that reach
+    /// further back are 0. Returns false, and leaves `out` alone, for an index
+    /// past the last voice.
+    pub fn scope(&self, index: usize, out: &mut [f32]) -> bool {
+        if index >= VOICES {
+            return false;
+        }
+        let ratio = SCOPE_HZ as f64 / f64::from(self.out.rate());
+        let n = out.len();
+        for (k, o) in out.iter_mut().enumerate() {
+            let back = (n - 1 - k) as f64 * ratio;
+            let i = back as usize;
+            let frac = back - i as f64;
+            let a = f64::from(self.scope.get(index, i));
+            let b = f64::from(self.scope.get(index, i + 1));
+            *o = ((a + (b - a) * frac) / 32768.0) as f32;
+        }
+        true
     }
 
     pub fn end_state(&self) -> EndState {
