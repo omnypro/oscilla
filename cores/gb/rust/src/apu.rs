@@ -5,10 +5,14 @@
 //! unit catches up to the cycle of each register access before it applies
 //! the access.
 
+use crate::machine::{Voice, VoiceKind};
 use crate::state::*;
 
 /// The first register of each channel minus one: NRx1 is base + 1.
 const BASE: [usize; 4] = [0, 5, 0xA, 0xF];
+
+/// The channels' names, in the order of the channel mask.
+const VOICE_NAMES: [&str; 4] = ["Pulse 1", "Pulse 2", "Wave", "Noise"];
 
 /// The bits that read back as 1 for 0xFF10..=0xFF26.
 pub(crate) const READ_OR: [u8; 0x17] = [
@@ -132,6 +136,7 @@ impl Default for Apu {
             cap: [0.0; 2],
             hpf_time: 0,
             next_hpf: NEVER,
+            scope_next: 0,
         }
     }
 }
@@ -218,6 +223,106 @@ impl Apu {
                     0
                 }
             }
+        }
+    }
+
+    /// The channel reaches the mixer with its level: the unit and the
+    /// channel's status bit are on, its DAC is on, and its length counter has
+    /// not run out.
+    fn sounding(&self, ch: usize) -> bool {
+        let length = match ch {
+            0 => &self.ch1.length,
+            1 => &self.ch2.length,
+            2 => &self.ch3.length,
+            _ => &self.ch4.length,
+        };
+        self.on && self.active(ch) && self.dac_on(ch) && !(length.enabled && length.count == 0)
+    }
+
+    /// The highest digital output that a channel can put out now: its
+    /// envelope's volume, or 15 at the wave channel's output level. None for
+    /// the wave channel at level 0, which is mute.
+    fn top(&self, ch: usize) -> Option<u8> {
+        match ch {
+            0 => Some(self.ch1.env.volume),
+            1 => Some(self.ch2.env.volume),
+            2 => match self.r[0xC] >> 5 & 3 {
+                0 => None,
+                code => Some(15 >> (code - 1)),
+            },
+            _ => Some(self.ch4.env.volume),
+        }
+    }
+
+    /// What a channel puts out for the scope, -30 to 30: its DAC level about
+    /// the middle of its swing, once for each side that NR51 routes it to. The
+    /// sign is the mixer's, where digital 0 is the top level, so a channel
+    /// alone has the sign of the output.
+    fn scope_level(&self, ch: usize) -> i16 {
+        // The status bit clears whenever the unit, the DAC or the length
+        // counter stops a channel. This path runs for every sample, so it
+        // checks that bit alone.
+        let Some(top) = self.top(ch).filter(|_| self.active(ch)) else {
+            return 0;
+        };
+        let swing = i16::from(top) - 2 * i16::from(self.digital(ch));
+        let nr51 = self.r[0x15];
+        let sides = i16::from(nr51 >> (4 + ch) & 1) + i16::from(nr51 >> ch & 1);
+        swing * sides
+    }
+
+    /// A number that is the same for equal wave RAM: a hash of the 32
+    /// samples, kept non-negative.
+    fn wave_id(&self) -> i32 {
+        let mut id = 17u32;
+        for byte in self.wave_ram {
+            for sample in [byte >> 4, byte & 0xF] {
+                id = id.wrapping_mul(31).wrapping_add(u32::from(sample));
+            }
+        }
+        (id & 0x7FFF_FFFF) as i32
+    }
+
+    /// What channel `ch` (0 to 3) is doing, from its registers, its envelope
+    /// and its status bit.
+    pub(crate) fn voice(&self, ch: usize) -> Voice {
+        let ch = ch & 3;
+        let nr51 = self.r[0x15];
+        let level = |volume: u8| f32::from(volume) / 15.0;
+        // A pulse steps 8 times in a period and the wave channel 32 times, at
+        // the intervals that pulse_step and wave_step use.
+        let pitch = |clock: f32| clock / f32::from(2048 - self.freq(ch));
+        let (kind, full, envelope, frequency_hz, instrument) = match ch {
+            0 | 1 => {
+                let env = if ch == 0 { &self.ch1.env } else { &self.ch2.env };
+                let e = level(env.volume);
+                let duty = i32::from(self.reg(ch, 1) >> 6);
+                (VoiceKind::Tone, e, e, pitch(131_072.0), duty)
+            }
+            2 => {
+                let full = [0.0, 1.0, 0.5, 0.25][usize::from(self.r[0xC] >> 5 & 3)];
+                (VoiceKind::Tone, full, -1.0, pitch(65_536.0), self.wave_id())
+            }
+            _ => {
+                let e = level(self.ch4.env.volume);
+                let width = i32::from(self.r[0x12] >> 3 & 1);
+                (VoiceKind::Noise, e, e, 0.0, width)
+            }
+        };
+        let volume = if self.sounding(ch) { full } else { 0.0 };
+        Voice {
+            name: VOICE_NAMES[ch],
+            mask_bit: ch as u32,
+            kind,
+            active: volume > 0.0,
+            key_on: self.on && self.active(ch),
+            frequency_hz,
+            volume,
+            envelope,
+            left: if nr51 & (0x10 << ch) != 0 { volume } else { 0.0 },
+            right: if nr51 & (1 << ch) != 0 { volume } else { 0.0 },
+            instrument,
+            phase: 0,
         }
     }
 
@@ -441,9 +546,24 @@ impl Machine {
         }
     }
 
+    /// Takes the scope samples that fall before cycle `t`. Every change to the
+    /// channels comes after a call of this, so the outputs that the state
+    /// gives now have held since the last one.
+    fn scope_to(&mut self, t: u64) {
+        let a = &mut self.apu;
+        if a.scope_next >= t {
+            return;
+        }
+        let n = (t - a.scope_next).div_ceil(SCOPE_CLOCKS);
+        a.scope_next += n * SCOPE_CLOCKS;
+        let held = [0, 1, 2, 3].map(|ch| a.scope_level(ch));
+        self.scope.push(held, n);
+    }
+
     /// Runs every event up to and including cycle `t`.
     pub(crate) fn apu_advance(&mut self, t: u64) {
         if !self.apu.on {
+            self.scope_to(t);
             self.apu.time = t;
             return;
         }
@@ -469,6 +589,7 @@ impl Machine {
             if te > t {
                 break;
             }
+            self.scope_to(te);
             self.apu.time = te;
             match which {
                 0 => self.apu.frame_sequencer_tick(),
@@ -481,6 +602,7 @@ impl Machine {
             self.apu_emit(te);
         }
         self.apu.time = t;
+        self.scope_to(t);
     }
 
     /// Recomputes the mix and the filter's output at cycle `te` and hands the

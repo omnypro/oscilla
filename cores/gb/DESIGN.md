@@ -139,6 +139,30 @@ and one for each call of a routine. A callback reads the machine only through
 that machine returns at once with a neutral value, because the render that
 runs the callback holds the machine.
 
+## Visualization
+
+`voice` reads a channel's registers, its envelope and its status bit. The pitch
+comes from the 11-bit period P. A pulse steps eight times in a period and the
+wave channel 32 times (see Sound), so the pitch is 131,072 / (2048 - P) Hz for
+a pulse and 65,536 / (2048 - P) Hz for the wave channel. The volume is the
+envelope's volume over 15, or the wave channel's output level. It is 0 while
+the channel does not sound: the unit, the status bit or the DAC is off, or the
+length counter has run out. The left and right volumes follow NR51 and leave
+NR50 out. The wave channel's instrument is a hash of the 32 samples of wave
+RAM, equal for equal RAM.
+
+The scope keeps the last 4,096 samples of each channel at 32,768 Hz, one every
+128 clocks. A sample is the channel's DAC level about the middle of its swing
+(the volume, or 15 at the wave channel's output level), once for each side that
+NR51 routes it to. The sign is the mixer's, where digital 0 is the top level,
+so a channel alone has the sign of the output. A channel whose status bit is
+off puts 0. The mask and NR50 are not in it. Before the machine applies an
+event or a register access, it takes the samples that fall before it, and it
+does the same at the end of a render. No channel changes between two takes,
+so each sample is the channel's output at its own cycle. `scope` resamples to
+the output rate by linear interpolation. The ring is not part of a copy of the
+machine, which starts with an empty one, and a song change empties it in place.
+
 ## Snapshots
 
 `snapshot` copies everything a machine is except the observer, the channel

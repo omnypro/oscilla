@@ -41,13 +41,16 @@ of the init and play routines. Each play call is the driver's own tick, so a
 host can digest the stores per call. Rust code uses `oscilla_gb::Machine`
 directly.
 
-A player has four more groups of calls.
+A player has five more groups of calls.
 
 - `cgb_snapshot_take` copies the whole machine. `cgb_snapshot_restore` puts a
   machine with the same file and output rate back to that point, and the same
   calls then render the same samples.
 - `cgb_set_channel_mask` chooses which of the four channels reach the mix.
   `cgb_channel_levels_get` shows what each channel outputs, muted or not.
+- `cgb_voices_get` returns what each channel is doing (its pitch, volume, pan,
+  envelope, and its duty, wave or noise width), and `cgb_scope_get` returns the
+  last frames that one channel put out, for a display.
 - `cgb_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
   plays. The default is the console's own filter at about 28 Hz, and
   `cgb_use_console_highpass` returns to it. `cgb_highpass_hz` reads the cutoff
@@ -83,6 +86,7 @@ header. `--bench` renders without output and prints the time it took.
   drivers. A change to the sound or to any trace changes a hash.
 - `highpass`: the bass cutoff's range, default, decay time and behavior across
   a change, a reset and a restore.
+- `viz`: the state of each channel, its scope, and no change to the sound.
 - `cartridges`: public test cartridges for the CPU, memory timing and sound
   unit. They are not in the repository. `OSCILLA_GB_TESTS` names a folder that
   holds them and a `manifest.txt` that lists each one with a cycle limit. The

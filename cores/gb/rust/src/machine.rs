@@ -93,6 +93,7 @@ impl Machine {
             out: Resampler::new(output_rate, CLOCK_SHIFT),
             hp: Highpass::console(),
             channel_mask: 0xF,
+            scope: Scope::new(),
             last_change: 0,
             phase: Phase::Idle,
             song: 0,
@@ -152,6 +153,7 @@ impl Machine {
         self.apu.input = input;
         self.apu.gate = gate;
         self.apu.cap = [f64::from(input[0]), f64::from(input[1])];
+        self.scope.clear();
         self.out.reset();
         self.last_change = 0;
         self.phase = Phase::Idle;
@@ -529,6 +531,41 @@ impl Machine {
         [0, 1, 2, 3].map(|ch| i32::from(a.digital(ch)))
     }
 
+    /// The number of voices: the four channels.
+    pub fn voice_count(&self) -> usize {
+        4
+    }
+
+    /// What voice `index` is doing, or `None` for an index past the last.
+    pub fn voice(&self, index: usize) -> Option<Voice> {
+        (index < 4).then(|| self.apu.voice(index))
+    }
+
+    /// Fills `out` with the last `out.len()` frames that voice `index` put out,
+    /// at the machine's output rate, as floats within -1 to 1, oldest first.
+    /// The channel's envelope, its output level and its routing are in it, and
+    /// the channel mask and the master volume are not, so a muted voice still
+    /// shows. The machine keeps 4,096 samples of 32,768 Hz (125 ms), and
+    /// frames that reach further back are 0. Returns false, and leaves `out`
+    /// alone, for an index past the last voice.
+    pub fn scope(&self, index: usize, out: &mut [f32]) -> bool {
+        if index >= 4 {
+            return false;
+        }
+        let ratio = SCOPE_HZ as f64 / f64::from(self.out.rate());
+        let n = out.len();
+        for (k, o) in out.iter_mut().enumerate() {
+            let back = (n - 1 - k) as f64 * ratio;
+            let i = back as usize;
+            let frac = back - i as f64;
+            let a = f64::from(self.scope.get(index, i));
+            let b = f64::from(self.scope.get(index, i + 1));
+            // A channel at volume 15 on both sides swings from -30 to 30.
+            *o = ((a + (b - a) * frac) / 30.0) as f32;
+        }
+        true
+    }
+
     /// Chooses the channels that reach the mix; bit n is channel n + 1. All
     /// four are on by default.
     pub fn set_channel_mask(&mut self, mask: u8) {
@@ -597,6 +634,48 @@ impl Machine {
     pub fn quiet_cycles(&self) -> u64 {
         self.now.saturating_sub(self.last_change)
     }
+}
+
+/// What kind of sound a voice makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceKind {
+    Tone = 0,
+    Noise = 1,
+}
+
+/// One channel of the sound unit as a display shows it. The voices are the
+/// four channels in the order of the channel mask: pulse 1 (the one with the
+/// sweep), pulse 2, wave and noise.
+#[derive(Clone, Debug)]
+pub struct Voice {
+    pub name: &'static str,
+    /// The bit of the channel mask that mutes this voice.
+    pub mask_bit: u32,
+    pub kind: VoiceKind,
+    /// The voice is audible now: its volume is above 0.
+    pub active: bool,
+    /// The channel's status bit in NR52 is on.
+    pub key_on: bool,
+    /// The pitch of the note in Hz from the 11-bit period P:
+    /// 131072 / (2048 - P) for a pulse, 65536 / (2048 - P) for the wave
+    /// channel, 0 for noise.
+    pub frequency_hz: f32,
+    /// 0 to 1: the envelope's volume over 15, or the wave channel's output
+    /// level. 0 while the channel does not sound: its status bit, its DAC or
+    /// the unit is off, or its length counter has run out.
+    pub volume: f32,
+    /// 0 to 1: the envelope's volume over 15, which keeps its value after the
+    /// channel stops. -1 for the wave channel, which has no envelope.
+    pub envelope: f32,
+    /// The volume to each side, 0 for a side that NR51 leaves the channel off.
+    /// The master volume of NR50 is not in it.
+    pub left: f32,
+    pub right: f32,
+    /// The pulse duty (0 to 3), a number that is the same for equal wave RAM,
+    /// or the noise width from NR43 bit 3 (1 for the 7-bit mode).
+    pub instrument: i32,
+    /// 0: the envelopes have no phases.
+    pub phase: i32,
 }
 
 /// How a song stands, for a host that decides when it has ended.

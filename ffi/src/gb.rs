@@ -501,6 +501,125 @@ pub unsafe extern "C" fn cgb_channel_mask(machine: *const CMachine) -> u32 {
     u32::from(unsafe { &(*machine).machine }.channel_mask())
 }
 
+// ---- Voices and scopes -------------------------------------------------
+
+/// One channel as a player shows it. The layout is the same in every core's
+/// header (`csnes_voice`, `cgenesis_voice` and the others follow it).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CVoice {
+    active: c_int,
+    key_on: c_int,
+    kind: c_int,
+    instrument: c_int,
+    frequency_hz: f32,
+    volume: f32,
+    pan: f32,
+    envelope: f32,
+    left: f32,
+    right: f32,
+    envelope_phase: c_int,
+    pitch_modulated: c_int,
+    echo: c_int,
+    ended: c_int,
+    mask_bit: c_int,
+    reserved: [c_int; 3],
+}
+
+fn make_voice(v: &oscilla_gb::Voice) -> CVoice {
+    let sides = v.left + v.right;
+    CVoice {
+        active: c_int::from(v.active),
+        key_on: c_int::from(v.key_on),
+        kind: v.kind as c_int,
+        instrument: v.instrument,
+        frequency_hz: v.frequency_hz,
+        volume: v.volume,
+        pan: if sides > 0.0 {
+            (v.right - v.left) / sides
+        } else {
+            0.0
+        },
+        envelope: v.envelope,
+        left: v.left,
+        right: v.right,
+        envelope_phase: v.phase,
+        pitch_modulated: 0,
+        echo: 0,
+        ended: 0,
+        mask_bit: v.mask_bit as c_int,
+        reserved: [0; 3],
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_voice_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    unsafe { &(*machine).machine }.voice_count() as c_int
+}
+
+/// Writes at most `max` voices and returns how many.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_voices_get(
+    machine: *const CMachine,
+    out: *mut CVoice,
+    max: c_int,
+) -> c_int {
+    if machine.is_null() || out.is_null() || max <= 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let m = unsafe { &(*machine).machine };
+    let mut n = 0;
+    for i in 0..(max as usize).min(m.voice_count()) {
+        if let Some(v) = m.voice(i) {
+            unsafe { *out.add(i) = make_voice(&v) };
+            n += 1;
+        }
+    }
+    n
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_voice_name(machine: *const CMachine, index: c_int) -> *const c_char {
+    const NAMES: [&CStr; 4] = [c"Pulse 1", c"Pulse 2", c"Wave", c"Noise"];
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return ptr::null();
+    }
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| NAMES.get(i))
+        .map_or(ptr::null(), |n| n.as_ptr())
+}
+
+/// Fills `out` with the last `frames` frames of a channel. Returns `frames`, or
+/// 0 for a voice outside 0 to 3, a NULL buffer, 0 frames, more than 16,384
+/// frames or a call from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_scope_get(
+    machine: *const CMachine,
+    voice: c_int,
+    out: *mut f32,
+    frames: usize,
+) -> usize {
+    if machine.is_null()
+        || out.is_null()
+        || voice < 0
+        || frames == 0
+        || frames > 16_384
+        || unsafe { in_callback(machine) }
+    {
+        return 0;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, frames) };
+    if unsafe { &(*machine).machine }.scope(voice as usize, out) {
+        frames
+    } else {
+        0
+    }
+}
+
 /// 1 when the cutoff is in range and applied, 0 otherwise (also from inside a
 /// callback).
 #[unsafe(no_mangle)]

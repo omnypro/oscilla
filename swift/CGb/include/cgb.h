@@ -194,6 +194,82 @@ void cgb_channel_levels_get(const cgb_machine *machine, int32_t out[4]);
 void cgb_set_channel_mask(cgb_machine *machine, uint32_t mask);
 uint32_t cgb_channel_mask(const cgb_machine *machine);
 
+/* ---- Voices and scopes ------------------------------------------------- */
+
+/*
+ * What each channel is doing, for a display. The four voices are the channels
+ * in the order of the channel mask: pulse 1 (the one with the sweep), pulse 2,
+ * wave and noise. Call these on the render thread, right after a render, and
+ * copy the result out; like every machine call they must not run while
+ * another thread renders. They do nothing inside an observer callback. The
+ * layout is the same in every core's header, so a viewer can treat the cores
+ * alike. The fields:
+ *
+ *   active          1 while the channel sounds at a volume above 0
+ *   key_on          1 while the channel's status bit in NR52 is on
+ *   kind            0 tone (the pulses and the wave channel), 1 noise
+ *   instrument      the pulse duty from NRx1 bits 7-6 (0 12.5%, 1 25%, 2 50%,
+ *                   3 75%); for the wave channel a number that is the same for
+ *                   equal wave RAM (a non-negative hash of the 32 samples); the
+ *                   noise width from NR43 bit 3 (1 for the 7-bit mode)
+ *   frequency_hz    the pitch of the note from the 11-bit period P:
+ *                   131072 / (2048 - P) for the pulses, 65536 / (2048 - P) for
+ *                   the wave channel, 0 for noise. The sweep rewrites the
+ *                   period of pulse 1, so its changes are in it.
+ *   volume          0 to 1: the envelope's volume over 15 for the pulses and
+ *                   noise, the output level of NR32 (0, 1, 0.5 or 0.25) for
+ *                   the wave channel. 0 while the channel does not sound: the
+ *                   unit, the status bit or the DAC is off, or the length
+ *                   counter has run out.
+ *   pan             -1 left to +1 right, from NR51
+ *   envelope        0 to 1 for the pulses and noise (the envelope's volume over
+ *                   15, which keeps its value after the channel stops), -1 for
+ *                   the wave channel
+ *   left, right     the volume to each side, 0 when NR51 leaves the channel off
+ *                   that side. The master volume of NR50 is not in them.
+ *   envelope_phase, pitch_modulated, echo, ended  0
+ *   mask_bit        the bit of the channel mask that mutes this voice
+ */
+typedef struct {
+    int32_t active;
+    int32_t key_on;
+    int32_t kind;
+    int32_t instrument;
+    float frequency_hz;
+    float volume;
+    float pan;
+    float envelope;
+    float left;
+    float right;
+    int32_t envelope_phase;
+    int32_t pitch_modulated;
+    int32_t echo;
+    int32_t ended;
+    int32_t mask_bit;
+    int32_t reserved[3];
+} cgb_voice;
+
+/* The number of voices: 4. */
+int cgb_voice_count(const cgb_machine *machine);
+
+/* Writes at most `max` voices and returns how many. */
+int cgb_voices_get(const cgb_machine *machine, cgb_voice *out, int max);
+
+/* "Pulse 1", "Pulse 2", "Wave" and "Noise", or NULL for an index outside 0 to
+ * 3. The strings are static. */
+const char *cgb_voice_name(const cgb_machine *machine, int index);
+
+/*
+ * Fills `out` with the last `frames` frames that one voice put out, oldest
+ * first, as floats within -1 to 1 at the machine's output rate. The channel's
+ * envelope, its output level and its NR51 routing are in it, and the channel
+ * mask and the master volume are not, so a muted voice still shows. The
+ * machine keeps 4,096 samples of 32,768 Hz (125 ms), so frames that reach
+ * further back are 0. Returns `frames`, or 0 for a voice outside 0 to 3, a
+ * NULL buffer, 0 frames, more than 16,384 frames or a call from a callback.
+ */
+size_t cgb_scope_get(const cgb_machine *machine, int voice, float *out, size_t frames);
+
 /* ---- Bass cutoff ------------------------------------------------------- */
 
 /*

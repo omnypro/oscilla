@@ -31,6 +31,65 @@ impl Clone for ObserverSlot {
     }
 }
 
+/// The samples of each channel's output that the scope keeps: 4,096 of
+/// 32,768 Hz, or 125 ms.
+pub const SCOPE_LEN: usize = 4096;
+
+/// Clocks between two scope samples. The sample clock runs on every event,
+/// and a power of two keeps it to a shift and an add.
+pub const SCOPE_CLOCKS: u64 = 128;
+
+/// The rate of the scope's samples: 32,768 Hz.
+pub const SCOPE_HZ: u64 = CLOCK_HZ as u64 / SCOPE_CLOCKS;
+
+/// The recent output of each channel for a display, before the mask and the
+/// master volume. It is not part of a copy of the machine, which starts with
+/// an empty one.
+pub struct Scope {
+    /// The four channels' samples side by side, so that a sample is one store.
+    data: Box<[[i16; 4]; SCOPE_LEN]>,
+    /// The index that the next sample goes to.
+    at: usize,
+}
+
+impl Scope {
+    pub fn new() -> Scope {
+        Scope {
+            data: Box::new([[0; 4]; SCOPE_LEN]),
+            at: 0,
+        }
+    }
+
+    /// Adds `n` samples of the same values.
+    pub fn push(&mut self, samples: [i16; 4], n: u64) {
+        for _ in 0..n.min(SCOPE_LEN as u64) {
+            self.data[self.at] = samples;
+            self.at = (self.at + 1) % SCOPE_LEN;
+        }
+    }
+
+    /// The sample `back` steps before the newest of a channel, 0 for the
+    /// newest.
+    pub fn get(&self, channel: usize, back: usize) -> i16 {
+        if channel >= 4 || back >= SCOPE_LEN {
+            return 0;
+        }
+        self.data[(self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN][channel]
+    }
+
+    /// Empties the ring in place, so that a song change allocates nothing.
+    pub fn clear(&mut self) {
+        self.data.fill([0; 4]);
+        self.at = 0;
+    }
+}
+
+impl Clone for Scope {
+    fn clone(&self) -> Scope {
+        Scope::new()
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct Cpu {
     pub a: u8,
@@ -148,6 +207,8 @@ pub struct Apu {
     pub hpf_time: u64,
     /// The next cycle at which the filter's output is recomputed.
     pub next_hpf: u64,
+    /// The cycle of the next scope sample, a multiple of SCOPE_CLOCKS.
+    pub scope_next: u64,
 }
 
 pub type Ram64k = Box<[u8; 0x10000]>;
@@ -203,6 +264,8 @@ pub struct Machine {
     pub(crate) hp: crate::apu::Highpass,
     /// The channel mask: bit n is channel n + 1.
     pub(crate) channel_mask: u8,
+    /// The recent output of each channel, for a display.
+    pub(crate) scope: Scope,
     pub(crate) last_change: u64,
 
     pub(crate) phase: Phase,
