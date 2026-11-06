@@ -1,5 +1,12 @@
 # Changes
 
+## 0.5.1
+
+- The Genesis core plays a second YM2612 and a second SN76489, and the DAC
+  stream commands (0x90 to 0x95) for the YM2612.
+- The channel mask has bits 10 to 15 for the second YM2612 and bits 16 to 19
+  for the second SN76489. A file without a second chip keeps 0x3FF.
+
 ## 0.5.0
 
 - The Genesis core, which plays VGM and VGZ files. It runs the YM2612 (six
