@@ -54,4 +54,53 @@ struct ImageTests {
         #expect(cgenesis_image_load_vgm("/nonexistent/file.vgm", &image, &error, error.count)
                 == CGENESIS_ERR_IO)
     }
+
+    @Test func aGymLogLoadsAsAnImageAndPlays() {
+        var header = [UInt8](repeating: 0, count: 428)
+        header.replaceSubrange(0..<4, with: Array("GYMX".utf8))
+        header.replaceSubrange(4..<8, with: Array("Song".utf8))
+        header[420] = 1
+        var log: [UInt8] = []
+        for step in 0..<4 as Range<UInt8> {
+            log += [1, 0x30 + 4 * step, 0x01, 1, 0x40 + 4 * step, step == 0 ? 0 : 127]
+            log += [1, 0x50 + 4 * step, 0x1F, 1, 0x60 + 4 * step, 0, 1, 0x70 + 4 * step, 0]
+            log += [1, 0x80 + 4 * step, 0x0F]
+        }
+        log += [1, 0xB0, 7, 1, 0xB4, 0xC0, 1, 0xA4, 0x22, 1, 0xA0, 0x4B, 1, 0x28, 0xF0]
+        log += [UInt8](repeating: 0, count: 30)
+        let bytes = header + log
+        var image: OpaquePointer?
+        var error = [CChar](repeating: 0, count: 256)
+        let status = bytes.withUnsafeBufferPointer {
+            cgenesis_image_from_gym($0.baseAddress, $0.count, 0, &image, &error, error.count)
+        }
+        #expect(status == CGENESIS_OK)
+        defer { cgenesis_image_free(image) }
+        #expect(String(cString: cgenesis_image_title(image)) == "Song")
+        #expect(cgenesis_image_total_samples(image) == 30 * 735)
+        #expect(cgenesis_image_loop_samples(image) == 29 * 735)
+        #expect(cgenesis_image_frame_rate(image) == 60)
+        let machine = cgenesis_new(image, 44_100)!
+        defer { cgenesis_free(machine) }
+        #expect(Support.rms(Support.render(machine, frames: 20 * 735)) > 0.01)
+        var pal: OpaquePointer?
+        let again = bytes.withUnsafeBufferPointer {
+            cgenesis_image_from_gym($0.baseAddress, $0.count, 1, &pal, &error, error.count)
+        }
+        #expect(again == CGENESIS_OK)
+        #expect(cgenesis_image_frame_rate(pal) == 50)
+        cgenesis_image_free(pal)
+    }
+
+    @Test func aBadGymLogIsRefused() {
+        var image: OpaquePointer?
+        var error = [CChar](repeating: 0, count: 256)
+        let junk: [UInt8] = [0, 0, 9]
+        let status = junk.withUnsafeBufferPointer {
+            cgenesis_image_from_gym($0.baseAddress, $0.count, 0, &image, &error, error.count)
+        }
+        #expect(status == CGENESIS_ERR_FORMAT)
+        #expect(image == nil)
+        #expect(String(cString: error) == "Not a GYM command at byte 2.")
+    }
 }

@@ -14,7 +14,7 @@ extern "C" {
  * writes with waits in samples of 44,100 Hz, so there is no CPU. The machine
  * hands back the sound as interleaved stereo at a rate the caller chooses.
  *
- * Two objects. An image is a parsed VGM or VGZ file. A machine plays the song
+ * Two objects. An image is a parsed VGM, VGZ or GYM file. A machine plays the song
  * of one image. Every piece of state lives in the machine, so several machines
  * can run side by side. With the same image and calls, a machine produces the
  * same output on every run.
@@ -35,7 +35,7 @@ typedef struct cgenesis_image cgenesis_image;
 typedef enum {
     CGENESIS_OK = 0,
     CGENESIS_ERR_IO,     /* a file could not be opened or read */
-    CGENESIS_ERR_FORMAT  /* not a VGM or VGZ file, or too large */
+    CGENESIS_ERR_FORMAT  /* not a VGM, VGZ or GYM file, or too large */
 } cgenesis_status;
 
 /*
@@ -51,6 +51,24 @@ cgenesis_status cgenesis_image_load_vgm(const char *path, cgenesis_image **out,
 cgenesis_status cgenesis_image_from_vgm(const uint8_t *bytes, size_t size,
                                         cgenesis_image **out, char *error,
                                         size_t error_size);
+
+/*
+ * The same for a .gym file, a log of the YM2612 and SN76489 writes of one
+ * frame of the console at a time. A file can start with the "GYMX" header,
+ * and its data can be zlib compressed. The file does not say where it came
+ * from, so `pal` chooses the frame length and the clocks: 0 for a 60 Hz console,
+ * anything else for a 50 Hz one. The image then reads like a VGM file: the tag
+ * has the title, the game, the dumper (as the ripper) and the comment (as the
+ * notes), and cgenesis_image_frame_rate returns 60 or 50. A byte where a command
+ * should start that is not 0 to 3 fails with CGENESIS_ERR_FORMAT.
+ */
+cgenesis_status cgenesis_image_load_gym(const char *path, int pal,
+                                        cgenesis_image **out, char *error,
+                                        size_t error_size);
+
+cgenesis_status cgenesis_image_from_gym(const uint8_t *bytes, size_t size,
+                                        int pal, cgenesis_image **out,
+                                        char *error, size_t error_size);
 
 void cgenesis_image_free(cgenesis_image *image);
 

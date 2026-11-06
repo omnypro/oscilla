@@ -30,6 +30,26 @@ waits, the data blocks of type 0 (the YM2612's PCM bank), the 0x8n DAC commands,
 the seek of 0xE0 and the DAC stream commands. It reads and skips every other
 command by its length.
 
+## GYM
+
+`formats/gym` reads a GYM file and writes the VGM file with the same commands.
+The core then plays that file, so a GYM log and its VGM twin render the same
+samples. A log has four commands: 0x00 waits one frame, 0x01 and 0x02 write a
+register of the YM2612's port 0 and port 1, and 0x03 writes the SN76489. The
+conversion makes a frame wait 735 samples (60 Hz) or 882 (50 Hz) and sets the
+chips' clocks to the console's: YM2612 7,670,454 Hz and SN76489 3,579,545 Hz for
+NTSC, 7,600,489 Hz and 3,546,895 Hz for PAL. An optional "GYMX" header of 428
+bytes holds the tag text (song, game, publisher, emulator, dumper, comment),
+the frame where the loop starts and a flag for zlib compressed data. The loop
+starts after the wait that ends that many frames. A start at or past the last
+frame is no loop. The data may be 64 MiB unpacked.
+
+The header has no field for the region. The caller says whether the log is PAL.
+
+A command that the data ends in the middle of is dropped. A byte that is not 0
+to 3 where a command should start is an error, because the length of the next
+command is not known.
+
 ## Time
 
 The unit of time is 1/(44100 x 4096) s. A VGM wait is a whole number of 4096
@@ -161,6 +181,11 @@ These choices rest on documents that do not say, or on a single measurement.
   last byte of the block, less the base), and the order of a stream write and
   a command at the same instant (the write goes first). The data of a stream
   for another chip, and a stream for the SN76489, are ignored.
+- GYM: that a byte above 3 is an error and not something to skip. The two
+  descriptions of the format that the core was written from list four commands
+  and no others.
+- GYM: whether the header's packed flag is a size (the core takes any nonzero
+  value as a flag and unpacks the rest of the file).
 - Whether two chips of one kind should be mixed at lower levels. The core adds
   them at full level, as the file's other players do.
 - The ladder effect (the DAC's resistor ladder adds an offset below zero) is

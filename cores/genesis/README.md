@@ -1,6 +1,6 @@
 # Genesis core
 
-A music-only Mega Drive (Genesis) in Rust. It plays VGM and VGZ files: it reads
+A music-only Mega Drive (Genesis) in Rust. It plays VGM, VGZ and GYM files: it reads
 the log of register writes, drives a YM2612 and an SN76489 with them on one
 timeline, and returns the sound as interleaved stereo at the rate the caller
 chooses. Nothing is drawn, and nothing reads input.
@@ -19,7 +19,8 @@ SN76489 (three tones, noise, the Game Gear stereo write).
 - `DESIGN.md`: how the core works.
 - `tools/oscilla-vgm`: the command-line player described below.
 
-The VGM reader is the `oscilla-vgm` crate in `formats/vgm`. The resampler is
+The VGM reader is the `oscilla-vgm` crate in `formats/vgm`. The GYM reader is
+the `oscilla-gym` crate in `formats/gym`. The resampler is
 the `oscilla-resample` crate in `audio/resample`. The C header is
 `swift/CGenesis/include/cgenesis.h`, a path from the root of the repository.
 
@@ -42,6 +43,10 @@ Japanese), the chips that the file drives, the intro and loop lengths in
 samples of 44,100 Hz or in frames of any rate, the number of passes that the
 file's loop base and modifier ask for, and the gain of its volume modifier.
 A field that the file leaves out is an empty string or 0.
+
+`cgenesis_image_load_gym` and `cgenesis_image_from_gym` read a GYM file into the
+same kind of image. The file does not name its region, so the call takes a `pal`
+flag that picks 50 Hz frames and the PAL clocks.
 
 A player has three more groups of calls.
 
@@ -79,10 +84,13 @@ times. `--bench` renders without output and prints the time it took.
   volume modifier.
 - `goldens`: a hash of the samples for each of 32 generated files. A change to
   the sound changes a hash.
+- `gym`: a GYM log renders the same samples as the VGM file with the same
+  commands, a PAL log runs at 50 frames a second, and a loop comes round.
 - `fuzz`: files of random bytes run without a panic and render the same samples
   twice.
 
-`cargo test -p oscilla-vgm --release` runs the reader's tests.
+`cargo test -p oscilla-vgm --release` and `cargo test -p oscilla-gym --release`
+run the readers' tests.
 
 ## Compatibility
 
@@ -91,8 +99,8 @@ songs and 12 synthetic files. DESIGN.md lists the fits, the approximations and
 the unknowns.
 
 Not emulated: other sound chips that a VGM file can name (the YM2413 and the
-rest), the GYM format, and the analog stages after the chips. The output has a high-pass and
-no low-pass.
+rest) and the analog stages after the chips. The output has a high-pass and no
+low-pass.
 
 ## References
 

@@ -7,3 +7,6 @@ publish.workspace = true
 [dependencies]
 oscilla-vgm.workspace = true
 oscilla-resample.workspace = true
+
+[dev-dependencies]
+oscilla-gym.workspace = true

@@ -51,6 +51,7 @@ dependencies = [
  "oscilla-gba",
  "oscilla-gbs",
  "oscilla-genesis",
+ "oscilla-gym",
  "oscilla-nes",
  "oscilla-nsf",
  "oscilla-snes",
@@ -81,7 +82,16 @@ version = "0.0.0"
 name = "oscilla-genesis"
 version = "0.0.0"
 dependencies = [
+ "oscilla-gym",
  "oscilla-resample",
+ "oscilla-vgm",
+]
+
+[[package]]
+name = "oscilla-gym"
+version = "0.0.0"
+dependencies = [
+ "flate2",
  "oscilla-vgm",
 ]
 

@@ -2,6 +2,7 @@
 
 use crate::write_error;
 use oscilla_genesis::{EndState, Machine};
+use oscilla_gym::Gym;
 use oscilla_vgm::{MAX_FILE, SAMPLE_RATE, Vgm};
 use std::ffi::{CStr, CString, c_char, c_int};
 use std::io::Read;
@@ -31,8 +32,26 @@ fn c_text(text: &str) -> CString {
     CString::new(text.replace('\0', "")).unwrap_or_default()
 }
 
-fn make_image(bytes: &[u8], error: *mut c_char, error_size: usize) -> Result<Box<CImage>, c_int> {
-    match Vgm::parse(bytes) {
+/// The format of a file, and for a GYM file whether it came from a PAL console.
+#[derive(Clone, Copy)]
+enum Source {
+    Vgm,
+    Gym { pal: bool },
+}
+
+fn make_image(
+    bytes: &[u8],
+    source: Source,
+    error: *mut c_char,
+    error_size: usize,
+) -> Result<Box<CImage>, c_int> {
+    let parsed = match source {
+        Source::Vgm => Vgm::parse(bytes).map_err(|e| e.to_string()),
+        Source::Gym { pal } => Gym::parse(bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|g| Vgm::parse(&g.to_vgm(pal)).map_err(|e| e.to_string())),
+    };
+    match parsed {
         Ok(vgm) => {
             let tag = vgm.gd3.clone().unwrap_or_default();
             Ok(Box::new(CImage {
@@ -51,7 +70,7 @@ fn make_image(bytes: &[u8], error: *mut c_char, error_size: usize) -> Result<Box
             }))
         }
         Err(e) => {
-            write_error(error, error_size, e.to_string().as_bytes());
+            write_error(error, error_size, e.as_bytes());
             Err(FORMAT)
         }
     }
@@ -82,9 +101,9 @@ fn is_regular_file(path: &[u8]) -> bool {
     std::str::from_utf8(path).is_ok_and(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file()))
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn cgenesis_image_load_vgm(
+unsafe fn load(
     path: *const c_char,
+    source: Source,
     out: *mut *mut CImage,
     error: *mut c_char,
     error_size: usize,
@@ -111,7 +130,7 @@ pub unsafe extern "C" fn cgenesis_image_load_vgm(
         write_error(error, error_size, b"Could not read the file.");
         return IO;
     }
-    match make_image(&bytes, error, error_size) {
+    match make_image(&bytes, source, error, error_size) {
         Ok(img) => {
             unsafe { *out = Box::into_raw(img) };
             OK
@@ -120,10 +139,10 @@ pub unsafe extern "C" fn cgenesis_image_load_vgm(
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn cgenesis_image_from_vgm(
+unsafe fn from_bytes(
     bytes: *const u8,
     size: usize,
+    source: Source,
     out: *mut *mut CImage,
     error: *mut c_char,
     error_size: usize,
@@ -134,7 +153,11 @@ pub unsafe extern "C" fn cgenesis_image_from_vgm(
     unsafe { *out = ptr::null_mut() };
     write_error(error, error_size, b"");
     if bytes.is_null() || size == 0 {
-        write_error(error, error_size, b"Not a VGM file.");
+        let text: &[u8] = match source {
+            Source::Vgm => b"Not a VGM file.",
+            Source::Gym { .. } => b"Not a GYM file.",
+        };
+        write_error(error, error_size, text);
         return FORMAT;
     }
     if size > MAX_FILE {
@@ -143,6 +166,7 @@ pub unsafe extern "C" fn cgenesis_image_from_vgm(
     }
     match make_image(
         unsafe { slice::from_raw_parts(bytes, size) },
+        source,
         error,
         error_size,
     ) {
@@ -152,6 +176,52 @@ pub unsafe extern "C" fn cgenesis_image_from_vgm(
         }
         Err(code) => code,
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_load_vgm(
+    path: *const c_char,
+    out: *mut *mut CImage,
+    error: *mut c_char,
+    error_size: usize,
+) -> c_int {
+    unsafe { load(path, Source::Vgm, out, error, error_size) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_from_vgm(
+    bytes: *const u8,
+    size: usize,
+    out: *mut *mut CImage,
+    error: *mut c_char,
+    error_size: usize,
+) -> c_int {
+    unsafe { from_bytes(bytes, size, Source::Vgm, out, error, error_size) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_load_gym(
+    path: *const c_char,
+    pal: c_int,
+    out: *mut *mut CImage,
+    error: *mut c_char,
+    error_size: usize,
+) -> c_int {
+    let source = Source::Gym { pal: pal != 0 };
+    unsafe { load(path, source, out, error, error_size) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_image_from_gym(
+    bytes: *const u8,
+    size: usize,
+    pal: c_int,
+    out: *mut *mut CImage,
+    error: *mut c_char,
+    error_size: usize,
+) -> c_int {
+    let source = Source::Gym { pal: pal != 0 };
+    unsafe { from_bytes(bytes, size, source, out, error, error_size) }
 }
 
 #[unsafe(no_mangle)]
