@@ -223,4 +223,37 @@ struct MachineTests {
         _ = Support.render(m, frames: 100)
         #expect(seen.writes.count == 3)
     }
+
+    @Test func theVoicesReportTheirStateAndShowInTheirScopes() {
+        let stream = Support.fmTone() + Support.psgTone() + Support.wait(44_100)
+        let m = Support.machine(Support.vgm(stream: stream))
+        defer { cgenesis_free(m) }
+        _ = cgenesis_set_highpass_hz(m, 0)
+        _ = Support.render(m, frames: 8000)
+        #expect(cgenesis_voice_count(m) == 10)
+        var voices = [cgenesis_voice](repeating: cgenesis_voice(), count: 10)
+        #expect(cgenesis_voices_get(m, &voices, 10) == 10)
+        #expect(voices[0].kind == 3 && voices[0].key_on == 1 && voices[0].active == 1)
+        #expect(abs(voices[0].frequency_hz - 238.5) < 2)
+        #expect(voices[0].envelope > 0.9 && abs(voices[0].pan) < 0.001)
+        #expect(voices[0].mask_bit == 0 && voices[6].mask_bit == 6)
+        #expect(voices[6].kind == 0 && voices[6].key_on == 1)
+        #expect(voices[9].kind == 1)
+        #expect(voices[1].key_on == 0 && voices[1].active == 0)
+        #expect(String(cString: cgenesis_voice_name(m, 0)) == "FM 1")
+        #expect(String(cString: cgenesis_voice_name(m, 6)) == "PSG Tone 1")
+        #expect(cgenesis_voice_name(m, 10) == nil)
+        #expect(cgenesis_voices_get(m, &voices, 4) == 4)
+        #expect(cgenesis_voices_get(m, &voices, 0) == 0)
+        cgenesis_set_channel_mask(m, 0)
+        _ = Support.render(m, frames: 500)
+        var scope = [Float](repeating: 0, count: 2048)
+        #expect(cgenesis_scope_get(m, 0, &scope, 2048) == 2048)
+        #expect(scope.contains { $0 > 0.05 } && scope.contains { $0 < -0.05 })
+        #expect(cgenesis_scope_get(m, 10, &scope, 64) == 0)
+        #expect(cgenesis_scope_get(m, -1, &scope, 64) == 0)
+        #expect(cgenesis_scope_get(m, 0, nil, 64) == 0)
+        #expect(cgenesis_scope_get(m, 0, &scope, 20_000) == 0)
+        #expect(cgenesis_voice_count(nil) == 0)
+    }
 }

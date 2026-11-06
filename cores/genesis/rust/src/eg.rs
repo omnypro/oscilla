@@ -140,12 +140,12 @@ fn rate(register: u8, ks: u8, kc: u8) -> u8 {
 }
 
 impl Eg {
-    #[cfg(test)]
+    /// The envelope's attenuation, 0 (loudest) to 0x3FF, before the total
+    /// level.
     pub fn attenuation(&self) -> u16 {
         self.att
     }
 
-    #[cfg(test)]
     pub fn phase(&self) -> Phase {
         self.phase
     }

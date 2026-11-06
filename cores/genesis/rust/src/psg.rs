@@ -3,6 +3,8 @@
 //! output holds a level until a counter expires, so the model runs from one
 //! expiry to the next and reports each change of level.
 
+use crate::scope::Scope;
+
 /// The peak-to-peak size of a channel at each attenuation. Each step is
 /// 10^(-2/20) of the one before, and 15 is silence. The top is a quarter of
 /// the largest single YM2612 channel, so that the four channels at full volume
@@ -20,8 +22,31 @@ pub const FLAG_ZERO_IS_0X400: u8 = 1;
 pub const FLAG_NEGATE: u8 = 2;
 pub const FLAG_XNOR: u8 = 16;
 
+/// The rate of a PSG's scope samples.
+pub const SCOPE_HZ: u64 = 44_100;
+
+/// What a channel of the SN76489 is doing, from its registers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PsgVoice {
+    /// The tone register (10 bits); for the noise channel, the rate bits.
+    pub register: u16,
+    /// A tone channel whose counter runs (a register of 0 or 1 holds it high).
+    pub running: bool,
+    pub noise: bool,
+    /// White noise (the noise channel's feedback bit).
+    pub white: bool,
+    /// The 4-bit attenuation, 0 loudest and 15 off.
+    pub attenuation: u8,
+    pub left: bool,
+    pub right: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Psg {
+    scope: Scope,
+    scope_acc: u64,
+    /// The ticks of the chip's own clock in a second.
+    tick_hz: u64,
     tone: [u16; 3],
     counter: [u16; 3],
     high: [bool; 3],
@@ -49,6 +74,9 @@ impl Psg {
     pub fn new(feedback: u16, width: u8, flags: u8) -> Psg {
         let width = width.clamp(2, 16);
         let mut p = Psg {
+            scope: Scope::new(4),
+            scope_acc: 0,
+            tick_hz: 223_721,
             tone: [0; 3],
             counter: [0; 3],
             high: [false; 3],
@@ -68,6 +96,37 @@ impl Psg {
         };
         p.last = p.level();
         p
+    }
+
+    /// Sets the ticks of the chip's own clock in a second, which the scope
+    /// needs to sample at 44,100 Hz.
+    pub fn set_tick_hz(&mut self, hz: u64) {
+        self.tick_hz = hz.max(1);
+    }
+
+    /// What channel `c` (0 to 3, the last being noise) is doing.
+    pub fn voice(&self, c: usize) -> PsgVoice {
+        let c = c & 3;
+        PsgVoice {
+            register: if c == 3 {
+                u16::from(self.noise & 3)
+            } else {
+                self.tone[c]
+            },
+            running: c == 3 || self.period(self.tone[c]).is_some(),
+            noise: c == 3,
+            white: c == 3 && self.noise & 4 != 0,
+            attenuation: self.attenuation[c],
+            left: self.stereo & (0x10 << c) != 0,
+            right: self.stereo & (1 << c) != 0,
+        }
+    }
+
+    /// The sample `back` steps before the newest of a channel's scope, which
+    /// holds the channel as the listener hears it: its level, once for each
+    /// side that it is on, averaged.
+    pub fn scope_sample(&self, channel: usize, back: usize) -> i16 {
+        self.scope.get(channel, back)
     }
 
     /// Chooses which of the four channels reach the mix. Bit n is channel n.
@@ -211,6 +270,18 @@ impl Psg {
                     self.noise_counter = period;
                 }
                 step = step.min(u64::from(self.noise_counter));
+            }
+            self.scope_acc += step * SCOPE_HZ;
+            let n = self.scope_acc / self.tick_hz;
+            self.scope_acc %= self.tick_hz;
+            if n > 0 {
+                let mut held = [0i16; 4];
+                for (c, v) in self.channels().iter().enumerate() {
+                    let sides = i32::from(self.stereo & (1 << c) != 0)
+                        + i32::from(self.stereo & (0x10 << c) != 0);
+                    held[c] = (v * sides / 2).clamp(-32768, 32767) as i16;
+                }
+                self.scope.push_n(&held, n);
             }
             t += step;
             for (c, _) in live.iter().enumerate().filter(|(_, l)| **l) {

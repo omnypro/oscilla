@@ -185,6 +185,82 @@ uint64_t cgenesis_channel_mask(const cgenesis_machine *machine);
 void cgenesis_channel_levels_get(const cgenesis_machine *machine, int32_t out[10]);
 
 /*
+ * What each voice is doing, for a display. The voices are the channels of the
+ * chips that the file names, in the order of the channel mask and only for the
+ * chips that are present: the first YM2612's six, the first SN76489's four,
+ * the second YM2612's six, the second SN76489's four, then the YM2413's nine
+ * and a second YM2413's nine. Call these on the render thread, right after a
+ * render, and copy the result out; like every machine call they must not run
+ * while another thread renders. They do nothing inside an observer callback.
+ * The layout is the same in every core's header, so a viewer can treat the
+ * cores alike. The fields:
+ *
+ *   active          1 while the voice is audible (its level is above -46 dB)
+ *   key_on          1 while the voice is keyed on (the SN76489: its attenuation
+ *                   is below 15)
+ *   kind            0 tone (SN76489), 1 noise, 2 sample (the YM2612's DAC),
+ *                   3 FM, 4 drum (the YM2413's bass drum)
+ *   instrument      the YM2612's algorithm times 8 plus its feedback; the
+ *                   YM2413's instrument register (0 the user tone, 1 to 15 the
+ *                   built-in ones, 16 the bass drum); the SN76489 noise
+ *                   channel's rate bits plus 4 for white noise; -1 for a tone
+ *   frequency_hz    the pitch of the note: the F-number and block of the FM
+ *                   chips (an operator's multiple is not in it), the SN76489's
+ *                   clock over 32 times its register. 0 for noise and the DAC.
+ *   volume          0 to 1: the envelope and the level register together
+ *   pan             -1 left to +1 right, from the two sides
+ *   envelope        0 to 1 for the FM chips (the loudest carrier's envelope),
+ *                   -1 for the SN76489
+ *   left, right     the volume to each side, 0 when the voice is not on it
+ *   envelope_phase  0 attack, 1 decay, 2 sustain, 3 release (the YM2612's and
+ *                   YM2413's carrier), 0 for the SN76489
+ *   pitch_modulated, echo, ended  0
+ *   mask_bit        the bit of the channel mask that mutes this voice
+ */
+typedef struct {
+    int32_t active;
+    int32_t key_on;
+    int32_t kind;
+    int32_t instrument;
+    float frequency_hz;
+    float volume;
+    float pan;
+    float envelope;
+    float left;
+    float right;
+    int32_t envelope_phase;
+    int32_t pitch_modulated;
+    int32_t echo;
+    int32_t ended;
+    int32_t mask_bit;
+    int32_t reserved[3];
+} cgenesis_voice;
+
+/* The number of voices that the file's chips have. */
+int cgenesis_voice_count(const cgenesis_machine *machine);
+
+/* Writes at most `max` voices and returns how many. */
+int cgenesis_voices_get(const cgenesis_machine *machine, cgenesis_voice *out, int max);
+
+/* "FM 1", "PSG Tone 1", "PSG Noise", "OPLL 1", with " (2nd chip)" added for a
+ * second chip, or NULL for an index outside the voices. The string lives as
+ * long as the machine. */
+const char *cgenesis_voice_name(const cgenesis_machine *machine, int index);
+
+/*
+ * Fills `out` with the last `frames` frames that one voice put out, oldest
+ * first, as floats within -1 to 1 at the machine's output rate. The voice's own
+ * level and panning are in it, and the channel mask and the mixer are not, so a
+ * muted voice still shows. Each chip keeps 8,192 samples of its own rate (the
+ * YM2612's 53 kHz and the YM2413's 50 kHz, and 44,100 Hz for the SN76489), so
+ * 4,096 frames of an output rate of 44,100 Hz or more are all there, and
+ * frames that reach further back are 0. Returns `frames`, or 0 for a voice
+ * outside the voices, a NULL buffer, 0 frames, more than 16,384 frames or a
+ * call from a callback.
+ */
+size_t cgenesis_scope_get(const cgenesis_machine *machine, int voice, float *out, size_t frames);
+
+/*
  * Sets the cutoff in Hz of the high-pass that stands for the console's output
  * coupling and removes the DC offset that the DAC can leave. The default is
  * 20 Hz and 0 turns it off. Returns 1, or 0 and no change for a value outside

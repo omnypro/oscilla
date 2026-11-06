@@ -194,6 +194,29 @@ fn key_level(code: u32, block: u32, fnum: u32) -> u32 {
     steps * STEP_UNITS
 }
 
+use crate::scope::Scope;
+
+/// What a channel of the YM2413 is doing, from its registers and its envelope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpllVoice {
+    pub key_on: bool,
+    pub fnum: u16,
+    pub block: u8,
+    /// The instrument register's high nibble: 0 is the user tone, 1 to 15 the
+    /// built-in instruments. The bass drum of the rhythm mode reads 16.
+    pub instrument: u8,
+    /// The volume register's low nibble, in steps of 3 dB, 0 loudest.
+    pub volume: u8,
+    /// The carrier's envelope attenuation in steps of 0.375 dB, 0 to 127.
+    pub envelope: u8,
+    /// 0 attack, 1 decay, 2 sustain, 3 release.
+    pub phase: u8,
+    /// Channel 7 playing the bass drum of the rhythm mode.
+    pub drum: bool,
+    /// The channel's sustain bit.
+    pub sustain: bool,
+}
+
 /// What one operator keeps between samples.
 #[derive(Clone, Copy, Default)]
 struct Op {
@@ -222,6 +245,7 @@ pub struct Ym2413 {
     /// the five percussion sounds.
     rhythm: u8,
     test: u8,
+    scope: Scope,
     tremolo_step: u8,
     tremolo_tick: u8,
     vibrato_step: u8,
@@ -248,6 +272,7 @@ impl Ym2413 {
             ops: [[Op::default(); 2]; 9],
             rhythm: 0,
             test: 0,
+            scope: Scope::new(9),
             tremolo_step: 0,
             tremolo_tick: 0,
             vibrato_step: 0,
@@ -278,6 +303,35 @@ impl Ym2413 {
 
     pub fn mask(&self) -> u16 {
         self.mask
+    }
+
+    /// What channel `ch` (0 to 8) is doing.
+    pub fn voice(&self, ch: usize) -> OpllVoice {
+        let ch = ch % 9;
+        let drum = self.rhythm_mode() && ch == 6;
+        let fnum = u16::from(self.frequency_low[ch]) | u16::from(self.frequency_high[ch] & 1) << 8;
+        OpllVoice {
+            key_on: self.key[ch],
+            fnum,
+            block: self.frequency_high[ch] >> 1 & 7,
+            instrument: if drum { 16 } else { self.instrument[ch] >> 4 },
+            volume: self.instrument[ch] & 15,
+            envelope: (self.ops[ch][1].att >> 16).min(127) as u8,
+            phase: match self.ops[ch][1].state {
+                ATTACK | DAMP => 0,
+                DECAY => 1,
+                SUSTAIN => 2,
+                _ => 3,
+            },
+            drum,
+            sustain: self.frequency_high[ch] & 0x20 != 0,
+        }
+    }
+
+    /// The sample `back` steps before the newest of a channel's scope: the
+    /// channel's output times 8.
+    pub fn scope_sample(&self, channel: usize, back: usize) -> i16 {
+        self.scope.get(channel, back)
     }
 
     fn rhythm_mode(&self) -> bool {
@@ -457,17 +511,20 @@ impl Ym2413 {
         let vibrato = VIBRATO[usize::from(self.vibrato_step)];
         let rhythm = self.rhythm_mode();
         let mut sum = 0;
+        let mut heard = [0i16; 9];
         for ch in 0..9 {
             if rhythm && ch > 6 {
                 continue;
             }
             let out = self.channel(ch, tremolo, vibrato);
+            heard[ch] = (out * 8).clamp(-32768, 32767) as i16;
             if self.mask >> ch & 1 != 0 {
                 // The manual has the chip put the percussion sounds out twice,
                 // because they seem quieter than the melody.
                 sum += if rhythm && ch == 6 { out * 2 } else { out };
             }
         }
+        self.scope.push(&heard);
         sum
     }
 

@@ -2,7 +2,8 @@
 //! oscillator, two timers and a DAC on channel 6. One call of `sample` is one
 //! output sample of the chip, 144 clocks of its input.
 
-use crate::eg::Eg;
+use crate::eg::{Eg, Phase};
+use crate::scope::Scope;
 
 /// Samples between two steps of the LFO for each rate. A step is 1/128 of a
 /// period.
@@ -188,6 +189,29 @@ pub struct Ym2612 {
     dac_low: bool,
     mask: u8,
     ladder: bool,
+    scope: Scope,
+}
+
+/// What a channel of the YM2612 is doing, from its registers and its envelopes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FmVoice {
+    /// Any operator of the channel is keyed on.
+    pub key_on: bool,
+    pub fnum: u16,
+    pub block: u8,
+    pub algorithm: u8,
+    pub feedback: u8,
+    pub left: bool,
+    pub right: bool,
+    /// The envelope attenuation of the loudest carrier, 0 (loudest) to 0x3FF.
+    pub envelope: u16,
+    /// The attenuation of the loudest carrier with its total level, at most
+    /// 0x3FF.
+    pub total: u16,
+    /// The phase of that carrier's envelope.
+    pub phase: Phase,
+    /// Channel 6 plays the DAC.
+    pub dac: bool,
 }
 
 impl Default for Ym2612 {
@@ -260,6 +284,7 @@ impl Ym2612 {
             dac_low: false,
             mask: 0x3F,
             ladder: false,
+            scope: Scope::new(6),
         }
     }
 
@@ -290,6 +315,43 @@ impl Ym2612 {
             *o = c.level;
         }
         out
+    }
+
+    /// What channel `c` (0 to 5) is doing.
+    pub fn voice(&self, c: usize) -> FmVoice {
+        let c = c % 6;
+        let ch = &self.ch[c];
+        let carriers: &[usize] = match ch.alg {
+            0..=3 => &[3],
+            4 => &[1, 3],
+            5 | 6 => &[1, 2, 3],
+            _ => &[0, 1, 2, 3],
+        };
+        let loudest = carriers
+            .iter()
+            .map(|&i| &ch.slots[i].eg)
+            .min_by_key(|eg| eg.output(0))
+            .unwrap_or(&ch.slots[3].eg);
+        FmVoice {
+            key_on: ch.slots.iter().any(|s| s.manual_key),
+            fnum: ch.fnum,
+            block: ch.block,
+            algorithm: ch.alg,
+            feedback: ch.fb,
+            left: ch.left,
+            right: ch.right,
+            envelope: loudest.attenuation(),
+            total: loudest.output(0),
+            phase: loudest.phase(),
+            dac: c == 5 && self.dac_on,
+        }
+    }
+
+    /// The sample `back` steps before the newest of a channel's scope, which
+    /// holds the channel as the listener hears it: its value, once for each
+    /// side that it is on, averaged, times 100.
+    pub fn scope_sample(&self, channel: usize, back: usize) -> i16 {
+        self.scope.get(channel, back)
     }
 
     /// A write to a data port. `part` is 0 for the first bank of registers
@@ -516,9 +578,12 @@ impl Ym2612 {
         self.csm_key = false;
 
         let (mut left, mut right) = (0, 0);
+        let mut heard = [0i16; 6];
         for c in 0..6 {
             let value = self.channel(c, am, pm);
             self.ch[c].level = value;
+            let sides = i32::from(self.ch[c].left) + i32::from(self.ch[c].right);
+            heard[c] = (value * sides * 50).clamp(-32768, 32767) as i16;
             if self.mask & (1 << c) == 0 {
                 continue;
             }
@@ -529,6 +594,7 @@ impl Ym2612 {
                 right += value;
             }
         }
+        self.scope.push(&heard);
         (left, right)
     }
 

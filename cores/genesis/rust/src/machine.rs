@@ -11,7 +11,8 @@ use std::sync::Arc;
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use oscilla_vgm::{Banks, Command, SN76489, Vgm, YM2413, YM2612};
 
-use crate::psg::Psg;
+use crate::eg::Phase;
+use crate::psg::{self, Psg};
 use crate::stream::{self, Stream};
 use crate::ym2413::{self, Ym2413};
 use crate::ym2612::Ym2612;
@@ -81,6 +82,29 @@ const DEFAULT_HIGHPASS_HZ: f64 = 20.0;
 
 fn psg_scaled((l, r): (i32, i32), gain: i32) -> (i32, i32) {
     ((l * gain) >> 8, (r * gain) >> 8)
+}
+
+/// The voices of the chips that are present, in the order of the channel mask.
+fn layout(
+    psg: &[Option<PsgSlot>; 2],
+    fm: &[Option<FmSlot>; 2],
+    opll: &[Option<OpllSlot>; 2],
+) -> Vec<(VoiceRef, u32)> {
+    let mut out = Vec::new();
+    let mut add = |present: bool, bit: u32, count: usize, make: &dyn Fn(usize) -> VoiceRef| {
+        if present {
+            for c in 0..count {
+                out.push((make(c), bit + c as u32));
+            }
+        }
+    };
+    add(fm[0].is_some(), 0, 6, &|c| VoiceRef::Fm(0, c));
+    add(psg[0].is_some(), 6, 4, &|c| VoiceRef::Psg(0, c));
+    add(fm[1].is_some(), 10, 6, &|c| VoiceRef::Fm(1, c));
+    add(psg[1].is_some(), 16, 4, &|c| VoiceRef::Psg(1, c));
+    add(opll[0].is_some(), 20, 9, &|c| VoiceRef::Opll(0, c));
+    add(opll[1].is_some(), 29, 9, &|c| VoiceRef::Opll(1, c));
+    out
 }
 
 fn psg_chip(second: bool) -> Chip {
@@ -167,6 +191,57 @@ impl Clone for ObserverSlot {
     }
 }
 
+/// What kind of sound a voice makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceKind {
+    Tone = 0,
+    Noise = 1,
+    Sample = 2,
+    Fm = 3,
+    Drum = 4,
+}
+
+/// One voice of one chip as a display shows it. The voices of a file are the
+/// channels of the chips that it names, in the order of the channel mask: the
+/// first YM2612's six, the first SN76489's four, the second YM2612's, the
+/// second SN76489's, then the YM2413's nine and a second YM2413's nine.
+#[derive(Clone, Debug)]
+pub struct Voice {
+    pub name: String,
+    /// The bit of the channel mask that mutes this voice.
+    pub mask_bit: u32,
+    pub kind: VoiceKind,
+    /// The voice is audible now: its level is above -46 dB.
+    pub active: bool,
+    pub key_on: bool,
+    /// The pitch of the note in Hz, 0 for noise and for the DAC.
+    pub frequency_hz: f32,
+    /// 0 to 1: the envelope and the level register together, before the pan.
+    pub volume: f32,
+    /// 0 to 1: the envelope alone, or -1 when the chip has none.
+    pub envelope: f32,
+    /// The volume to each side, 0 to 1 (a side that the voice is not on is 0).
+    pub left: f32,
+    pub right: f32,
+    /// An FM patch or algorithm, an instrument number, or -1.
+    pub instrument: i32,
+    /// 0 attack, 1 decay, 2 sustain, 3 release, or 0 where the chip has none.
+    pub phase: i32,
+}
+
+/// Where a voice lives: the kind of chip, which of the two, and the channel.
+#[derive(Clone, Copy, Debug)]
+enum VoiceRef {
+    Fm(usize, usize),
+    Psg(usize, usize),
+    Opll(usize, usize),
+}
+
+/// 10^(-db / 20), for a display.
+fn linear(db: f32) -> f32 {
+    10f32.powf(-db / 20.0)
+}
+
 /// Where the stream stands when a machine is not playing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndState {
@@ -191,6 +266,8 @@ pub struct Machine {
     psg: [Option<PsgSlot>; 2],
     fm: [Option<FmSlot>; 2],
     opll: [Option<OpllSlot>; 2],
+    /// The voices of the chips that the file has, with their mask bits.
+    voices: Vec<(VoiceRef, u32)>,
     banks: Arc<Banks>,
     /// The read position in the PCM data bank for the YM2612's DAC.
     pcm_at: usize,
@@ -239,7 +316,11 @@ impl Machine {
         let fm_clock = vgm.chip(YM2612).map_or([None; 2], fm_clocks);
         let psg = psg_clock.map(|clock| {
             clock.map(|clock| PsgSlot {
-                chip: Psg::new(vgm.psg_feedback, vgm.psg_width, vgm.psg_flags),
+                chip: {
+                    let mut chip = Psg::new(vgm.psg_feedback, vgm.psg_width, vgm.psg_flags);
+                    chip.set_tick_hz(u64::from(clock) / 16);
+                    chip
+                },
                 clock: u64::from(clock),
                 ticks: 0,
                 seen: (0, 0),
@@ -273,6 +354,7 @@ impl Machine {
         let (q, r) = (m.div_euclid(32), m.rem_euclid(32));
         let fm_present = fm.iter().any(Option::is_some);
         let opll_present = opll.iter().any(Option::is_some);
+        let voices = layout(&psg, &fm, &opll);
         let mut machine = Machine {
             pos: vgm.data_at(),
             wait_left: 0,
@@ -282,6 +364,7 @@ impl Machine {
             waited_since_loop: false,
             psg,
             fm,
+            voices,
             opll,
             banks,
             vgm,
@@ -318,6 +401,169 @@ impl Machine {
         if let Some(o) = self.observer.0.as_mut() {
             o.register_write(chip, address, value, sample);
         }
+    }
+
+    /// The number of voices that the file's chips have.
+    pub fn voice_count(&self) -> usize {
+        self.voices.len()
+    }
+
+    /// What voice `index` is doing, or `None` for an index past the last.
+    pub fn voice(&self, index: usize) -> Option<Voice> {
+        let &(voice, mask_bit) = self.voices.get(index)?;
+        let second = |slot: usize| if slot == 1 { " (2nd chip)" } else { "" };
+        Some(match voice {
+            VoiceRef::Fm(slot, c) => {
+                let f = self.fm[slot].as_ref()?;
+                let v = f.chip.voice(c);
+                let inc = if v.block == 0 {
+                    u32::from(v.fnum) >> 1
+                } else {
+                    u32::from(v.fnum) << (v.block - 1)
+                };
+                let hz = inc as f32 * (f.clock as f32 / 144.0) / 1_048_576.0;
+                let volume = linear(f32::from(v.total) * 0.093_75);
+                Voice {
+                    name: format!("FM {}{}", c + 1, second(slot)),
+                    mask_bit,
+                    kind: if v.dac {
+                        VoiceKind::Sample
+                    } else {
+                        VoiceKind::Fm
+                    },
+                    active: v.dac || volume > 0.005,
+                    key_on: v.key_on,
+                    frequency_hz: if v.dac { 0.0 } else { hz },
+                    volume,
+                    envelope: linear(f32::from(v.envelope) * 0.093_75),
+                    left: if v.left { volume } else { 0.0 },
+                    right: if v.right { volume } else { 0.0 },
+                    instrument: i32::from(v.algorithm) * 8 + i32::from(v.feedback),
+                    phase: match v.phase {
+                        Phase::Attack => 0,
+                        Phase::Decay => 1,
+                        Phase::Sustain => 2,
+                        Phase::Release => 3,
+                    },
+                }
+            }
+            VoiceRef::Psg(slot, c) => {
+                let p = self.psg[slot].as_ref()?;
+                let v = p.chip.voice(c);
+                let volume = if v.attenuation >= 15 {
+                    0.0
+                } else {
+                    linear(f32::from(v.attenuation) * 2.0)
+                };
+                Voice {
+                    name: if v.noise {
+                        format!("PSG Noise{}", second(slot))
+                    } else {
+                        format!("PSG Tone {}{}", c + 1, second(slot))
+                    },
+                    mask_bit,
+                    kind: if v.noise {
+                        VoiceKind::Noise
+                    } else {
+                        VoiceKind::Tone
+                    },
+                    active: volume > 0.0,
+                    key_on: v.attenuation < 15,
+                    frequency_hz: if v.noise || !v.running || v.register < 2 {
+                        0.0
+                    } else {
+                        p.clock as f32 / (32.0 * f32::from(v.register))
+                    },
+                    volume,
+                    envelope: -1.0,
+                    left: if v.left { volume } else { 0.0 },
+                    right: if v.right { volume } else { 0.0 },
+                    instrument: if v.noise {
+                        i32::from(v.white) * 4 + i32::from(v.register)
+                    } else {
+                        -1
+                    },
+                    phase: 0,
+                }
+            }
+            VoiceRef::Opll(slot, c) => {
+                let o = self.opll[slot].as_ref()?;
+                let v = o.chip.voice(c);
+                let envelope = linear(f32::from(v.envelope) * 0.375);
+                let volume = envelope * linear(f32::from(v.volume) * 3.0);
+                let hz =
+                    ((u32::from(v.fnum)) << v.block) as f32 * (o.clock as f32 / 72.0) / 524_288.0;
+                Voice {
+                    name: format!("OPLL {}{}", c + 1, second(slot)),
+                    mask_bit,
+                    kind: if v.drum {
+                        VoiceKind::Drum
+                    } else {
+                        VoiceKind::Fm
+                    },
+                    active: volume > 0.005,
+                    key_on: v.key_on,
+                    frequency_hz: hz,
+                    volume,
+                    envelope,
+                    left: volume,
+                    right: volume,
+                    instrument: i32::from(v.instrument),
+                    phase: i32::from(v.phase),
+                }
+            }
+        })
+    }
+
+    /// Fills `out` with the last `out.len()` frames that voice `index` put out,
+    /// at the machine's output rate, as floats within -1 to 1, oldest first.
+    /// The voice's own level and panning are in it, and the channel mask and
+    /// the mixer are not, so a muted voice still shows. The chips keep 4,096
+    /// samples of their own rates (the YM2612's 53 kHz, the YM2413's 50 kHz,
+    /// 44,100 Hz for the SN76489), and frames that reach further back are 0.
+    /// Returns false, and leaves `out` alone, for an index past the last voice.
+    pub fn scope(&self, index: usize, out: &mut [f32]) -> bool {
+        let Some(&(voice, _)) = self.voices.get(index) else {
+            return false;
+        };
+        let (rate, scale): (f64, f64) = match voice {
+            VoiceRef::Fm(slot, _) => (
+                self.fm[slot]
+                    .as_ref()
+                    .map_or(1.0, |f| f.clock as f64 / 144.0),
+                32768.0,
+            ),
+            VoiceRef::Psg(..) => (psg::SCOPE_HZ as f64, 8192.0),
+            VoiceRef::Opll(slot, _) => (
+                self.opll[slot]
+                    .as_ref()
+                    .map_or(1.0, |o| o.clock as f64 / 72.0),
+                32768.0,
+            ),
+        };
+        let ratio = rate / f64::from(self.out.rate());
+        let get = |back: usize| -> f64 {
+            f64::from(match voice {
+                VoiceRef::Fm(slot, c) => self.fm[slot]
+                    .as_ref()
+                    .map_or(0, |f| f.chip.scope_sample(c, back)),
+                VoiceRef::Psg(slot, c) => self.psg[slot]
+                    .as_ref()
+                    .map_or(0, |p| p.chip.scope_sample(c, back)),
+                VoiceRef::Opll(slot, c) => self.opll[slot]
+                    .as_ref()
+                    .map_or(0, |o| o.chip.scope_sample(c, back)),
+            })
+        };
+        let n = out.len();
+        for (k, o) in out.iter_mut().enumerate() {
+            let back = (n - 1 - k) as f64 * ratio;
+            let i = back as usize;
+            let frac = back - i as f64;
+            let (a, b) = (get(i), get(i + 1));
+            *o = ((a + (b - a) * frac) / scale) as f32;
+        }
+        true
     }
 
     pub fn output_rate(&self) -> i32 {

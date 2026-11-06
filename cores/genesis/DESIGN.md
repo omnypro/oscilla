@@ -58,6 +58,27 @@ they say that a noise oscillator and the frequencies of channels 8 and 9
 (in a ratio of 3 to 1) make it. The core plays those four silent. Register
 stores for them are kept.
 
+## Visualization
+
+The voices of a machine are the channels of the chips that the file has, in the
+order of the channel mask: the first YM2612's six, the first SN76489's four, the
+second YM2612's and SN76489's, then the YM2413's nine and a second YM2413's
+nine. Each voice reports its chip's registers and envelope. A YM2612 voice's
+pitch is its F-number and block (the same increment that the phase generator
+uses, without an operator's multiple), its envelope is the loudest carrier's,
+read through the algorithm's carrier list (operator 4 for algorithms 0 to 3,
+operators 2 and 4 for 4, 2 to 4 for 5 and 6, all four for 7), and its volume
+adds that carrier's total level. A YM2413 voice's volume is the carrier's
+envelope in steps of 0.375 dB plus the volume register in steps of 3 dB. An
+SN76489 voice's volume is its attenuation in steps of 2 dB.
+
+Each chip keeps the last 8,192 samples of each voice, at the chip's own rate
+(the YM2612 clock over 144, the YM2413 clock over 72) and at 44,100 Hz for the
+SN76489, which the machine holds between its own steps. The voice's own level
+and panning are in a sample and the mask is not. `scope` resamples to the
+output rate by linear interpolation. The rings are not part of a copy of the
+machine, which starts with empty ones.
+
 ## GYM
 
 `formats/gym` reads a GYM file and writes the VGM file with the same commands.
