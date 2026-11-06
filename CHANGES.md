@@ -1,5 +1,18 @@
 # Changes
 
+## 0.5.2
+
+- The Genesis core plays the YM2413 of the Master System and the MSX: nine FM
+  channels, the 15 built-in instruments and the user tone. Rhythm mode plays
+  the bass drum. The snare drum, hi-hat, tom-tom and top cymbal are silent.
+- The Genesis core reads GYM files. `cgenesis_image_load_gym` and
+  `cgenesis_image_from_gym` take a `pal` flag, because the format does not
+  name its region.
+- `cgenesis_image_chips` has bit 2 for the YM2413, and the channel mask has
+  bits 20 to 28 and 29 to 37 for its channels.
+- `cgenesis_channel_levels_get` returns the level of each of the ten channels
+  of the first chips, for meters.
+
 ## 0.5.1
 
 - The Genesis core plays a second YM2612 and a second SN76489, and the DAC
