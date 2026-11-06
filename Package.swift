@@ -59,7 +59,8 @@ let package = Package(
         // The Rust library as a prebuilt XCFramework (scripts/build-xcframework.sh).
         .binaryTarget(
             name: "OscillaRust",
-            path: "build/OscillaRust.xcframework"
+            url: "https://github.com/omnypro/oscilla/releases/download/v0.6.1/OscillaRust-0.6.1.xcframework.zip",
+            checksum: "f39e012732bb47a86e04d2bfbf75ca88ada3306858abae029042bbe21a261647"
         ),
         // The trace driver: renders a GSF and writes the files that the
         // reference runner writes, so the two can be compared.
