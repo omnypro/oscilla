@@ -272,6 +272,22 @@ impl Machine {
         fm(0, 0x3F) | psg(0, 0x0F) << 6 | fm(1, 0) << 10 | psg(1, 0) << 16
     }
 
+    /// What each channel of the first chips puts out now, before the mask,
+    /// the panning and the mixer: the six FM channels (signed, within about
+    /// 320, with the DAC in the sixth while it is on), then the SN76489's
+    /// three tones and its noise (signed, within 8192). A chip that the file
+    /// lacks reads as zeros.
+    pub fn channel_levels(&self) -> [i32; 10] {
+        let mut out = [0; 10];
+        if let Some(f) = self.fm[0].as_ref() {
+            out[..6].copy_from_slice(&f.chip.levels());
+        }
+        if let Some(p) = self.psg[0].as_ref() {
+            out[6..].copy_from_slice(&p.chip.channels());
+        }
+        out
+    }
+
     /// Chooses the channels of the first SN76489 that reach the mix.
     pub fn set_psg_mask(&mut self, mask: u8) {
         if let Some(p) = self.psg[0].as_mut() {

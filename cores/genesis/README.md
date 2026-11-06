@@ -51,6 +51,8 @@ A player has three more groups of calls.
 - `cgenesis_set_channel_mask` chooses which of the six FM channels and four PSG
   channels reach the mix. A file with a second YM2612 or SN76489 adds bits for
   its channels.
+- `cgenesis_channel_levels_get` reads what each of the ten channels of the first
+  chips puts out now, for meters.
 - `cgenesis_set_highpass_hz` sets the cutoff of the output high-pass (20 Hz by
   default, 0 for none).
 

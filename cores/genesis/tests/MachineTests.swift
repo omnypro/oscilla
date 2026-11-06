@@ -34,6 +34,24 @@ struct MachineTests {
         #expect(Support.rms(Support.render(m, frames: 4410)) < 1e-6)
     }
 
+    @Test func theChannelLevelsShowAMutedChannel() {
+        var levels = [Int32](repeating: 0, count: 10)
+        let fm = Support.machine(Support.vgm(stream: Support.fmTone() + Support.wait(44_100), psg: false))
+        defer { cgenesis_free(fm) }
+        cgenesis_set_channel_mask(fm, 0)
+        _ = Support.render(fm, frames: 1500)
+        cgenesis_channel_levels_get(fm, &levels)
+        #expect(abs(levels[0]) > 10 && abs(levels[0]) <= 320)
+        #expect(levels[1...].allSatisfy { $0 == 0 })
+        let psg = Support.machine(Support.vgm(stream: Support.psgTone() + Support.wait(44_100), fm: false))
+        defer { cgenesis_free(psg) }
+        cgenesis_set_channel_mask(psg, 0)
+        _ = Support.render(psg, frames: 500)
+        cgenesis_channel_levels_get(psg, &levels)
+        #expect(levels[..<6].allSatisfy { $0 == 0 })
+        #expect(abs(levels[6]) == 8192)
+    }
+
     @Test func aSongWithoutALoopEndsAndThenIsSilent() {
         let stream = Support.psgTone() + Support.wait(2205)
         let m = Support.machine(Support.vgm(stream: stream, fm: false))

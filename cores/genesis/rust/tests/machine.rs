@@ -249,3 +249,23 @@ fn the_high_pass_accepts_only_a_sane_cutoff() {
     assert!(!m.set_highpass_hz(f64::NAN));
     assert_eq!(m.highpass_hz(), 55.0);
 }
+
+#[test]
+fn the_channel_levels_show_each_channel_before_the_mask() {
+    let v = parse(&file(true, true, &fm_stream(2000), None));
+    let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_channel_mask(0);
+    render(&mut m, 1500);
+    let l = m.channel_levels();
+    // The FM tone is on channel 1 and the PSG is silent.
+    assert!(l[0].abs() > 10 && l[0].abs() <= 320, "{l:?}");
+    assert!(l[1..].iter().all(|v| *v == 0), "{l:?}");
+    let v = parse(&file(true, false, &tone_stream(), None));
+    let mut m = Machine::new(&v, 44_100).unwrap();
+    m.set_channel_mask(0);
+    render(&mut m, 500);
+    let l = m.channel_levels();
+    assert_eq!(l[..6], [0; 6]);
+    assert_eq!(l[6].abs(), 8192, "{l:?}");
+    assert_eq!(l[7..], [0, 0, 0]);
+}

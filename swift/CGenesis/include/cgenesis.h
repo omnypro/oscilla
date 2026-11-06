@@ -152,6 +152,18 @@ void cgenesis_set_channel_mask(cgenesis_machine *machine, uint64_t mask);
 uint64_t cgenesis_channel_mask(const cgenesis_machine *machine);
 
 /*
+ * What each channel of the first YM2612 and the first SN76489 puts out now,
+ * before the mask, the panning and the mixer. The order follows the mask: the
+ * six FM channels, then the SN76489's three tone channels and its noise
+ * channel. An FM value is signed and lies within -320 to 320 (a full channel
+ * is 256, and channel 6 shows the DAC sample while the DAC is on). A PSG value
+ * is signed and lies within -8192 to 8192, and is 0 at attenuation 15. A muted
+ * channel still shows its level. A chip that the file lacks reads as zeros,
+ * and a second chip has no entries.
+ */
+void cgenesis_channel_levels_get(const cgenesis_machine *machine, int32_t out[10]);
+
+/*
  * Sets the cutoff in Hz of the high-pass that stands for the console's output
  * coupling and removes the DC offset that the DAC can leave. The default is
  * 20 Hz and 0 turns it off. Returns 1, or 0 and no change for a value outside

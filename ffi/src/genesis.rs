@@ -363,6 +363,15 @@ pub unsafe extern "C" fn cgenesis_end_state_get(machine: *const CMachine) -> c_i
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_channel_levels_get(machine: *const CMachine, out: *mut i32) {
+    if machine.is_null() || out.is_null() {
+        return;
+    }
+    let l = unsafe { &(*machine).machine }.channel_levels();
+    unsafe { ptr::copy_nonoverlapping(l.as_ptr(), out, 10) };
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_set_channel_mask(machine: *mut CMachine, mask: u64) {
     unsafe { &mut (*machine).machine }.set_channel_mask(mask);
 }
