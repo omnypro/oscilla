@@ -40,8 +40,30 @@ const OUTPUT_GAIN: f64 = 0.25 * 1.365 / (31.0 * 65536.0);
 /// The default cutoff of the output high-pass.
 const DEFAULT_HIGHPASS_HZ: f64 = 20.0;
 
+/// Hears every store to the sound generator's registers, at the time that the
+/// chip gets it. It cannot change the sound.
+///
+/// `register` is 0 to 9 (the low four address bits), and `channel` is the
+/// channel that register 0 has selected, which registers 2 to 7 belong to
+/// (after a store to register 0 it is the new one). `sample` is the time in
+/// samples of 44,100 Hz.
+pub trait Observer {
+    fn psg_write(&mut self, channel: u8, register: u8, value: u8, sample: u64);
+}
+
+/// Holds the observer outside the machine state: a copy of the state has none.
+#[derive(Default)]
+struct ObserverSlot(Option<Box<dyn Observer>>);
+
+impl Clone for ObserverSlot {
+    fn clone(&self) -> ObserverSlot {
+        ObserverSlot(None)
+    }
+}
+
 #[derive(Clone)]
 struct Io {
+    observer: ObserverSlot,
     hes: Arc<Hes>,
     ram: Vec<u8>,
     psg: Psg,
@@ -180,6 +202,10 @@ impl Bus for Io {
                 self.sync_psg();
                 self.psg.write((a & 15) as u8, value);
                 self.push_level();
+                if let Some(o) = self.observer.0.as_mut() {
+                    let sample = self.now * 44_100 / UNIT;
+                    o.psg_write(self.psg.selected(), (a & 15) as u8, value, sample);
+                }
             }
             0x1F_EC00..=0x1F_EFFF => {
                 if a & 1 == 0 {
@@ -215,6 +241,7 @@ impl Bus for Io {
 
 #[derive(Clone)]
 pub struct Machine {
+    song: u8,
     cpu: Cpu,
     io: Io,
     mask: u8,
@@ -226,13 +253,18 @@ pub struct Machine {
 impl Machine {
     /// A machine with the program loaded, started at `song`.
     pub fn new(hes: &Hes, output_rate: i32, song: u8) -> Result<Machine, MachineError> {
+        Machine::from_shared(Arc::new(hes.clone()), output_rate, song)
+    }
+
+    fn from_shared(hes: Arc<Hes>, output_rate: i32, song: u8) -> Result<Machine, MachineError> {
         if !(8000..=192_000).contains(&output_rate) {
             return Err(MachineError::Rate);
         }
         let mut cpu = Cpu::new();
         cpu.mpr = hes.mpr;
         let mut io = Io {
-            hes: Arc::new(hes.clone()),
+            observer: ObserverSlot::default(),
+            hes: Arc::clone(&hes),
             ram: vec![0; 0x8000],
             psg: Psg::new(),
             psg_ticks: 0,
@@ -260,6 +292,7 @@ impl Machine {
         cpu.a = song;
         cpu.pc = hes.request;
         let mut m = Machine {
+            song,
             cpu,
             io,
             mask: 0x3F,
@@ -269,6 +302,46 @@ impl Machine {
         };
         m.set_highpass_hz(DEFAULT_HIGHPASS_HZ);
         Ok(m)
+    }
+
+    /// Sets the observer, or removes it with `None`. A copy of the machine has
+    /// none, and `reset` and `restore` keep the one that is set.
+    pub fn set_observer(&mut self, observer: Option<Box<dyn Observer>>) {
+        self.io.observer.0 = observer;
+    }
+
+    /// Starts the song again with the same file, rate, channel mask and
+    /// high-pass.
+    pub fn reset(&mut self) {
+        let rate = self.io.out.rate();
+        if let Ok(mut m) = Machine::from_shared(Arc::clone(&self.io.hes), rate, self.song) {
+            m.set_channel_mask(u64::from(self.mask));
+            m.set_highpass_hz(self.hp_hz);
+            m.io.observer = std::mem::take(&mut self.io.observer);
+            *self = m;
+        }
+    }
+
+    /// Returns to the state of `saved`, a copy taken from this machine or one
+    /// of the same file, song and output rate.
+    pub fn restore(&mut self, saved: &Machine) -> bool {
+        if !Arc::ptr_eq(&self.io.hes, &saved.io.hes)
+            || self.song != saved.song
+            || self.io.out.rate() != saved.io.out.rate()
+        {
+            return false;
+        }
+        let observer = std::mem::take(&mut self.io.observer);
+        *self = saved.clone();
+        self.io.observer = observer;
+        true
+    }
+
+    /// What each channel puts out now, before the mask, the amplitude controls
+    /// and the mixer: a signed word within -31 to 31 (0 when the channel is
+    /// off), for meters.
+    pub fn channel_levels(&self) -> [i32; 6] {
+        self.io.psg.levels()
     }
 
     pub fn output_rate(&self) -> i32 {

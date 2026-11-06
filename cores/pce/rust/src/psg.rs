@@ -111,6 +111,24 @@ impl Psg {
         out
     }
 
+    /// The channel that register 0 has selected.
+    pub fn selected(&self) -> u8 {
+        self.select
+    }
+
+    /// What each channel puts out now before the amplitude controls: the word
+    /// about its midpoint in half steps (-31 to 31), or 0 for a channel that
+    /// is off.
+    pub fn levels(&self) -> [i32; 6] {
+        let mut out = [0; 6];
+        for (i, o) in out.iter_mut().enumerate() {
+            if self.ch[i].on {
+                *o = i32::from(self.word(i)) * 2 - 31;
+            }
+        }
+        out
+    }
+
     fn lfo_active(&self) -> bool {
         self.lfo_control & 3 != 0 && !self.lfo_reset && self.ch[0].on && self.ch[1].on
     }

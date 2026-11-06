@@ -6,4 +6,4 @@ pub mod cpu;
 mod machine;
 pub mod psg;
 
-pub use machine::{Machine, MachineError, UNIT};
+pub use machine::{Machine, MachineError, Observer, UNIT};
