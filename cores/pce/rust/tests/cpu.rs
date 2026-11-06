@@ -2,7 +2,7 @@
 //! group of instructions. Each test follows the descriptions in the hardware
 //! and software manuals.
 
-use oscilla_hes::cpu::{B, Bus, C, Cpu, D, I, N, T, V, Z};
+use oscilla_pce::cpu::{B, Bus, C, Cpu, D, I, N, T, V, Z};
 
 /// The 8 KB of RAM: block 0xF8, which MPR1 maps to the zero page and stack.
 const RAM: u32 = 0x1F_0000;

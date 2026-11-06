@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use oscilla_hesfile::Hes;
+use oscilla_hes::Hes;
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 
 use crate::cpu::{Bus, Cpu};

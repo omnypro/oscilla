@@ -1,6 +1,6 @@
 //! The sound generator, checked against the manual's formulas.
 
-use oscilla_hes::psg::{Psg, TICK_HZ};
+use oscilla_pce::psg::{Psg, TICK_HZ};
 
 fn write(p: &mut Psg, channel: u8, register: u8, value: u8) {
     p.write(0, channel);

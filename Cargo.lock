@@ -98,14 +98,6 @@ dependencies = [
 [[package]]
 name = "oscilla-hes"
 version = "0.0.0"
-dependencies = [
- "oscilla-hesfile",
- "oscilla-resample",
-]
-
-[[package]]
-name = "oscilla-hesfile"
-version = "0.0.0"
 
 [[package]]
 name = "oscilla-nes"
@@ -118,6 +110,14 @@ dependencies = [
 [[package]]
 name = "oscilla-nsf"
 version = "0.0.0"
+
+[[package]]
+name = "oscilla-pce"
+version = "0.0.0"
+dependencies = [
+ "oscilla-hes",
+ "oscilla-resample",
+]
 
 [[package]]
 name = "oscilla-psf"

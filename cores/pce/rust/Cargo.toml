@@ -1,9 +1,9 @@
 [package]
-name = "oscilla-hes"
+name = "oscilla-pce"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-oscilla-hesfile.workspace = true
+oscilla-hes.workspace = true
 oscilla-resample.workspace = true
