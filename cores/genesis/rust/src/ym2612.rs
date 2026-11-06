@@ -579,6 +579,8 @@ impl Ym2612 {
 
         let (mut left, mut right) = (0, 0);
         let mut heard = [0i16; 6];
+        // The channel number indexes the channels and the scope.
+        #[allow(clippy::needless_range_loop)]
         for c in 0..6 {
             let value = self.channel(c, am, pm);
             self.ch[c].level = value;

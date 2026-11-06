@@ -512,6 +512,8 @@ impl Ym2413 {
         let rhythm = self.rhythm_mode();
         let mut sum = 0;
         let mut heard = [0i16; 9];
+        // The channel number indexes the registers, the operators and the scope.
+        #[allow(clippy::needless_range_loop)]
         for ch in 0..9 {
             if rhythm && ch > 6 {
                 continue;
