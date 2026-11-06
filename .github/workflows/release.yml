@@ -67,7 +67,8 @@ jobs:
             swift/CGb/include/cgb.h \
             swift/CNes/include/cnes.h \
             swift/CSnes/include/csnes.h \
-            swift/CGenesis/include/cgenesis.h
+            swift/CGenesis/include/cgenesis.h \
+            swift/CPce/include/cpce.h
       - name: Remove the key
         if: always()
         run: rm -f "$RUNNER_TEMP/release_key"

@@ -13,22 +13,25 @@ asks for.
 - `cores/gb`: Game Boy. Plays GBS files.
 - `cores/nes`: NES. Plays NSF and NSFe files.
 - `cores/snes`: SNES. Plays SPC files.
-- `cores/genesis`: Mega Drive (Genesis). Plays VGM and VGZ files.
+- `cores/genesis`: Mega Drive (Genesis). Plays VGM, VGZ and GYM files.
+- `cores/pce`: PC Engine (TurboGrafx-16). Plays HES files.
 
 ## Layout
 
 - `cores/<name>/rust`: one core, as a Rust crate with no unsafe code.
 - `cores/<name>/tests`, `tools` and `DESIGN.md`: Swift tests of the C
   interface, command-line tools and design notes.
-- `formats/psf`, `formats/gbs`, `formats/nsf`, `formats/spc` and `formats/vgm`:
-  the PSF, GBS, NSF, SPC and VGM containers (`formats/nsf` reads NSFe too,
-  `formats/spc` reads the xid6 tags, and `formats/vgm` reads VGZ and GD3).
+- `formats/psf`, `formats/gbs`, `formats/nsf`, `formats/spc`, `formats/vgm`,
+  `formats/gym` and `formats/hes`: the PSF, GBS, NSF, SPC, VGM, GYM and HES
+  containers (`formats/nsf` reads NSFe too, `formats/spc` reads the xid6 tags,
+  `formats/vgm` reads VGZ and GD3, and `formats/gym` writes a VGM file from a
+  GYM log).
 - `audio/resample`: the band-limited rate conversion that every core uses.
 - `ffi`: the C interface. One static library exports every core, and a cargo
-  feature (`gba`, `gb`, `nes`, `snes`, `genesis`) selects each one.
-- `swift/CGba`, `swift/CGb`, `swift/CNes`, `swift/CSnes` and `swift/CGenesis`:
-  the C headers, `cgba.h`, `cgb.h`, `cnes.h`, `csnes.h` and `cgenesis.h`, and
-  the modules that Swift imports.
+  feature (`gba`, `gb`, `nes`, `snes`, `genesis`, `pce`) selects each one.
+- `swift/CGba`, `swift/CGb`, `swift/CNes`, `swift/CSnes`, `swift/CGenesis` and
+  `swift/CPce`: the C headers, `cgba.h`, `cgb.h`, `cnes.h`, `csnes.h`,
+  `cgenesis.h` and `cpce.h`, and the modules that Swift imports.
 - `scripts`: the XCFramework build.
 
 ## Build and test

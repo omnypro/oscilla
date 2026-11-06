@@ -1,4 +1,5 @@
-//! The C interfaces of `cgba.h`, `cgb.h`, `cnes.h`, `csnes.h` and `cgenesis.h`, over the Rust cores.
+//! The C interfaces of `cgba.h`, `cgb.h`, `cnes.h`, `csnes.h`, `cgenesis.h` and
+//! `cpce.h`, over the Rust cores.
 //! This is the only crate that exports symbols and the only one that holds
 //! unsafe code. A cargo feature selects each core.
 
@@ -14,6 +15,8 @@ mod gba;
 mod genesis;
 #[cfg(feature = "nes")]
 mod nes;
+#[cfg(feature = "pce")]
+mod pce;
 #[cfg(feature = "snes")]
 mod snes;
 
@@ -23,6 +26,7 @@ mod snes;
     feature = "gba",
     feature = "genesis",
     feature = "nes",
+    feature = "pce",
     feature = "snes"
 ))]
 fn write_error(error: *mut std::ffi::c_char, size: usize, text: &[u8]) {

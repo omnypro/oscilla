@@ -15,11 +15,14 @@ let package = Package(
         .library(name: "CSnes", type: .static, targets: ["CSnes"]),
         // The Genesis core, in the same Rust library.
         .library(name: "CGenesis", type: .static, targets: ["CGenesis"]),
+        // The PC Engine core, in the same Rust library.
+        .library(name: "CPce", type: .static, targets: ["CPce"]),
         .executable(name: "oscilla-gsf", targets: ["OscillaGSF"]),
         .executable(name: "oscilla-gbs", targets: ["OscillaGBS"]),
         .executable(name: "oscilla-nsf", targets: ["OscillaNSF"]),
         .executable(name: "oscilla-spc", targets: ["OscillaSPC"]),
         .executable(name: "oscilla-vgm", targets: ["OscillaVGM"]),
+        .executable(name: "oscilla-hes", targets: ["OscillaHES"]),
     ],
     targets: [
         // The C header of the Rust library, and the module that Swift imports.
@@ -47,6 +50,11 @@ let package = Package(
             name: "CGenesis",
             dependencies: ["OscillaRust"],
             path: "swift/CGenesis"
+        ),
+        .target(
+            name: "CPce",
+            dependencies: ["OscillaRust"],
+            path: "swift/CPce"
         ),
         // The Rust library as a prebuilt XCFramework (scripts/build-xcframework.sh).
         .binaryTarget(
@@ -86,6 +94,18 @@ let package = Package(
             name: "OscillaVGM",
             dependencies: ["CGenesis"],
             path: "cores/genesis/tools/oscilla-vgm"
+        ),
+        // Plays an HES file to a WAV file and writes the stream of sound
+        // register stores.
+        .executableTarget(
+            name: "OscillaHES",
+            dependencies: ["CPce"],
+            path: "cores/pce/tools/oscilla-hes"
+        ),
+        .testTarget(
+            name: "CPceTests",
+            dependencies: ["CPce"],
+            path: "cores/pce/tests"
         ),
         .testTarget(
             name: "CGenesisTests",

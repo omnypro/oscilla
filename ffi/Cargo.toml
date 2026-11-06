@@ -8,12 +8,13 @@ publish.workspace = true
 crate-type = ["staticlib"]
 
 [features]
-default = ["gba", "gb", "nes", "snes", "genesis"]
+default = ["gba", "gb", "nes", "snes", "genesis", "pce"]
 gba = ["dep:oscilla-gba"]
 gb = ["dep:oscilla-gb", "dep:oscilla-gbs"]
 nes = ["dep:oscilla-nes", "dep:oscilla-nsf"]
 snes = ["dep:oscilla-snes"]
 genesis = ["dep:oscilla-genesis", "dep:oscilla-gym", "dep:oscilla-vgm"]
+pce = ["dep:oscilla-pce", "dep:oscilla-hes"]
 
 [dependencies]
 oscilla-gba = { workspace = true, optional = true }
@@ -25,3 +26,5 @@ oscilla-snes = { workspace = true, optional = true }
 oscilla-genesis = { workspace = true, optional = true }
 oscilla-gym = { workspace = true, optional = true }
 oscilla-vgm = { workspace = true, optional = true }
+oscilla-pce = { workspace = true, optional = true }
+oscilla-hes = { workspace = true, optional = true }

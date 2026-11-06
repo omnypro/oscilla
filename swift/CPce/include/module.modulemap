@@ -1,0 +1,4 @@
+module CPce {
+    header "cpce.h"
+    export *
+}

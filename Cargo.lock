@@ -52,8 +52,10 @@ dependencies = [
  "oscilla-gbs",
  "oscilla-genesis",
  "oscilla-gym",
+ "oscilla-hes",
  "oscilla-nes",
  "oscilla-nsf",
+ "oscilla-pce",
  "oscilla-snes",
  "oscilla-vgm",
 ]
