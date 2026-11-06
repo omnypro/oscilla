@@ -1,5 +1,20 @@
 # Changes
 
+## 0.6.1
+
+- A snapshot restores into any machine that plays the same file, in the
+  Genesis and PC Engine cores.
+- `cpce_new` returns NULL for a song outside 0 to 255, and
+  `cgenesis_image_loop_frames` returns -1 for a rate of 0 or less in every
+  case.
+- The PC Engine core no longer loses sound after a 64 KB block transfer at
+  output rates above 56 kHz.
+- The Genesis core ignores writes to registers 0xA8 to 0xAA on the second
+  YM2612 port, which no longer detune channel 3.
+- A VGM file can no longer make a machine allocate more than 64 MiB of data
+  banks or use a chip clock above 16 MHz, and a DAC stream no longer catches
+  up on writes that it missed.
+
 ## 0.6.0
 
 - The PC Engine core, which plays HES files. It runs the HuC6280 processor
