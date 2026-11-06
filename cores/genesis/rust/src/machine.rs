@@ -469,10 +469,10 @@ impl Machine {
                     },
                     active: volume > 0.0,
                     key_on: v.attenuation < 15,
-                    frequency_hz: if v.noise || !v.running || v.register < 2 {
+                    frequency_hz: if v.noise || v.period == 0 {
                         0.0
                     } else {
-                        p.clock as f32 / (32.0 * f32::from(v.register))
+                        p.clock as f32 / (32.0 * f32::from(v.period))
                     },
                     volume,
                     envelope: -1.0,

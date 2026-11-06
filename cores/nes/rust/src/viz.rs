@@ -185,7 +185,7 @@ impl Apu {
         let mut n = 5;
         if chip_bits & chips::VRC6 != 0 {
             for p in &self.vrc6.pulse {
-                out[n] = if p.enabled {
+                out[n] = if p.enabled && !self.vrc6.halted {
                     let v = i32::from(p.volume) * STEP;
                     clamp(if p.mode || p.counter <= p.duty { v } else { -v })
                 } else {
@@ -194,7 +194,7 @@ impl Apu {
                 n += 1;
             }
             let s = &self.vrc6.saw;
-            out[n] = if s.enabled {
+            out[n] = if s.enabled && !self.vrc6.halted {
                 // The ramp runs from 0 to six times the rate, in eighths.
                 let peak = (6 * i32::from(s.rate)).min(255) >> 3;
                 clamp((i32::from(s.acc >> 3) * 2 - peak) * 1024)
@@ -228,7 +228,9 @@ impl Apu {
         }
         if chip_bits & chips::FDS != 0 {
             let f = &self.fds;
-            out[n] = if f.halted {
+            // A halted unit and a frequency of 0 count as silent, as the voice
+            // reports them.
+            out[n] = if f.halted || f.freq == 0 {
                 0
             } else {
                 let w = i32::from(f.wave[(f.accum >> 18) as usize & 63]);

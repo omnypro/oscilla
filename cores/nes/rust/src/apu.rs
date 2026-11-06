@@ -889,7 +889,10 @@ impl Machine {
             // event the scope takes the samples that are due, while the
             // channels still hold them.
             let s5b = &self.apu.s5b.regs;
-            let quiet = match which {
+            // Only an event after a sample is due needs the answer: otherwise
+            // the event counts as one that may change a channel, which only
+            // marks the held values to be worked out again.
+            let quiet = self.scope.next() < te && match which {
                 4 => self.apu.noise.len == 0,
                 5 => self.apu.dmc.silent && self.apu.dmc.buffer.is_none(),
                 6 => true,

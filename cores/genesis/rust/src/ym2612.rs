@@ -340,7 +340,7 @@ impl Ym2612 {
             feedback: ch.fb,
             left: ch.left,
             right: ch.right,
-            envelope: loudest.attenuation(),
+            envelope: loudest.level(),
             total: loudest.output(0),
             phase: loudest.phase(),
             dac: c == 5 && self.dac_on,

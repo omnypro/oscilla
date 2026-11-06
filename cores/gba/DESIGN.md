@@ -100,7 +100,7 @@ cycles, so a change of the native rate does not change the scope's rate. A
 pulse, wave or noise sample is the level about the middle of its swing (twice
 the level less the level of a high step), so a square at volume 15 swings
 from -1 to 1. A FIFO sample is its latch at 50 or 100 percent. Each is taken
-once for each side that the channel is on, averaged, and the mask is not in
+as the average of the left and right outputs (so one side alone reads half), and the mask is not in
 it. `scope` resamples to the output rate by linear interpolation. The ring is
 not part of a copy of the machine, which starts with an empty one, and a reset
 clears it. It allocates with the machine, and taking a sample allocates

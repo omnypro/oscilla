@@ -481,7 +481,10 @@ impl Machine {
 
     /// Bytes of one copy of the state, as a snapshot holds them.
     pub fn size(&self) -> usize {
-        std::mem::size_of::<Machine>() + 0x10000 + self.out.heap_bytes()
+        std::mem::size_of::<Machine>()
+            + 0x10000
+            + self.out.heap_bytes()
+            + std::mem::size_of::<[[i16; 4]; crate::state::SCOPE_LEN]>()
     }
 
     pub fn snapshot(&self) -> Snapshot {

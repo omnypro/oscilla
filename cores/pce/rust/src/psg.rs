@@ -56,34 +56,39 @@ pub const SCOPE_HZ: u64 = 44_100;
 /// It is not part of a copy of the generator, which starts with an empty one.
 #[derive(Debug)]
 struct Scope {
-    data: Box<[i16]>,
+    /// The ring, allocated by the first sample so that a copy costs nothing.
+    data: Option<Box<[i16]>>,
     /// The index that the next sample goes to.
     at: usize,
 }
 
 impl Scope {
     fn new() -> Scope {
-        Scope {
-            data: vec![0; 6 * SCOPE_LEN].into_boxed_slice(),
-            at: 0,
-        }
+        Scope { data: None, at: 0 }
     }
 
     /// Adds `n` samples of the same values.
     fn push(&mut self, samples: [i16; 6], n: u64) {
+        let data = self
+            .data
+            .get_or_insert_with(|| vec![0; 6 * SCOPE_LEN].into_boxed_slice());
         for _ in 0..n.min(SCOPE_LEN as u64) {
-            for (c, s) in samples.iter().enumerate() {
-                self.data[c * SCOPE_LEN + self.at] = *s;
+            // The channels of one moment sit side by side.
+            data[self.at * 6..(self.at + 1) * 6].copy_from_slice(&samples);
+            self.at += 1;
+            if self.at == SCOPE_LEN {
+                self.at = 0;
             }
-            self.at = (self.at + 1) % SCOPE_LEN;
         }
     }
 
     fn get(&self, channel: usize, back: usize) -> i16 {
-        if back >= SCOPE_LEN {
-            return 0;
+        match &self.data {
+            Some(data) if back < SCOPE_LEN => {
+                data[((self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN) * 6 + channel]
+            }
+            _ => 0,
         }
-        self.data[channel * SCOPE_LEN + (self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN]
     }
 }
 
@@ -128,6 +133,9 @@ pub struct Psg {
     mask: u8,
     level: (i32, i32),
     scope: Scope,
+    /// What each channel adds to the left and right output now, with no mask:
+    /// the mix is their masked sum and the scope holds them.
+    contrib: [(i64, i64); 6],
     /// Ticks of the scope's sample that have not made a whole sample yet,
     /// counted in 1/3,579,545 of a scope sample.
     scope_acc: u64,
@@ -157,6 +165,7 @@ impl Psg {
             mask: 0x3F,
             level: (0, 0),
             scope: Scope::new(),
+            contrib: [(0, 0); 6],
             scope_acc: 0,
         };
         psg.level = psg.mix();
@@ -341,20 +350,16 @@ impl Psg {
         self.scope.get(channel % 6, back)
     }
 
-    fn mix(&self) -> (i32, i32) {
+    /// Works out what each channel adds and returns the sum of the channels
+    /// that the mask lets through.
+    fn mix(&mut self) -> (i32, i32) {
         let (mut l, mut r) = (0i64, 0i64);
         for i in 0..6 {
-            if self.mask >> i & 1 == 0 {
-                continue;
+            self.contrib[i] = self.contribution(i);
+            if self.mask >> i & 1 != 0 {
+                l += self.contrib[i].0;
+                r += self.contrib[i].1;
             }
-            if !self.ch[i].on {
-                continue;
-            }
-            // The words run from 0 to 31. The output takes them about their
-            // midpoint, in half steps, so a channel puts out no offset.
-            let w = i64::from(self.word(i)) * 2 - 31;
-            l += w * i64::from(self.gain(i, true));
-            r += w * i64::from(self.gain(i, false));
         }
         (l as i32, r as i32)
     }
@@ -408,8 +413,7 @@ impl Psg {
             self.scope_acc %= TICK_HZ;
             if n > 0 {
                 let mut held = [0i16; 6];
-                for (c, h) in held.iter_mut().enumerate() {
-                    let (l, r) = self.contribution(c);
+                for (h, (l, r)) in held.iter_mut().zip(self.contrib) {
                     *h = (((l + r) / 2) >> 6).clamp(-32768, 32767) as i16;
                 }
                 self.scope.push(held, n);

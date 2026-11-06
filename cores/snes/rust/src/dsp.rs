@@ -32,32 +32,38 @@ pub const DSP_WRITE: u8 = 16;
 /// volume: the voice's output times its two volumes, averaged. It is not part
 /// of a copy of the DSP, which starts with an empty one.
 struct Scope {
-    data: Box<[i16]>,
+    /// The ring, allocated by the first sample so that a copy costs nothing.
+    data: Option<Box<[i16]>>,
     /// The index that the next sample goes to.
     at: usize,
 }
 
 impl Scope {
     fn new() -> Scope {
-        Scope {
-            data: vec![0; VOICES * SCOPE_LEN].into_boxed_slice(),
-            at: 0,
-        }
+        Scope { data: None, at: 0 }
     }
 
     fn push(&mut self, samples: [i16; VOICES]) {
-        for (v, s) in samples.into_iter().enumerate() {
-            self.data[v * SCOPE_LEN + self.at] = s;
+        let data = self
+            .data
+            .get_or_insert_with(|| vec![0; VOICES * SCOPE_LEN].into_boxed_slice());
+        // The voices of one moment sit side by side, so that a sample is one
+        // contiguous store.
+        data[self.at * VOICES..(self.at + 1) * VOICES].copy_from_slice(&samples);
+        self.at += 1;
+        if self.at == SCOPE_LEN {
+            self.at = 0;
         }
-        self.at = (self.at + 1) % SCOPE_LEN;
     }
 
     /// The sample `back` steps before the newest, 0 for the newest.
     fn get(&self, voice: usize, back: usize) -> i16 {
-        if back >= SCOPE_LEN {
-            return 0;
+        match &self.data {
+            Some(data) if back < SCOPE_LEN => {
+                data[((self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN) * VOICES + voice]
+            }
+            _ => 0,
         }
-        self.data[voice * SCOPE_LEN + (self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN]
     }
 }
 
@@ -140,6 +146,9 @@ pub struct Dsp {
     scope: Scope,
     /// The ranges of sound RAM that the DSP read or wrote in the last sample.
     pub(crate) accesses: Vec<(u16, u16, u8)>,
+    /// Whether to note those ranges: the machine turns it on with the access
+    /// map.
+    pub(crate) track: bool,
 }
 
 fn clamp16(v: i32) -> i32 {
@@ -168,6 +177,7 @@ impl Dsp {
             levels: [0; VOICES],
             scope: Scope::new(),
             accesses: Vec::new(),
+            track: false,
         };
         d.regs[0x7C] = d.endx;
         d
@@ -198,17 +208,28 @@ impl Dsp {
         self.levels
     }
 
+    /// Notes a range of sound RAM that the DSP read or wrote, when the access
+    /// map is on.
+    fn note(&mut self, first: u16, len: u16, kind: u8) {
+        if self.track {
+            self.accesses.push((first, len, kind));
+        }
+    }
+
     /// The state of a voice.
     pub fn voice_info(&self, v: usize) -> VoiceInfo {
         let v = v % VOICES;
         let r = |i: usize| self.regs[v * 16 + i];
         let voice = &self.voices[v];
         VoiceInfo {
+            // With the ADSR bit clear the envelope follows the gain register and
+            // has no phases: it counts as sustaining until the key goes off.
             phase: match voice.mode {
+                Mode::Release => 3,
+                _ if r(5) & 0x80 == 0 => 2,
                 Mode::Attack => 0,
                 Mode::Decay => 1,
                 Mode::Sustain => 2,
-                Mode::Release => 3,
             },
             envelope: voice.env,
             source: r(4),
@@ -243,7 +264,7 @@ impl Dsp {
         let dir = usize::from(self.regs[0x5D]) << 8;
         let entry = (dir + usize::from(self.regs[v * 16 + 4]) * 4) & 0xFFFF;
         let word = |at: usize| u16::from_le_bytes([ram[at & 0xFFFF], ram[(at + 1) & 0xFFFF]]);
-        self.accesses.push((entry as u16, 4, DSP_READ));
+        self.note(entry as u16, 4, DSP_READ);
         let voice = &mut self.voices[v];
         voice.block = word(entry);
         voice.env = 0;
@@ -259,9 +280,9 @@ impl Dsp {
 
     /// Decodes the block at the voice's address into the window.
     fn decode(&mut self, v: usize, ram: &[u8; 65536]) {
+        let at = usize::from(self.voices[v].block);
+        self.note(at as u16, 9, DSP_READ);
         let voice = &mut self.voices[v];
-        let at = usize::from(voice.block);
-        self.accesses.push((at as u16, 9, DSP_READ));
         let header = ram[at];
         let range = i32::from(header >> 4);
         let filter = (header >> 2) & 3;
@@ -311,7 +332,7 @@ impl Dsp {
         let dir = usize::from(self.regs[0x5D]) << 8;
         let entry = (dir + usize::from(self.regs[v * 16 + 4]) * 4 + 2) & 0xFFFF;
         let loop_at = u16::from_le_bytes([ram[entry], ram[(entry + 1) & 0xFFFF]]);
-        self.accesses.push((entry as u16, 2, DSP_READ));
+        self.note(entry as u16, 2, DSP_READ);
         let voice = &mut self.voices[v];
         if voice.flags & 1 != 0 {
             voice.block = loop_at;
@@ -462,13 +483,14 @@ impl Dsp {
             self.regs[v * 16 + 9] = (out >> 7) as u8;
             self.levels[v] = out >> 7;
             let (l, r) = (self.regs[v * 16] as i8, self.regs[v * 16 + 1] as i8);
-            heard[v] = clamp16(((out * i32::from(l)) >> 7) + ((out * i32::from(r)) >> 7)) as i16;
+            let (ml, mr) = ((out * i32::from(l)) >> 6, (out * i32::from(r)) >> 6);
+            heard[v] = ((ml + mr) >> 1).clamp(-32768, 32767) as i16;
             if self.mask & (1 << v) != 0 {
-                main[0] = clamp16(main[0] + ((out * i32::from(l)) >> 6));
-                main[1] = clamp16(main[1] + ((out * i32::from(r)) >> 6));
+                main[0] = clamp16(main[0] + ml);
+                main[1] = clamp16(main[1] + mr);
                 if eon & (1 << v) != 0 {
-                    echo[0] = clamp16(echo[0] + ((out * i32::from(l)) >> 6));
-                    echo[1] = clamp16(echo[1] + ((out * i32::from(r)) >> 6));
+                    echo[0] = clamp16(echo[0] + ml);
+                    echo[1] = clamp16(echo[1] + mr);
                 }
             }
         }
@@ -477,7 +499,7 @@ impl Dsp {
 
         let esa = usize::from(self.regs[0x6D]) << 8;
         let at = (esa + self.echo_index as usize * 4) & 0xFFFF;
-        self.accesses.push((at as u16, 4, DSP_READ));
+        self.note(at as u16, 4, DSP_READ);
         let mut fir_out = [0i32; 2];
         for ch in 0..2usize {
             let lo = usize::from(ram[(at + ch * 2) & 0xFFFF]);
@@ -497,7 +519,7 @@ impl Dsp {
 
         let efb = i32::from(self.regs[0x0D] as i8);
         if flg & 0x20 == 0 {
-            self.accesses.push((at as u16, 4, DSP_WRITE));
+            self.note(at as u16, 4, DSP_WRITE);
             for ch in 0..2usize {
                 let value = clamp16(echo[ch] + ((fir_out[ch] * efb) >> 7)) & !1;
                 ram[(at + ch * 2) & 0xFFFF] = value as u8;

@@ -516,6 +516,9 @@ fn a_restore_and_a_song_change_keep_the_scope_running() {
     assert_follows(&m, 0, CPU / (16.0 * 256.0));
     // A new song starts the cycle count again, and the scope goes on with it.
     assert!(m.select_song(1));
+    let mut fresh = vec![1f32; 256];
+    assert!(m.scope(0, &mut fresh));
+    assert!(fresh.iter().all(|s| *s == 0.0), "the old song's samples remain");
     render(&mut m, 6000);
     assert_follows(&m, 0, CPU / (16.0 * 256.0));
 }

@@ -521,6 +521,7 @@ impl Machine {
         let mask = self.dsp.mask;
         *self = Machine::clone(s);
         self.observer = observer;
+        self.dsp.track = access.0.is_some();
         self.access = access;
         self.dsp.mask = mask & ALL_CHANNELS;
         Ok(())
@@ -531,6 +532,7 @@ impl Machine {
     /// machine has none, and `restore` keeps the one that is set.
     pub fn set_access_tracking(&mut self, on: bool) {
         self.access.0 = on.then(|| Box::new([0; 65536]));
+        self.dsp.track = on;
     }
 
     pub fn access_tracking(&self) -> bool {

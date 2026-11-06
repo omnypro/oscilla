@@ -33,12 +33,25 @@ fn a_playing_voice_reports_its_registers_and_its_envelope() {
     assert_eq!(v.gain, 0x40);
     assert_eq!(v.source, 0);
     assert!(v.envelope > 0);
-    assert!(v.phase < 3, "phase {}", v.phase);
+    // The voice follows its gain register, which has no phases: it sustains.
+    assert_eq!(v.phase, 2);
     assert!(!v.noise && !v.echo && !v.pitch_modulated);
     // A voice that was never keyed is in its release and silent.
     let idle = m.voice_info(3);
     assert_eq!((idle.phase, idle.envelope), (3, 0));
     assert_eq!(idle.output, 0);
+}
+
+#[test]
+fn a_voice_with_an_adsr_envelope_walks_through_its_phases() {
+    // ADSR on: the fastest attack, decay rate 0, sustain level 1, sustain rate 0.
+    let mut m = machine_with(&[0x2F, 0xFE], &[(0x05, 0x8F), (0x06, 0x20)]);
+    m.dsp_samples(8);
+    let early = m.voice_info(0).phase;
+    m.dsp_samples(4000);
+    let late = m.voice_info(0).phase;
+    assert!(early <= 1, "{early}");
+    assert!((1..=2).contains(&late), "{late}");
 }
 
 #[test]

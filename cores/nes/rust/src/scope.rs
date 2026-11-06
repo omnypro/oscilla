@@ -67,9 +67,11 @@ impl Scope {
         self.next
     }
 
-    /// Starts the clock again at cycle 0, for a machine whose cycle count
-    /// starts again. The ring keeps what it holds.
+    /// Starts the clock again at cycle 0 and empties the ring, for a machine
+    /// whose cycle count starts again.
     pub(crate) fn restart(&mut self) {
+        self.data.fill(0);
+        self.at = 0;
         self.next = 0;
         self.rem = 0;
         self.stale = true;

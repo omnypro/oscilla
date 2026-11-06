@@ -32,6 +32,8 @@ pub struct PsgVoice {
     pub register: u16,
     /// A tone channel whose counter runs (a register of 0 or 1 holds it high).
     pub running: bool,
+    /// The period of the tone counter in ticks, 0 when it does not run.
+    pub period: u16,
     pub noise: bool,
     /// White noise (the noise channel's feedback bit).
     pub white: bool,
@@ -114,6 +116,11 @@ impl Psg {
                 self.tone[c]
             },
             running: c == 3 || self.period(self.tone[c]).is_some(),
+            period: if c == 3 {
+                0
+            } else {
+                self.period(self.tone[c]).unwrap_or(0)
+            },
             noise: c == 3,
             white: c == 3 && self.noise & 4 != 0,
             attenuation: self.attenuation[c],

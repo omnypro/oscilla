@@ -277,9 +277,11 @@ const char *cgba_voice_name(const cgba_machine *machine, int index);
 /*
  * Fills `out` with the last `frames` frames that one channel put out, oldest
  * first, as floats within -1 to 1 at the machine's output rate. A sample is
- * the channel's own output about the middle of its swing, once for each side
- * that it is on, averaged: Pulse 1 to Noise from their level (a pulse channel
- * at volume 15 swings from -1 to 1 when both sides hear it), Direct A and B
+ * the channel's own output about the middle of its swing, as the average of
+ * the left and right outputs, so a channel that only one side hears reads half
+ * of a channel that both sides hear: Pulse 1 to Noise from their level (a
+ * pulse channel at volume 15 swings from -1 to 1 when both sides hear it),
+ * Direct A and B
  * from the last byte that the FIFO played, times its 50 or 100 percent. Pulse
  * 1 to Noise are 0 while they do not play, and Direct A and B keep their last
  * byte. The mask and the mixer's volumes are not in it, so a muted channel

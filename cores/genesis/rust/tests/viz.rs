@@ -164,6 +164,25 @@ fn a_psg_tone_reports_its_pitch_and_the_noise_channel_its_kind() {
 }
 
 #[test]
+fn a_tone_register_of_zero_under_the_zero_is_0x400_flag_reports_its_pitch() {
+    // Register 0 plays as 0x400: 3,579,545 / (32 * 1024) = 109.2 Hz.
+    let mut s = vec![0x50, 0x80, 0x50, 0x00, 0x50, 0x90];
+    s.extend(wait(4000));
+    let mut f = file(true, false, &finished(s), None);
+    f[0x2B] = 1;
+    let mut m = machine(&f);
+    let mut out = vec![0i16; 2 * 2000];
+    m.render_s16(&mut out);
+    let v = m.voice(0).unwrap();
+    assert!((v.frequency_hz - 109.2).abs() < 0.2, "{}", v.frequency_hz);
+    // Without the flag the channel is held high and has no pitch.
+    f[0x2B] = 0;
+    let mut m = machine(&f);
+    m.render_s16(&mut out);
+    assert_eq!(m.voice(0).unwrap().frequency_hz, 0.0);
+}
+
+#[test]
 fn a_ym2413_channel_reports_its_pitch_and_instrument() {
     let mut m = machine(&opll_file(&finished(opll_tone(20_000))));
     let mut out = vec![0i16; 2 * 10_000];

@@ -141,9 +141,20 @@ fn rate(register: u8, ks: u8, kc: u8) -> u8 {
 
 impl Eg {
     /// The envelope's attenuation, 0 (loudest) to 0x3FF, before the total
-    /// level.
+    /// level and the SSG-EG inversion.
+    #[cfg(test)]
     pub fn attenuation(&self) -> u16 {
         self.att
+    }
+
+    /// The envelope's level as the operator unit uses it, with the SSG-EG
+    /// inversion applied and no total level: 0 loudest, at most 0x3FF.
+    pub fn level(&self) -> u16 {
+        if self.inversion() {
+            SSG_LEVEL.wrapping_sub(self.att) & MAX_ATT
+        } else {
+            self.att
+        }
     }
 
     pub fn phase(&self) -> Phase {
