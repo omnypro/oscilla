@@ -131,10 +131,28 @@ pub struct FifoState {
     pub latch: i8,
 }
 
+/// An array of 42 bytes with a `Default`, which arrays above 32 elements lack.
+#[derive(Clone)]
+pub struct Bytes42(pub [u8; 0x2A]);
+
+impl Default for Bytes42 {
+    fn default() -> Bytes42 {
+        Bytes42([0; 0x2A])
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ApuState {
     pub ch: [PsgChannel; 4],
     pub wave: [[u8; 16]; 2],
+    /// The last value stored to each byte of 0x04000060..0x0400008A, for the
+    /// register blocks. The registers drop stores while the sound unit is off
+    /// and clear when it turns off. This copy records every store and keeps
+    /// the bytes. The unused halfwords stay 0.
+    pub written: Bytes42,
+    /// The last byte stored to each address of 0x040000A0..0x040000A8, FIFO A
+    /// first.
+    pub fifo_written: [u8; 8],
     pub wave_bank: i32,
     pub frame_step: i32,
     pub psg_time: u64,

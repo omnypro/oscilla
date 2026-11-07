@@ -106,6 +106,62 @@ not part of a copy of the machine, which starts with an empty one, and a reset
 clears it. It allocates with the machine, and taking a sample allocates
 nothing.
 
+## Register blocks
+
+The register blocks show what a program stored, for a register display. There
+are five. Each has a name, a base address and a size, and the player lists them
+by name.
+
+| Block | Name                 | Base         | Bytes |
+| ----- | -------------------- | ------------ | ----- |
+| 0     | Sound                | `0x04000060` | 42    |
+| 1     | Wave RAM             | `0x04000090` | 32    |
+| 2     | FIFO                 | `0x040000A0` | 8     |
+| 3     | Timers and DMA sound | `0x04000100` | 16    |
+| 4     | DMA 1 and 2          | `0x040000BC` | 24    |
+
+The sound block runs from SOUND1CNT_L (0x60) to the second byte of SOUNDBIAS
+(0x88 and 0x89). The registers between them are 0x60 SOUND1CNT_L, 0x62
+SOUND1CNT_H, 0x64 SOUND1CNT_X, 0x68 SOUND2CNT_L, 0x6C SOUND2CNT_H, 0x70
+SOUND3CNT_L, 0x72 SOUND3CNT_H, 0x74 SOUND3CNT_X, 0x78 SOUND4CNT_L, 0x7C
+SOUND4CNT_H, 0x80 SOUNDCNT_L, 0x82 SOUNDCNT_H, 0x84 SOUNDCNT_X and 0x88
+SOUNDBIAS. The halfwords at 0x66, 0x6A, 0x6E, 0x76, 0x7A, 0x7E and 0x86 have no
+register and stay 0, so the block is 0x2A bytes.
+
+The I/O byte array is not the source of the sound block, because the sound
+rules change it: stores below 0x82 are dropped while the unit is off, turning
+the unit off zeroes 0x60 to 0x81, and SOUNDCNT_X keeps only its top bit.
+`ApuState::written` is a 42-byte copy that `apu_write` updates first, merging
+each store with its byte mask. It records stores made while the unit is off,
+keeps its bytes through a power-off, and holds the strobe and trigger bits as
+written. A reset starts it at zero except SOUNDBIAS, which takes the 0x0200
+that the BIOS leaves. The cost is one halfword merge per sound-register store.
+
+Wave RAM holds bank 0 in bytes 0 to 15 and bank 1 in bytes 16 to 31. A CPU
+store to 0x04000090 reaches the bank that bit 6 of SOUND3CNT_L does not select,
+and the selected bank plays. Bank 1 has no address of its own, so byte 16 is
+not at 0x040000A0. The block reads the two banks directly. They hold the bytes
+as written.
+
+The FIFO block is `ApuState::fifo_written`, eight bytes that the bus updates for
+every store to 0x040000A0 to 0x040000A7 at the byte positions of the store.
+The FIFO itself keeps its queue of 32 bytes and drops stores when it is full,
+so it cannot show the last word. A DMA that feeds a FIFO stores through the
+same path and appears in the block.
+
+The timer block and the DMA block read the I/O byte array. Stores to those
+registers reach it as written, before the masks that the timer and DMA state
+apply (bit 11 of DMA 1 and 2, and the enable bit that a finished transfer
+clears). An 8-bit store to a DMA control register merges its other byte from
+the DMA state, so that byte can differ from the last value stored to it. The
+DMA block lists the source address, destination address, count and control
+value of DMA 1, then the same of DMA 2, in the order of the registers from
+0x040000BC. DMA 0 and DMA 3 do not feed the FIFOs and have no block. The timer
+block is named "Timers and DMA sound" and holds only the timers.
+
+`written` and `fifo_written` are part of the machine state. A copy and a
+snapshot carry them, and `size` counts them in `size_of::<Machine>()`.
+
 ## Arithmetic
 
 The resampler's kernel and four BIOS calls (sine and cosine in the affine

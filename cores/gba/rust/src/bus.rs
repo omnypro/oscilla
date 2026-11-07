@@ -350,7 +350,7 @@ impl Machine {
                 }
                 self.trace_store(addr, value, 4);
                 if (addr & 0x3FC) == 0xA0 || (addr & 0x3FC) == 0xA4 {
-                    self.apu_fifo_push(usize::from(addr & 4 != 0), value, 4);
+                    self.apu_fifo_push(addr, value, 4);
                     return;
                 }
                 self.io_write16(addr, value as u16);
@@ -375,7 +375,7 @@ impl Machine {
                 }
                 self.trace_store(addr, value, 2);
                 if (addr & 0x3F8) == 0xA0 {
-                    self.apu_fifo_push(usize::from(addr & 4 != 0), value, 2);
+                    self.apu_fifo_push(addr, value, 2);
                     return;
                 }
                 self.io_write16(addr, value as u16);
@@ -398,7 +398,7 @@ impl Machine {
                 }
                 self.trace_store(addr, value, 1);
                 if (addr & 0x3F8) == 0xA0 {
-                    self.apu_fifo_push(usize::from(addr & 4 != 0), value, 1);
+                    self.apu_fifo_push(addr, value, 1);
                     return;
                 }
                 self.io_write8(addr, value as u8);

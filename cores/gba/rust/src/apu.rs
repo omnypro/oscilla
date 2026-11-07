@@ -219,6 +219,14 @@ impl Machine {
     }
 
     pub(crate) fn apu_write(&mut self, off: u32, value: u16, mask: u16) {
+        if off < 0x8A && !matches!(off, 0x66 | 0x6A | 0x6E | 0x76 | 0x7A | 0x7E | 0x86) {
+            let i = (off - 0x60) as usize;
+            let w = &mut self.apu.written.0;
+            let old = u16::from_le_bytes([w[i], w[i + 1]]);
+            let v = (old & !mask) | (value & mask);
+            w[i] = v as u8;
+            w[i + 1] = (v >> 8) as u8;
+        }
         if (0x90..0xA0).contains(&off) {
             // Wave RAM: the CPU reaches the bank that is not selected for play.
             let bank = (((self.reg(0x70) >> 6) & 1) ^ 1) as usize;
@@ -362,8 +370,14 @@ impl Machine {
         }
     }
 
-    pub(crate) fn apu_fifo_push(&mut self, ch: usize, value: u32, bytes: u32) {
-        let f = &mut self.apu.fifo[ch];
+    /// A store of `bytes` bytes to the FIFO port at `addr`, which is
+    /// 0x040000A0..0x040000A8.
+    pub(crate) fn apu_fifo_push(&mut self, addr: u32, value: u32, bytes: u32) {
+        let at = (addr & 7) as usize;
+        for i in 0..bytes as usize {
+            self.apu.fifo_written[at + i] = (value >> (8 * i)) as u8;
+        }
+        let f = &mut self.apu.fifo[usize::from(addr & 4 != 0)];
         for i in 0..bytes {
             if f.count >= 32 {
                 break;
@@ -679,6 +693,9 @@ impl Machine {
     pub(crate) fn apu_reset(&mut self) {
         self.apu = ApuState::default();
         self.apu.sample_shift = 9 - i32::from(self.reg(0x88) >> 14);
+        // The bias that the BIOS leaves, which sys_reset puts in the I/O bytes.
+        self.apu.written.0[0x28] = self.io[0x88];
+        self.apu.written.0[0x29] = self.io[0x89];
         self.apu.psg_time = self.now;
     }
 }

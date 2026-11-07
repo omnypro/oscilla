@@ -144,6 +144,53 @@ uint64_t cgba_next_vblank(const cgba_machine *machine);
 uint32_t cgba_peek(const cgba_machine *machine, uint32_t address, int width);
 
 /*
+ * The registers of the sound unit and of the timers and DMA channels that feed
+ * it, as a program wrote them, in blocks. The count is 5 and does not change.
+ * Every block is always present. Multi-byte fields are little endian.
+ *   0 "Sound" (42 bytes, base 0x04000060): SOUND1CNT_L at 0x04000060 through
+ *     SOUNDCNT_X at 0x04000084 and both bytes of SOUNDBIAS at 0x04000088. Each
+ *     halfword is the last value stored to it, as stored: write-only bits show,
+ *     and the strobe bits of SOUNDCNT_H and the trigger bits of the SOUNDnCNT_X
+ *     registers stay as the program wrote them. A store made while the sound
+ *     unit is off is recorded, and turning the unit off does not clear the
+ *     bytes. The halfwords with no register (offsets 0x06, 0x0A, 0x0E, 0x16,
+ *     0x1A, 0x1E and 0x26 from the base) are 0. After a reset SOUNDBIAS holds
+ *     0x0200, which the BIOS leaves, and the rest is 0.
+ *   1 "Wave RAM" (32 bytes, base 0x04000090): bank 0 in bytes 0 to 15 and bank 1
+ *     in bytes 16 to 31, two samples of 4 bits to a byte, the high nibble
+ *     first. Bit 6 of SOUND3CNT_L (bit 6 of byte 16 of block 0) selects the bank
+ *     that plays. A CPU access to 0x04000090 to 0x0400009F reaches the other
+ *     bank. Bank 1 has no address of its own, so its bytes are not at
+ *     0x040000A0.
+ *   2 "FIFO" (8 bytes, base 0x040000A0): the last bytes stored to the FIFO
+ *     ports. FIFO A is bytes 0 to 3 (0x040000A0) and FIFO B is bytes 4 to 7
+ *     (0x040000A4). Each byte is the last one stored to its address, so a
+ *     32-bit store shows as one word. The bytes are recorded when the FIFO is
+ *     full and drops them, and when a DMA channel makes the store.
+ *   3 "Timers and DMA sound" (16 bytes, base 0x04000100): the reload value then
+ *     the control value of timers 0 to 3, 4 bytes each. This block holds the
+ *     timers that clock the FIFOs. The DMA channels that feed them are block 4.
+ *   4 "DMA 1 and 2" (24 bytes, base 0x040000BC): the source address, the
+ *     destination address, the count and the control value of DMA 1, then the
+ *     same of DMA 2 (12 bytes each, 4 + 4 + 2 + 2). The values are the ones
+ *     stored: addresses are not masked, the control keeps the enable bit that
+ *     the hardware clears when a one-shot transfer ends, and bit 11 shows as
+ *     written.
+ * cgba_register_block_name returns a static string, the same pointer each
+ * call, or NULL for an invalid block. cgba_register_block_base returns the
+ * address of byte 0 in the console's memory map, or 0 for an invalid block.
+ * cgba_register_block_get copies up to `max` bytes and returns the count, or 0
+ * for an invalid block, a NULL machine or buffer, a `max` of 0 or a call from
+ * an observer callback. The size, base, name and count calls return 0 or NULL
+ * from a callback too. None of the calls change the sound.
+ */
+int cgba_register_block_count(const cgba_machine *machine);
+const char *cgba_register_block_name(const cgba_machine *machine, int block);
+uint32_t cgba_register_block_base(const cgba_machine *machine, int block);
+size_t cgba_register_block_size(const cgba_machine *machine, int block);
+size_t cgba_register_block_get(const cgba_machine *machine, int block, uint8_t *out, size_t max);
+
+/*
  * Things the machine met and does not implement (an unknown BIOS call, an
  * undefined instruction), as a NUL-terminated list of short sentences, one
  * per line. The machine reports each once and never prints.

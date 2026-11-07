@@ -14,6 +14,15 @@ fn new_warnings() -> Vec<u8> {
     w
 }
 
+/// The register blocks: name, address of byte 0 and size in bytes.
+const BLOCKS: [(&str, u32, usize); 5] = [
+    ("Sound", 0x0400_0060, 0x2A),
+    ("Wave RAM", 0x0400_0090, 32),
+    ("FIFO", 0x0400_00A0, 8),
+    ("Timers and DMA sound", 0x0400_0100, 16),
+    ("DMA 1 and 2", 0x0400_00BC, 24),
+];
+
 impl Machine {
     /// A machine for `image` that produces `output_rate` frames per second
     /// (8000 to 192000). The image may be dropped afterwards. None when the
@@ -330,6 +339,73 @@ impl Machine {
         self.observer = observer;
         self.channel_mask = mask;
         Ok(())
+    }
+
+    /// The number of register blocks: 5.
+    pub fn register_block_count(&self) -> usize {
+        BLOCKS.len()
+    }
+
+    /// The name of block `block`.
+    pub fn register_block_name(&self, block: usize) -> Option<&'static str> {
+        BLOCKS.get(block).map(|b| b.0)
+    }
+
+    /// The address of byte 0 of block `block`, and 0 for a block past the
+    /// last.
+    pub fn register_block_base(&self, block: usize) -> u32 {
+        BLOCKS.get(block).map_or(0, |b| b.1)
+    }
+
+    /// The bytes in block `block`, and 0 for a block past the last.
+    pub fn register_block_size(&self, block: usize) -> usize {
+        BLOCKS.get(block).map_or(0, |b| b.2)
+    }
+
+    /// Copies the first `out.len()` bytes of block `block`, or all of it if
+    /// that is fewer, and returns the count. The values are the bytes that the
+    /// program stored.
+    ///
+    /// Block 0 is the sound registers, from SOUND1CNT_L at 0x04000060 to both
+    /// bytes of SOUNDBIAS at 0x04000088. Each halfword is the last value stored
+    /// to it, including stores made while the sound unit is off. Turning the
+    /// unit off does not clear the bytes. The halfwords with no register (0x66,
+    /// 0x6A, 0x6E, 0x76, 0x7A, 0x7E and 0x86) are 0. At a reset SOUNDBIAS holds
+    /// the 0x0200 that the BIOS leaves and every other byte is 0.
+    ///
+    /// Block 1 is wave RAM: bank 0 in bytes 0 to 15 and bank 1 in bytes 16 to
+    /// 31. Bit 6 of SOUND3CNT_L (byte 0x10 of block 0, bit 6) selects the bank
+    /// that plays, and a CPU access to 0x04000090 reaches the other one.
+    ///
+    /// Block 2 holds the last bytes stored to the FIFO ports: FIFO A at
+    /// 0x040000A0 in bytes 0 to 3 and FIFO B at 0x040000A4 in bytes 4 to 7,
+    /// each byte at the address it was stored to, so a 32-bit store shows as
+    /// one little-endian word. A store is recorded when the FIFO is full and
+    /// drops its bytes, and when a DMA makes it.
+    ///
+    /// Block 3 is the four timers, each a reload value then a control value as
+    /// little-endian halfwords, timer 0 first. Block 4 is the registers of DMA 1
+    /// then DMA 2, each source address, destination address, count and control
+    /// as little-endian fields in the order of the registers. These are the
+    /// values stored: the control keeps an enable bit that the hardware clears
+    /// when a transfer ends, and the addresses are not masked.
+    pub fn register_block_get(&self, block: usize, out: &mut [u8]) -> usize {
+        let mut waves = [0u8; 32];
+        let src: &[u8] = match block {
+            0 => &self.apu.written.0,
+            1 => {
+                waves[..16].copy_from_slice(&self.apu.wave[0]);
+                waves[16..].copy_from_slice(&self.apu.wave[1]);
+                &waves
+            }
+            2 => &self.apu.fifo_written,
+            3 => &self.io[0x100..0x110],
+            4 => &self.io[0xBC..0xD4],
+            _ => return 0,
+        };
+        let n = src.len().min(out.len());
+        out[..n].copy_from_slice(&src[..n]);
+        n
     }
 
     pub fn channel_levels(&self) -> ChannelLevels {

@@ -42,7 +42,7 @@ A machine holds all of its state and renders the same samples on every run.
 `cgba_set_observer` reports every store to the sound registers and every byte
 the Direct Sound FIFOs play. Rust code uses `oscilla_gba::Machine` directly.
 
-A player has three more groups of calls.
+A player has four more groups of calls.
 
 - `cgba_snapshot_take` copies the whole machine. `cgba_snapshot_restore`
   puts a machine with the same image and output rate back to that point, and
@@ -53,6 +53,12 @@ A player has three more groups of calls.
   `cgba_voices_get` returns what each channel is doing (its pitch, volume,
   sides, envelope and duty or wave number), and `cgba_scope_get` returns the
   last frames that one channel put out, for a display.
+- `cgba_register_block_count`, `_name`, `_base`, `_size` and `_get` return the
+  registers as the program stored them, in five blocks: "Sound" (SOUND1CNT_L
+  to SOUNDBIAS, 42 bytes at 0x04000060), "Wave RAM" (both banks, 32 bytes at
+  0x04000090), "FIFO" (8 bytes at 0x040000A0), "Timers and DMA sound" (the four
+  timers' reload and control values, 16 bytes at 0x04000100) and "DMA 1 and 2"
+  (24 bytes at 0x040000BC).
 - `cgba_end_state_get` reports a CPU that waits for an interrupt that no
   register enables, and a CPU that runs a branch to itself with interrupts
   off. `cgba_quiet_cycles` counts the cycles since the output level changed.
@@ -89,6 +95,9 @@ took.
 - `hooks` and `bios_edges`: snapshots, channel masks, end-of-song signals and
   BIOS arguments at the edge of the cost arithmetic.
 - `viz`: the state of each channel and its scope, and no change to the sound.
+- `regs`: the register blocks: their bytes after a program's stores, a
+  sound-off store, byte and word stores, DMA feeds, invalid arguments, a
+  restore, and no change to the sound.
 - `libm_equivalence` and `tables`: the platform-independent arithmetic and the
   constant tables against the platform's math library. The check of every
   ArcTan2 argument pair takes two minutes and runs with `--ignored`.
