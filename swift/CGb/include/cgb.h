@@ -152,6 +152,33 @@ uint32_t cgb_next_pc(const cgb_machine *machine);
 uint32_t cgb_peek(const cgb_machine *machine, uint32_t address);
 
 /*
+ * The registers of the sound unit as a program wrote them, in blocks. The
+ * count is 2 and does not change:
+ *   0 "APU" (23 bytes, base 0xFF10): NR10 to NR52 at 0xFF10 to 0xFF26. Each
+ *     byte is the last one stored to its address. The bytes are not read back:
+ *     write-only bits show as written, the sweep unit's changes to NR13 and
+ *     NR14 do not show, and NR52 is the whole byte stored. A store made while
+ *     the sound unit is off is recorded, and turning the unit off does not clear
+ *     the bytes. The unused addresses 0xFF15 and 0xFF1F are 0. A song change
+ *     puts back the values that the boot program leaves (NR11 0x80, NR12 0xF3,
+ *     NR50 0x77, NR51 0xF3, NR52 0x80) and 0 elsewhere.
+ *   1 "Wave RAM" (16 bytes, base 0xFF30): the 16 bytes at 0xFF30 to 0xFF3F,
+ *     which hold 32 samples of 4 bits, the high nibble first.
+ * cgb_register_block_name returns a static string, the same pointer each call,
+ * or NULL for an invalid block. cgb_register_block_base returns the address of
+ * byte 0 in the console's memory map, or 0 for an invalid block.
+ * cgb_register_block_get copies up to `max` bytes and returns the count, or 0
+ * for an invalid block, a NULL machine or buffer, a `max` of 0 or a call from
+ * an observer callback. The size, base, name and count calls return 0 or NULL
+ * from a callback too. None of the calls change the sound.
+ */
+int cgb_register_block_count(const cgb_machine *machine);
+const char *cgb_register_block_name(const cgb_machine *machine, int block);
+uint32_t cgb_register_block_base(const cgb_machine *machine, int block);
+size_t cgb_register_block_size(const cgb_machine *machine, int block);
+size_t cgb_register_block_get(const cgb_machine *machine, int block, uint8_t *out, size_t max);
+
+/*
  * Things the machine met and does not support (a routine that did not
  * return, HALT, STOP or a speed switch in a routine, an opcode that locks the
  * CPU), as a NUL-terminated list of short sentences, one per line. The machine

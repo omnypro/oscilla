@@ -41,7 +41,7 @@ of the init and play routines. Each play call is the driver's own tick, so a
 host can digest the stores per call. Rust code uses `oscilla_gb::Machine`
 directly.
 
-A player has five more groups of calls.
+A player has six more groups of calls.
 
 - `cgb_snapshot_take` copies the whole machine. `cgb_snapshot_restore` puts a
   machine with the same file and output rate back to that point, and the same
@@ -51,6 +51,10 @@ A player has five more groups of calls.
 - `cgb_voices_get` returns what each channel is doing (its pitch, volume, pan,
   envelope, and its duty, wave or noise width), and `cgb_scope_get` returns the
   last frames that one channel put out, for a display.
+- `cgb_register_block_count`, `_name`, `_base`, `_size` and `_get` return the
+  registers as the program stored them, in two blocks: the 23 sound registers
+  NR10 to NR52 ("APU", base 0xFF10) and the 16 bytes of wave RAM ("Wave RAM",
+  base 0xFF30).
 - `cgb_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
   plays. The default is the console's own filter at about 28 Hz, and
   `cgb_use_console_highpass` returns to it. `cgb_highpass_hz` reads the cutoff
@@ -87,6 +91,8 @@ header. `--bench` renders without output and prints the time it took.
 - `highpass`: the bass cutoff's range, default, decay time and behavior across
   a change, a reset and a restore.
 - `viz`: the state of each channel, its scope, and no change to the sound.
+- `regs`: the register blocks: their bytes after a program's stores, the
+  sweep and a power-off, invalid arguments, and no change to the sound.
 - `cartridges`: public test cartridges for the CPU, memory timing and sound
   unit. They are not in the repository. `OSCILLA_GB_TESTS` names a folder that
   holds them and a `manifest.txt` that lists each one with a cycle limit. The

@@ -110,6 +110,7 @@ impl Default for Apu {
         Apu {
             on: false,
             r: [0; 0x17],
+            written: [0; 0x17],
             wave_ram: [0; 16],
             // No generator runs before its first trigger.
             ch1: Pulse {
@@ -657,6 +658,9 @@ impl Machine {
     }
 
     pub(crate) fn apu_write(&mut self, a: u16, v: u8) {
+        if (0xFF10..=0xFF26).contains(&a) && a != 0xFF15 && a != 0xFF1F {
+            self.apu.written[usize::from(a - 0xFF10)] = v;
+        }
         let t = self.now;
         self.apu_advance(t);
         if (0xFF30..=0xFF3F).contains(&a) {

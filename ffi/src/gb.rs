@@ -419,6 +419,71 @@ pub unsafe extern "C" fn cgb_peek(machine: *const CMachine, address: u32) -> u32
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_register_block_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    unsafe { &(*machine).machine }.register_block_count() as c_int
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_register_block_name(
+    machine: *const CMachine,
+    block: c_int,
+) -> *const c_char {
+    const NAMES: [&CStr; 2] = [c"APU", c"Wave RAM"];
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return ptr::null();
+    }
+    usize::try_from(block)
+        .ok()
+        .and_then(|i| NAMES.get(i))
+        .map_or(ptr::null(), |n| n.as_ptr())
+}
+
+/// The address of byte 0 of a block, and 0 for an invalid block or a call from
+/// a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_register_block_base(machine: *const CMachine, block: c_int) -> u32 {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    usize::try_from(block)
+        .ok()
+        .map_or(0, |b| unsafe { &(*machine).machine }.register_block_base(b))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_register_block_size(machine: *const CMachine, block: c_int) -> usize {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    usize::try_from(block)
+        .ok()
+        .map_or(0, |b| unsafe { &(*machine).machine }.register_block_size(b))
+}
+
+/// Copies up to `max` bytes of a block into `out`. Returns the count copied, 0
+/// for an invalid block, a NULL machine or buffer, a `max` of 0 or a call from a
+/// callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgb_register_block_get(
+    machine: *const CMachine,
+    block: c_int,
+    out: *mut u8,
+    max: usize,
+) -> usize {
+    if machine.is_null() || out.is_null() || max == 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let Ok(b) = usize::try_from(block) else {
+        return 0;
+    };
+    let out = unsafe { slice::from_raw_parts_mut(out, max) };
+    unsafe { &(*machine).machine }.register_block_get(b, out)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgb_warnings(machine: *const CMachine) -> *const c_char {
     if unsafe { in_callback(machine) } {
         return c"".as_ptr();

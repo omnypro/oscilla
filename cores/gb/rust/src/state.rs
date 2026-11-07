@@ -186,6 +186,11 @@ pub struct Apu {
     pub on: bool,
     /// The raw registers 0xFF10..=0xFF26, as written.
     pub r: [u8; 0x17],
+    /// The last byte stored to each of 0xFF10..=0xFF26, for the register
+    /// blocks. Unlike `r` it records a store made while the unit is off, keeps
+    /// what a store wrote when the sweep or a power-off changes `r`, and holds
+    /// NR52 whole. The unused addresses 0xFF15 and 0xFF1F stay 0.
+    pub written: [u8; 0x17],
     pub wave_ram: [u8; 16],
     pub ch1: Pulse,
     pub ch2: Pulse,

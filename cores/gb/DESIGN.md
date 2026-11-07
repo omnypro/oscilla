@@ -163,6 +163,27 @@ so each sample is the channel's output at its own cycle. `scope` resamples to
 the output rate by linear interpolation. The ring is not part of a copy of the
 machine, which starts with an empty one, and a song change empties it in place.
 
+## Register blocks
+
+The register blocks show what a program stored, for a register display. Two
+blocks exist: "APU" holds NR10 to NR52 (23 bytes at 0xFF10 to 0xFF26) and
+"Wave RAM" holds the 16 bytes at 0xFF30.
+
+The core's own registers (`r`) are not the source of the APU block, because
+they differ from the stores. The sweep unit rewrites NR13 and NR14, a power-off
+clears them, the unit ignores stores while it is off, NR52 is not kept as
+a byte, and the unused addresses 0xFF15 and 0xFF1F take a store. `Apu::written`
+is a 23-byte copy that `apu_write` updates first, before any of those rules
+apply. It records a store made while the unit is off, keeps its bytes through
+a power-off, takes the whole byte of NR52, and skips 0xFF15 and 0xFF1F so that
+they stay 0. A song change starts it from the boot program's values (NR11 0x80,
+NR12 0xF3, NR50 0x77, NR51 0xF3, NR52 0x80). The copy costs one byte store per
+sound-register write. Wave RAM is the array that stores to 0xFF30 to
+0xFF3F fill, so it needs no copy.
+
+`written` sits in the state, so a copy of the machine and a snapshot carry it,
+and `size` counts it in `size_of::<Machine>()`.
+
 ## Snapshots
 
 `snapshot` copies everything a machine is except the observer, the channel

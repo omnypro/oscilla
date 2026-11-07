@@ -25,6 +25,9 @@ fn new_warnings() -> Vec<u8> {
 /// gives with this phase.
 const TIMER_PHASE: u64 = 96;
 
+/// The register blocks: name, address of byte 0 and size in bytes.
+const BLOCKS: [(&str, u32, usize); 2] = [("APU", 0xFF10, 0x17), ("Wave RAM", 0xFF30, 16)];
+
 /// A routine that has run this long without returning is abandoned.
 const ROUTINE_LIMIT: u64 = CLOCK_HZ as u64;
 
@@ -147,6 +150,13 @@ impl Machine {
         self.apu.r[0x02] = 0xF3;
         self.apu.r[0x14] = 0x77;
         self.apu.r[0x15] = 0xF3;
+        // The program that wrote them is the boot program, and the shadow
+        // holds what it wrote.
+        self.apu.written[0x01] = 0x80;
+        self.apu.written[0x02] = 0xF3;
+        self.apu.written[0x14] = 0x77;
+        self.apu.written[0x15] = 0xF3;
+        self.apu.written[0x16] = 0x80;
         // The filter has settled on the level of the idle DACs, as it has by
         // the time a cartridge starts.
         let (input, gate) = self.apu.mix_all(self.channel_mask);
@@ -526,6 +536,45 @@ impl Machine {
             self.apu_emit(t);
         }
         Ok(())
+    }
+
+    /// The number of register blocks: 2.
+    pub fn register_block_count(&self) -> usize {
+        BLOCKS.len()
+    }
+
+    /// The name of block `block`: "APU" or "Wave RAM".
+    pub fn register_block_name(&self, block: usize) -> Option<&'static str> {
+        BLOCKS.get(block).map(|b| b.0)
+    }
+
+    /// The address of byte 0 of block `block`, and 0 for a block past the
+    /// last.
+    pub fn register_block_base(&self, block: usize) -> u32 {
+        BLOCKS.get(block).map_or(0, |b| b.1)
+    }
+
+    /// The bytes in block `block`, and 0 for a block past the last.
+    pub fn register_block_size(&self, block: usize) -> usize {
+        BLOCKS.get(block).map_or(0, |b| b.2)
+    }
+
+    /// Copies the first `out.len()` bytes of block `block`, or all of it if
+    /// that is fewer, and returns the count. The values are the bytes that the
+    /// program stored. Block 0 holds NR10 to NR52 at 0xFF10 to 0xFF26 as the
+    /// last stores left them, including stores made while the unit was off and
+    /// before a power-off cleared the registers; the unused addresses 0xFF15
+    /// and 0xFF1F are 0. Block 1 is wave RAM. A song change puts the boot
+    /// values back and empties wave RAM.
+    pub fn register_block_get(&self, block: usize, out: &mut [u8]) -> usize {
+        let src: &[u8] = match block {
+            0 => &self.apu.written,
+            1 => &self.apu.wave_ram,
+            _ => return 0,
+        };
+        let n = src.len().min(out.len());
+        out[..n].copy_from_slice(&src[..n]);
+        n
     }
 
     /// What each channel puts out now, before the DAC: 0 to 15.
