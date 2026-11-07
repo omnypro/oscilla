@@ -1,5 +1,20 @@
 # Changes
 
+## 0.8.0
+
+- Every core returns its sound registers as named blocks:
+  `<core>_register_block_count`, `_name`, `_base`, `_size` and `_get`. The
+  values are what the program wrote. The blocks follow the chips in the file.
+- The SNES core has `csnes_echo_scope_get`, `csnes_voice_brr_get`,
+  `csnes_sample_get` and `csnes_timers_get`. The first returns the echo output
+  as a scope, the next two give a voice's place in its sample and the decoded
+  sample with its loop, and the last returns the three SPC700 timers.
+- The Genesis core has `cgenesis_fm_get`, which returns the algorithm,
+  feedback and operator parameters of an FM voice with each operator's envelope
+  level, phase and frequency.
+- The PC Engine core has `cpce_register`, `cpce_next_pc`, `cpce_peek` and
+  `cpce_cycles`.
+
 ## 0.7.0
 
 - Every core shows what a display needs. `csnes_voices_get`, `cnes_voices_get`,
