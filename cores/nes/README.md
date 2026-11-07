@@ -55,7 +55,7 @@ leaves out is an empty string or -1. An NSF file leaves all of them out unless
 it is a version 2 file with NSFe chunks after its program. The same calls read
 those chunks.
 
-A player has four more groups of calls.
+A player has five more groups of calls.
 
 - `cnes_snapshot_take` copies the whole machine. `cnes_snapshot_restore` puts a
   machine with the same file, console and output rate back to that point, and
@@ -67,6 +67,12 @@ A player has four more groups of calls.
   (its pitch, volume, envelope, duty, waveform or patch, and its mask bit), and
   `cnes_scope_get` returns the last frames that one of them put out, for a
   display.
+- `cnes_register_block_*` return the registers of the chips as the program
+  wrote them, in named blocks: "2A03 APU", and "VT02", "VRC6", "5B", "N163",
+  "FDS", "MMC5" and "VRC7" for the chips that the file names. A block has a
+  name, a base address in its chip's register space and a size, and the index
+  of a block depends on the chips present, so a player looks it up by name.
+  The calls change nothing in the sound.
 - `cnes_set_highpass_hz` moves the bass cutoff, from 1 to 1000 Hz, while a song
   plays. The default is the console's own filter at 90 Hz, and
   `cnes_use_console_highpass` returns to it. `cnes_highpass_hz` reads the
@@ -109,6 +115,9 @@ and prints the time it took.
 - `vt02`: the VT02's second generator, output switches, raw PCM and DMA.
 - `viz`: the voices of the chips that a file has, their state and their
   scopes, and no change to the sound.
+- `regs`: the register blocks of each chip, their order, sizes and bases, the
+  clear at a song change, the restore of a snapshot, and no change to the
+  sound.
 - `player`: the schedule of init and play calls, both consoles, bank
   switching, routines that misbehave, snapshots and the end state.
 - `goldens`: a hash of the samples and of the stores for each of 64 generated

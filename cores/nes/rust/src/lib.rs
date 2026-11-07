@@ -15,6 +15,7 @@ mod irq;
 mod machine;
 mod mmc5;
 mod n163;
+mod regs;
 mod s5b;
 mod scope;
 mod state;

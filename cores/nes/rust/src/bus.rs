@@ -192,6 +192,7 @@ impl Machine {
                 if let Some(o) = self.observer.0.as_mut() {
                     o.sound_write(t, address, v);
                 }
+                self.written.apu[usize::from(address - 0x4000)] = v;
                 if address != 0x4014 && address != 0x4016 {
                     self.apu_write(address, v);
                 }
@@ -202,6 +203,7 @@ impl Machine {
                 if let Some(o) = self.observer.0.as_mut() {
                     o.sound_write(t, address, v);
                 }
+                self.written.vt[usize::from(address - 0x4020)] = v;
                 self.vt_write(address, v);
             }
             0x9000..=0xBFFF if self.chips & oscilla_nsf::chips::VRC6 != 0 => {
@@ -210,6 +212,8 @@ impl Machine {
                 if let Some(o) = self.observer.0.as_mut() {
                     o.sound_write(t, address, v);
                 }
+                let slot = usize::from((address >> 12) - 9) * 4 + usize::from(address & 3);
+                self.written.vrc6[slot] = v;
                 self.vrc6_write(address, v);
             }
             0x4040..=0x4097 if self.chips & oscilla_nsf::chips::FDS != 0 => {
@@ -217,6 +221,9 @@ impl Machine {
                 let t = self.now;
                 if let Some(o) = self.observer.0.as_mut() {
                     o.sound_write(t, address, v);
+                }
+                if address >= 0x4080 {
+                    self.written.fds[usize::from(address - 0x4080)] = v;
                 }
                 self.apu.fds.write(address, v);
             }
@@ -264,6 +271,8 @@ impl Machine {
                 if let Some(o) = self.observer.0.as_mut() {
                     o.sound_write(t, address, v);
                 }
+                let x = &self.apu.vrc7;
+                self.written.vrc7_store(address, v, x.select, x.reset);
                 self.apu.vrc7_write(address, v);
                 self.apu_emit(t);
             }
@@ -273,6 +282,7 @@ impl Machine {
                 if let Some(o) = self.observer.0.as_mut() {
                     o.sound_write(t, address, v);
                 }
+                self.written.mmc5[usize::from(address - 0x5000)] = v;
                 self.mmc5_write(address, v);
             }
             0x5205 | 0x5206 if self.chips & oscilla_nsf::chips::MMC5 != 0 => {

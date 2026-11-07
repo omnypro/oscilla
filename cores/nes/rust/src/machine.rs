@@ -134,6 +134,7 @@ impl Machine {
             songs: 1,
             first_song: 0,
             apu: Apu::new(region, 0),
+            written: Written::default(),
             out: Resampler::with_ratio(output_rate, clock.0, clock.1),
             hp: Highpass::console(clock),
             lp: Lowpass::console(clock),
@@ -219,6 +220,10 @@ impl Machine {
         self.apu_write(0x4015, 0x00);
         self.apu_write(0x4015, 0x0F);
         self.apu_write(0x4017, 0x40);
+        // The registers read back as the player left them.
+        self.written = Written::default();
+        self.written.apu[0x15] = 0x0F;
+        self.written.apu[0x17] = 0x40;
         // The filter has settled on the level of the idle channels, as it has by
         // the time a driver starts.
         let a = &mut self.apu;

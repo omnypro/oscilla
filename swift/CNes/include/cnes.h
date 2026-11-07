@@ -227,6 +227,51 @@ uint32_t cnes_next_pc(const cnes_machine *machine);
 uint32_t cnes_peek(const cnes_machine *machine, uint32_t address);
 
 /*
+ * The registers of the chips as the program wrote them, in blocks: the bytes
+ * of its stores. A read of a register would hide its write-only bits. A
+ * file has the 2A03's block and one block for each expansion chip that its
+ * header names, in this order:
+ *
+ *   name        size  base    bytes
+ *   "2A03 APU"    24  0x4000  0x4000 to 0x4017. The player's own stores
+ *                             (0x0F to 0x4015, 0x40 to 0x4017) are in them.
+ *   "VT02"        22  0x4020  0x4020 to 0x4035
+ *   "VRC6"        12  0x9000  0 to 3 are 0x9000 to 0x9003, 4 to 7 are 0xA000
+ *                             to 0xA003, 8 to 11 are 0xB000 to 0xB003. A store
+ *                             to an alias of an address (0x9004) is in the
+ *                             byte of the address that the chip decodes.
+ *   "5B"          16  0       the YM2149-style register file, registers 0 to 15
+ *   "N163"       128  0       the chip's internal RAM: the waveforms, and the
+ *                             channel registers at 0x40 to 0x7F
+ *   "FDS"         88  0x4040  0x4040 to 0x4097. The first 64 bytes are the
+ *                             wave RAM as the chip holds it: 6 bits in each
+ *                             byte, and unchanged by a store while the chip
+ *                             has writes to it disabled.
+ *   "MMC5"        22  0x5000  0x5000 to 0x5015
+ *   "VRC7"        54  0       the internal registers 0x00 to 0x35 as written
+ *                             through 0x9010 and 0x9030. The addresses that
+ *                             the chip does not decode read 0. A store of
+ *                             0x80 or more to 0xE000 clears them.
+ *
+ * Byte i of a block is the register at the base plus i. The count and the
+ * index of a block depend on the chips, so a caller looks a block up by its
+ * name. A song change or a reset clears the bytes, and a snapshot holds them.
+ *
+ * cnes_register_block_name returns a static string, the same pointer on every
+ * call, or NULL for an invalid block. cnes_register_block_base returns the
+ * address of byte 0 in the chip's own register space. cnes_register_block_get
+ * copies up to `max` bytes and returns the count, or 0 for an invalid block, a
+ * NULL machine or buffer, a `max` of 0 or a call from an observer callback.
+ * The other calls return 0 or NULL in a callback too. None of the calls change
+ * the sound.
+ */
+int cnes_register_block_count(const cnes_machine *machine);
+const char *cnes_register_block_name(const cnes_machine *machine, int block);
+uint32_t cnes_register_block_base(const cnes_machine *machine, int block);
+size_t cnes_register_block_size(const cnes_machine *machine, int block);
+size_t cnes_register_block_get(const cnes_machine *machine, int block, uint8_t *out, size_t max);
+
+/*
  * Things the machine met and does not support (a routine that did not
  * return, an opcode that locks the CPU or that the core does not run, BRK,
  * expansion sound other than the VRC6, the VRC7, the FDS, the MMC5, the

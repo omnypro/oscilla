@@ -564,6 +564,91 @@ pub unsafe extern "C" fn cnes_peek(machine: *const CMachine, address: u32) -> u3
     u32::from(unsafe { &(*machine).machine }.peek(address as u16))
 }
 
+/// The number of register blocks: the 2A03's and one for each expansion chip
+/// in the file's header.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_register_block_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    unsafe { &(*machine).machine }.register_block_count() as c_int
+}
+
+/// The name of a block, a static string that is the same pointer on every
+/// call, or NULL for an invalid block.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_register_block_name(
+    machine: *const CMachine,
+    block: c_int,
+) -> *const c_char {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return ptr::null();
+    }
+    let Some(name) = usize::try_from(block)
+        .ok()
+        .and_then(|b| unsafe { &(*machine).machine }.register_block_name(b))
+    else {
+        return ptr::null();
+    };
+    match name {
+        "2A03 APU" => c"2A03 APU",
+        "VT02" => c"VT02",
+        "VRC6" => c"VRC6",
+        "5B" => c"5B",
+        "N163" => c"N163",
+        "FDS" => c"FDS",
+        "MMC5" => c"MMC5",
+        "VRC7" => c"VRC7",
+        _ => return ptr::null(),
+    }
+    .as_ptr()
+}
+
+/// The address of byte 0 of a block in its chip's register space, 0 for an
+/// invalid block.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_register_block_base(machine: *const CMachine, block: c_int) -> u32 {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    usize::try_from(block)
+        .ok()
+        .map_or(0, |b| unsafe { &(*machine).machine }.register_block_base(b))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_register_block_size(machine: *const CMachine, block: c_int) -> usize {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    usize::try_from(block)
+        .ok()
+        .map_or(0, |b| unsafe { &(*machine).machine }.register_block_size(b))
+}
+
+/// Copies up to `max` bytes of a block into `out`. Returns the count copied, 0
+/// for an invalid block, a NULL machine or buffer, a `max` of 0 or a call from
+/// a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cnes_register_block_get(
+    machine: *const CMachine,
+    block: c_int,
+    out: *mut u8,
+    max: usize,
+) -> usize {
+    if machine.is_null() || out.is_null() || max == 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let Ok(b) = usize::try_from(block) else {
+        return 0;
+    };
+    let m = unsafe { &(*machine).machine };
+    // The slice covers only the bytes that can be copied, so a long `max`
+    // does not need the whole buffer to exist.
+    let out = unsafe { slice::from_raw_parts_mut(out, max.min(m.register_block_size(b))) };
+    m.register_block_get(b, out)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cnes_warnings(machine: *const CMachine) -> *const c_char {
     if unsafe { in_callback(machine) } {

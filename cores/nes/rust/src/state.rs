@@ -506,6 +506,56 @@ pub struct Apu {
     pub stall: u64,
 }
 
+/// The bytes that the program stored to the registers of the chips that keep
+/// no register file of their own, as the bus received them. The register blocks
+/// read them back. A song change clears them.
+#[derive(Clone)]
+pub struct Written {
+    /// 0x4000 to 0x4017.
+    pub apu: [u8; 24],
+    /// 0x4020 to 0x4035.
+    pub vt: [u8; 22],
+    /// 0x9000 to 0x9003, 0xA000 to 0xA003 and 0xB000 to 0xB003.
+    pub vrc6: [u8; 12],
+    /// 0x4080 to 0x4097. The wave RAM before it is the chip's own.
+    pub fds: [u8; 24],
+    /// 0x5000 to 0x5015.
+    pub mmc5: [u8; 22],
+    /// The internal registers 0x00 to 0x35 that a store through 0x9030
+    /// reached. The addresses that the chip does not decode stay 0.
+    pub vrc7: [u8; 54],
+}
+
+impl Default for Written {
+    fn default() -> Written {
+        Written {
+            apu: [0; 24],
+            vt: [0; 22],
+            vrc6: [0; 12],
+            fds: [0; 24],
+            mmc5: [0; 22],
+            vrc7: [0; 54],
+        }
+    }
+}
+
+impl Written {
+    /// A store to the VRC7's ports, seen with the chip as it was before the
+    /// store: `select` is the register that the data port reaches and `reset`
+    /// says the chip ignores its registers.
+    pub fn vrc7_store(&mut self, address: u16, v: u8, select: u8, reset: bool) {
+        match address {
+            0xE000 if v & 0x80 != 0 => self.vrc7 = [0; 54],
+            0x9030 if !reset => {
+                if let 0..=7 | 0x0F | 0x10..=0x15 | 0x20..=0x25 | 0x30..=0x35 = select {
+                    self.vrc7[usize::from(select)] = v;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub type Ram = Box<[u8]>;
 
 /// Where the player is in its schedule.
@@ -582,6 +632,9 @@ pub struct Machine {
     pub(crate) songs: u8,
     pub(crate) first_song: u8,
     pub(crate) apu: Apu,
+    /// What the program stored to the chips' registers, for the register
+    /// blocks.
+    pub(crate) written: Written,
     pub(crate) out: Resampler,
     /// The high-pass filter's cutoff. A player's choice, outside the snapshot.
     pub(crate) hp: crate::apu::Highpass,

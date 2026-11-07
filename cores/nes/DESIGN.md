@@ -487,6 +487,37 @@ interpolation. The ring is not part of a copy of the machine, which starts with
 an empty one and keeps the clock, so a restore lines the scope up with the
 restored cycle. Reading the voices and the scopes changes nothing in the sound.
 
+## Register blocks
+
+`register_block_*` return the registers of each chip as the program wrote
+them: the bytes of the stores. A read of a register hides its write-only bits.
+A file has the 2A03's block and one block for each chip
+that its header names, in the order 2A03 APU, VT02, VRC6, 5B, N163, FDS, MMC5
+and VRC7. A block has a name, the address of byte 0 in its chip's register
+space, and a size. The index of a block depends on the chips present, so a
+player looks a block up by its name.
+
+The 5B keeps its sixteen registers in the chip's state and the N163 keeps its
+128 bytes of sound RAM, so those two blocks are copies of that state. The N163's
+RAM includes the phase of each channel, which the chip advances as it plays.
+The FDS's wave RAM is the chip's own as well: six bits in each byte, and
+unchanged by a store while the chip has writes to it disabled. The other
+blocks come from `Written`, a set of small arrays in the machine that the bus
+fills in the same arms that call the observer. A store costs one byte write. The
+2A03 array has every store to 0x4000..0x4017, including the two addresses that
+the sound unit ignores. The VRC6 array has twelve bytes: a store to an alias of
+a register (0x9004) lands in the byte of the address that the chip decodes
+(0x9000). The FDS array covers 0x4080 to 0x4097. The VRC7 array has the 54
+internal registers 0x00 to 0x35. It takes a store through 0x9030 to the
+registers that the chip decodes (0 to 7, 0x0F, 0x10 to 0x15, 0x20 to 0x25 and
+0x30 to 0x35), ignores a store while the chip is held in reset, and clears on a
+store of 0x80 or more to 0xE000. The other addresses stay 0.
+
+A song change clears `Written` and then sets what the player stores itself
+before the init routine: 0x0F to 0x4015 and 0x40 to 0x4017. `Written` is a
+field of the machine, so a copy and a restore carry it and `size` counts it
+with the machine. Reading a block changes nothing in the sound.
+
 ## Snapshots
 
 `snapshot` copies everything a machine is except the observer, the channel
