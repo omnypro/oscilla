@@ -204,8 +204,8 @@ sample, and ENDX holds the flags that no write has cleared. Block 1 is 0xF0 to
 0xFF as a program reads them. TEST and the control register read 0, 0xF3 reads
 the DSP register that 0xF2 selects, the inputs are the main CPU's values, 0xF8
 to 0xFC are the RAM bytes (the divisors read back as written), and 0xFD to 0xFF
-are the timer outputs. A read of the block does not clear an output and does
-not advance the clock, unlike a read by the program.
+are the timer outputs. A read by the program clears an output and advances
+the clock. A read of the block does neither.
 
 ## Observer
 

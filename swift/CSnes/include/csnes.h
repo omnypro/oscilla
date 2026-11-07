@@ -378,8 +378,8 @@ int csnes_voice_brr_get(const csnes_machine *machine, int voice, csnes_brr *out)
  * scale. The call copies the first `max_samples` of them to `out`, changes no
  * state and returns the number it wrote, which is the smaller of
  * `max_samples` and info->total_samples. It returns 0 for a `srcn` outside 0 to
- * 255, a NULL `out`, 0 `max_samples` or a call from a callback, and then leaves
- * `info` alone.
+ * 255, a NULL `out`, 0 `max_samples`, a `max_samples` above half of the largest
+ * signed size or a call from a callback, and then leaves `info` alone.
  *
  * A sample that loops plays the decoded samples once and then the part from the
  * loop address on. The first blocks of that part start from the two samples that
@@ -460,8 +460,8 @@ int csnes_timers_get(const csnes_machine *machine, csnes_timer out[3]);
 /* ---- Register blocks --------------------------------------------------- */
 
 /*
- * The chip's registers as blocks of bytes, the same calls in every core's
- * header. A block has a name, the address of its first byte in the chip's own
+ * The chip's registers as blocks of bytes. The Genesis core's header has the
+ * same calls. A block has a name, the address of its first byte in the chip's own
  * register space, a size and the values the chip holds now. Reading a block has
  * no side effect: a port or a counter that a program clears by reading stays as
  * it is. A block outside 0 to csnes_register_block_count() - 1 reads as an

@@ -45,7 +45,7 @@ and fade in milliseconds, the length as the two added, the voices that the file
 asks a player to mute, and the amplification of the xid6 chunk. A value that the
 file leaves out is an empty string, -1 or the unchanged value.
 
-A player has seven more groups of calls.
+A player has eight more groups of calls.
 
 - `csnes_snapshot_take` copies the whole machine. `csnes_snapshot_restore` puts
   a machine with the same file and output rate back to that point, and the same
