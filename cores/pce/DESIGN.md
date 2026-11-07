@@ -149,6 +149,20 @@ midpoint times its two gains, averaged. The mask does not touch it. `scope`
 resamples it to the output rate by linear interpolation. The ring is not part
 of a copy of the machine, which starts with an empty one.
 
+## Inspection
+
+`register` returns A, X, Y, S, PC, P and the eight mapping registers (indexes 0
+to 13). `peek` reads a logical address through the current mapping. It differs
+from a processor read in one place: the video chip's status register reads
+without clearing. `cycles` counts master clocks of 21.477 MHz.
+
+The register blocks are images that the machine builds on request from its
+state, so they cost nothing while unused. Block 0 holds the select, main
+balance, LFO frequency and LFO control registers, then six bytes per channel.
+Block 1 holds the six waveforms of 32 words. Block 2 is the eight mapping
+registers. Block 3 is the timer reload, the timer count, the timer enable and
+the interrupt disable register.
+
 ## Snapshots
 
 A snapshot is a copy of the whole machine: the processor, RAM, the timer, the

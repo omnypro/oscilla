@@ -206,6 +206,54 @@ typedef struct {
  */
 void cpce_set_observer(cpce_machine *machine, const cpce_observer *observer);
 
+/* ---- Inspection, for tests and tools ----------------------------------- */
+
+/* Master clocks (21.477 MHz) run since the song started. */
+uint64_t cpce_cycles(const cpce_machine *machine);
+
+/*
+ * The processor's registers: 0 A, 1 X, 2 Y, 3 S, 4 PC, 5 P, and 6 to 13 for
+ * MPR0 to MPR7. Any other index returns 0.
+ */
+uint32_t cpce_register(const cpce_machine *machine, int index);
+
+/* The address of the next instruction the processor executes. */
+uint32_t cpce_next_pc(const cpce_machine *machine);
+
+/*
+ * Reads a logical address (0 to 0xFFFF) under the current mapping, with no
+ * side effects: the status register of the video chip reads without clearing.
+ * An address outside 0 to 0xFFFF returns 0.
+ */
+uint32_t cpce_peek(const cpce_machine *machine, uint32_t address);
+
+/*
+ * The registers of the chips as a program wrote them, in blocks. The count is
+ * 4 and does not change:
+ *   0 "PSG" (40 bytes): the select, main balance, low frequency oscillator
+ *     frequency and control registers (bit 7 of the control byte is the
+ *     reset flag), then six bytes for each channel: frequency low, frequency
+ *     high, control (enable in bit 7, direct D/A in bit 6, amplitude in bits 0
+ *     to 4), balance, the direct D/A word and noise (enable in bit 7,
+ *     frequency in bits 0 to 4).
+ *   1 "PSG waveforms" (192 bytes): the six waveforms of 32 words, channel 1
+ *     first.
+ *   2 "MPR" (8 bytes): the mapping registers.
+ *   3 "Timer and interrupts" (4 bytes): the timer reload, the timer count,
+ *     the timer enable (0 or 1) and the interrupt disable register.
+ * cpce_register_block_name returns a static string, the same pointer each call,
+ * or NULL for an invalid block. cpce_register_block_base returns the address of
+ * byte 0 in the chip's own space, which is 0 for every block here.
+ * cpce_register_block_get copies up to `max` bytes and returns the count, or 0
+ * for an invalid block, a NULL machine or buffer, or a `max` of 0. None of the
+ * calls change the sound.
+ */
+int cpce_register_block_count(const cpce_machine *machine);
+const char *cpce_register_block_name(const cpce_machine *machine, int block);
+uint32_t cpce_register_block_base(const cpce_machine *machine, int block);
+size_t cpce_register_block_size(const cpce_machine *machine, int block);
+size_t cpce_register_block_get(const cpce_machine *machine, int block, uint8_t *out, size_t max);
+
 /* ---- Snapshots --------------------------------------------------------- */
 
 typedef struct cpce_snapshot cpce_snapshot;

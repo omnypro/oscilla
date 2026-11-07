@@ -85,9 +85,49 @@ struct Io {
     vblank_next: u64,
 }
 
+/// The register blocks: a name and a size in bytes. Block 0 is the sound
+/// generator's registers (40 bytes), block 1 its six waveforms (192 bytes),
+/// block 2 the eight mapping registers and block 3 the timer reload, the timer
+/// count, the timer enable and the interrupt disable register.
+const REGISTER_BLOCKS: [(&str, usize); 4] = [
+    ("PSG", 40),
+    ("PSG waveforms", 192),
+    ("MPR", 8),
+    ("Timer and interrupts", 4),
+];
+
 impl Io {
     fn irq1_line(&self) -> bool {
         self.vdc_status != 0
+    }
+
+    /// What a read of `physical` returns, without the side effects.
+    fn peek(&self, physical: u32) -> u8 {
+        let a = physical as usize;
+        match a {
+            0..=0xF_FFFF => self.hes.rom()[a],
+            0x1F_0000..=0x1F_7FFF => self.ram[a - 0x1F_0000],
+            0x1F_E000..=0x1F_E3FF => {
+                if a & 3 == 0 {
+                    self.vdc_status
+                } else {
+                    0
+                }
+            }
+            0x1F_EC00..=0x1F_EFFF => {
+                if a & 1 == 0 {
+                    self.timer_count & 0x7F
+                } else {
+                    u8::from(self.timer_on)
+                }
+            }
+            0x1F_F400..=0x1F_F7FF => match a & 3 {
+                2 => self.irq_disable,
+                3 => u8::from(self.timer_request) << 2 | u8::from(self.irq1_line()) << 1,
+                _ => 0xFF,
+            },
+            _ => 0xFF,
+        }
     }
 
     /// Runs the sound generator up to the current time.
@@ -346,6 +386,71 @@ impl Machine {
     /// off), for meters.
     pub fn channel_levels(&self) -> [i32; 6] {
         self.io.psg.levels()
+    }
+
+    /// Master clocks (21.477 MHz) run since the song started.
+    pub fn cycles(&self) -> u64 {
+        self.io.now
+    }
+
+    /// The processor's registers: 0 A, 1 X, 2 Y, 3 S, 4 PC, 5 P and 6 to 13
+    /// MPR0 to MPR7. Any other index is 0.
+    pub fn register(&self, index: i32) -> u32 {
+        let c = &self.cpu;
+        match index {
+            0 => u32::from(c.a),
+            1 => u32::from(c.x),
+            2 => u32::from(c.y),
+            3 => u32::from(c.s),
+            4 => u32::from(c.pc),
+            5 => u32::from(c.p),
+            6..=13 => u32::from(c.mpr[(index - 6) as usize]),
+            _ => 0,
+        }
+    }
+
+    pub fn next_pc(&self) -> u16 {
+        self.cpu.pc
+    }
+
+    /// Reads a logical address as the processor would see it under the
+    /// current mapping, with no side effects.
+    pub fn peek(&self, address: u16) -> u8 {
+        self.io.peek(self.cpu.physical(address))
+    }
+
+    /// The number of register blocks.
+    pub fn register_block_count(&self) -> usize {
+        REGISTER_BLOCKS.len()
+    }
+
+    pub fn register_block_name(&self, block: usize) -> Option<&'static str> {
+        REGISTER_BLOCKS.get(block).map(|b| b.0)
+    }
+
+    /// The size of a block in bytes, 0 for an invalid block.
+    pub fn register_block_size(&self, block: usize) -> usize {
+        REGISTER_BLOCKS.get(block).map_or(0, |b| b.1)
+    }
+
+    /// Copies the bytes of a block into `out` as far as it reaches and returns
+    /// the number copied.
+    pub fn register_block_get(&self, block: usize, out: &mut [u8]) -> usize {
+        let bytes: Vec<u8> = match block {
+            0 => self.io.psg.registers().to_vec(),
+            1 => self.io.psg.waveforms().to_vec(),
+            2 => self.cpu.mpr.to_vec(),
+            3 => vec![
+                self.io.timer_reload,
+                self.io.timer_count & 0x7F,
+                u8::from(self.io.timer_on),
+                self.io.irq_disable,
+            ],
+            _ => return 0,
+        };
+        let n = bytes.len().min(out.len());
+        out[..n].copy_from_slice(&bytes[..n]);
+        n
     }
 
     pub fn output_rate(&self) -> i32 {

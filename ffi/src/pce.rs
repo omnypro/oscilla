@@ -452,6 +452,103 @@ pub unsafe extern "C" fn cpce_set_observer(machine: *mut CMachine, observer: *co
     }
 }
 
+// ---- Inspection -------------------------------------------------------
+
+/// Master clocks (21.477 MHz) run since the song started.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_cycles(machine: *const CMachine) -> u64 {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
+    unsafe { &(*machine).machine }.cycles()
+}
+
+/// 0 A, 1 X, 2 Y, 3 S, 4 PC, 5 P, 6 to 13 MPR0 to MPR7.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_register(machine: *const CMachine, index: c_int) -> u32 {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
+    unsafe { &(*machine).machine }.register(index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_next_pc(machine: *const CMachine) -> u32 {
+    if unsafe { in_callback(machine) } {
+        return 0;
+    }
+    u32::from(unsafe { &(*machine).machine }.next_pc())
+}
+
+/// Reads a logical address under the current mapping, with no side effects.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_peek(machine: *const CMachine, address: u32) -> u32 {
+    if unsafe { in_callback(machine) } || address > 0xFFFF {
+        return 0;
+    }
+    u32::from(unsafe { &(*machine).machine }.peek(address as u16))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_register_block_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    unsafe { &(*machine).machine }.register_block_count() as c_int
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_register_block_name(
+    machine: *const CMachine,
+    block: c_int,
+) -> *const c_char {
+    const NAMES: [&CStr; 4] = [c"PSG", c"PSG waveforms", c"MPR", c"Timer and interrupts"];
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return ptr::null();
+    }
+    usize::try_from(block)
+        .ok()
+        .and_then(|i| NAMES.get(i))
+        .map_or(ptr::null(), |n| n.as_ptr())
+}
+
+/// The address of byte 0 in the block's own space, which is 0 for every block.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_register_block_base(machine: *const CMachine, block: c_int) -> u32 {
+    let _ = (machine, block);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_register_block_size(machine: *const CMachine, block: c_int) -> usize {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    usize::try_from(block)
+        .ok()
+        .map_or(0, |b| unsafe { &(*machine).machine }.register_block_size(b))
+}
+
+/// Copies up to `max` bytes of a block into `out`. Returns the count copied, 0
+/// for an invalid block, a NULL machine or buffer, a `max` of 0 or a call from a
+/// callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cpce_register_block_get(
+    machine: *const CMachine,
+    block: c_int,
+    out: *mut u8,
+    max: usize,
+) -> usize {
+    if machine.is_null() || out.is_null() || max == 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let Ok(b) = usize::try_from(block) else {
+        return 0;
+    };
+    let out = unsafe { slice::from_raw_parts_mut(out, max) };
+    unsafe { &(*machine).machine }.register_block_get(b, out)
+}
+
 // ---- Snapshots --------------------------------------------------------
 
 pub struct CSnapshot(Machine);

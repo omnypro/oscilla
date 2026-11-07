@@ -200,6 +200,38 @@ impl Psg {
     }
 
     /// The channel that register 0 has selected.
+    /// The registers as a program wrote them: the select, main balance, LFO
+    /// frequency and LFO control registers, then six bytes for each channel
+    /// (frequency low, frequency high, control, balance, direct D/A word and
+    /// noise). The control byte holds the enable in bit 7, direct D/A in bit
+    /// 6 and the amplitude in bits 0 to 4; the noise byte holds the enable in
+    /// bit 7 and the frequency in bits 0 to 4.
+    pub fn registers(&self) -> [u8; 40] {
+        let mut out = [0u8; 40];
+        out[0] = self.select;
+        out[1] = self.main;
+        out[2] = self.lfo_frequency;
+        out[3] = self.lfo_control | u8::from(self.lfo_reset) << 7;
+        for (c, o) in self.ch.iter().zip(out[4..].chunks_exact_mut(6)) {
+            o[0] = c.frequency as u8;
+            o[1] = (c.frequency >> 8) as u8;
+            o[2] = u8::from(c.on) << 7 | u8::from(c.dda) << 6 | c.amplitude;
+            o[3] = c.balance;
+            o[4] = c.direct;
+            o[5] = u8::from(c.noise_enable) << 7 | c.noise_frequency;
+        }
+        out
+    }
+
+    /// The six waveforms of 32 words, channel 1 first.
+    pub fn waveforms(&self) -> [u8; 192] {
+        let mut out = [0u8; 192];
+        for (c, o) in self.ch.iter().zip(out.chunks_exact_mut(32)) {
+            o.copy_from_slice(&c.wave);
+        }
+        out
+    }
+
     pub fn selected(&self) -> u8 {
         self.select
     }
