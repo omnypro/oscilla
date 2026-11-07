@@ -7,7 +7,7 @@ use std::sync::Arc;
 use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use oscilla_spc::Spc;
 
-use crate::dsp::{Dsp, ECHO_BIT, VOICES, VoiceInfo};
+use crate::dsp::{BrrPosition, Dsp, ECHO_BIT, SampleInfo, VOICES, VoiceInfo, decode_sample};
 
 /// SPC700 cycles per second. The DSP makes a sample every 32 of them.
 pub const CLOCK: u64 = 1_024_000;
@@ -16,6 +16,35 @@ pub const SAMPLE_RATE: u32 = 32_000;
 
 /// The bits of the channel mask: one for each voice, then the echo output.
 pub const ALL_CHANNELS: u64 = (1 << (VOICES as u32 + 1)) - 1;
+
+/// A block of registers that `Machine::register_block_get` reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisterBlock {
+    pub name: &'static str,
+    /// The address of the first byte in the chip's own register space.
+    pub base: u32,
+    pub size: usize,
+}
+
+/// The register blocks: the S-DSP's 128 registers and the SPC700's I/O
+/// registers at 0xF0 to 0xFF.
+pub const REGISTER_BLOCKS: [RegisterBlock; 2] = [
+    RegisterBlock { name: "S-DSP", base: 0x00, size: 0x80 },
+    RegisterBlock { name: "SPC700 I/O", base: 0xF0, size: 0x10 },
+];
+
+/// What a timer is doing, without a side effect on it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TimerState {
+    pub enabled: bool,
+    /// The target register: 0 divides by 256.
+    pub divisor: u8,
+    /// The 4-bit output as a read of the output register would return it.
+    pub output: u8,
+    /// SPC700 cycles from now until the output next increments, or 0 for a
+    /// timer that is off.
+    pub ticks_until_output: u32,
+}
 
 /// Watches what the driver does to the sound hardware. Callbacks run on the
 /// rendering thread, in program order.
@@ -444,6 +473,67 @@ impl Machine {
         &self.ram
     }
 
+    /// The registers of block `block` of `REGISTER_BLOCKS` as the chip holds
+    /// them, with no side effect: a read of a timer output does not clear it.
+    /// Copies the first `out.len()` bytes and returns how many, 0 for a block
+    /// that does not exist.
+    pub fn register_block_get(&self, block: usize, out: &mut [u8]) -> usize {
+        let Some(info) = REGISTER_BLOCKS.get(block) else {
+            return 0;
+        };
+        let n = info.size.min(out.len());
+        for (i, o) in out[..n].iter_mut().enumerate() {
+            *o = match block {
+                0 => self.dsp.regs[i],
+                _ => self.io_peek(i as u8),
+            };
+        }
+        n
+    }
+
+    /// What a program reads at 0xF0 plus `i`, without the side effects of the
+    /// read.
+    fn io_peek(&self, i: u8) -> u8 {
+        match i {
+            0 | 1 => 0,
+            2 => self.dsp_address,
+            3 => self.dsp.read(self.dsp_address),
+            4..=7 => self.ports_in[usize::from(i - 4)],
+            0xD..=0xF => self.timers[usize::from(i - 0xD)].out & 15,
+            _ => self.ram[0xF0 + usize::from(i)],
+        }
+    }
+
+    /// The three timers.
+    pub fn timers(&self) -> [TimerState; 3] {
+        std::array::from_fn(|n| {
+            let t = &self.timers[n];
+            TimerState {
+                enabled: t.enabled,
+                divisor: t.target,
+                output: t.out & 15,
+                ticks_until_output: self.ticks_until_output(n),
+            }
+        })
+    }
+
+    /// The cycles until the next increment of the output of timer `n`.
+    fn ticks_until_output(&self, n: usize) -> u32 {
+        let t = &self.timers[n];
+        if !t.enabled {
+            return 0;
+        }
+        let period: u64 = if n == 2 { 16 } else { 128 };
+        // The divider counts up to the target and wraps at 256, so a target
+        // that the divider already holds waits for the wrap.
+        let counts = match t.target.wrapping_sub(t.stage) {
+            0 => 256,
+            d => u64::from(d),
+        };
+        let since = self.now.wrapping_sub(self.timer_phase) % period;
+        (period - since + (counts - 1) * period) as u32
+    }
+
     /// A DSP register.
     pub fn dsp_register(&self, register: u8) -> u8 {
         self.dsp.read(register)
@@ -562,16 +652,39 @@ impl Machine {
     /// older than 4,096 DSP samples (128 ms) are 0. The voice's volumes are in
     /// it and the master volume is not, and a muted voice still shows.
     pub fn scope(&self, voice: usize, out: &mut [f32]) {
+        self.resample_scope(out, |back| self.dsp.scope_sample(voice, back));
+    }
+
+    /// Fills `out` as `scope` does with the echo output of the left (0) or
+    /// right (1) channel: the filter's output times the echo volume, as it
+    /// joins the mix. The channel mask and the mute flag leave it alone.
+    pub fn echo_scope(&self, channel: usize, out: &mut [f32]) {
+        self.resample_scope(out, |back| self.dsp.echo_scope_sample(channel, back));
+    }
+
+    fn resample_scope(&self, out: &mut [f32], sample: impl Fn(usize) -> i16) {
         let ratio = 32_000.0 / f64::from(self.out.rate());
         let n = out.len();
         for (k, o) in out.iter_mut().enumerate() {
             let back = (n - 1 - k) as f64 * ratio;
             let i = back as usize;
             let frac = back - i as f64;
-            let a = f64::from(self.dsp.scope_sample(voice, i));
-            let b = f64::from(self.dsp.scope_sample(voice, i + 1));
+            let a = f64::from(sample(i));
+            let b = f64::from(sample(i + 1));
             *o = ((a + (b - a) * frac) / 32768.0) as f32;
         }
+    }
+
+    /// Where a voice is in its sample.
+    pub fn voice_brr(&self, voice: usize) -> BrrPosition {
+        self.dsp.voice_brr(voice, &self.ram)
+    }
+
+    /// Decodes sample `source` of the sample table from the sound RAM as it
+    /// is now. Writes the first `out.len()` samples to `out` and returns what
+    /// the scan found. The number written is `min(total_samples, out.len())`.
+    pub fn sample(&self, source: u8, out: &mut [i16]) -> SampleInfo {
+        decode_sample(&self.ram, self.dsp.regs[0x5D], source, out)
     }
 
     /// True when the echo bit of the mask is on.

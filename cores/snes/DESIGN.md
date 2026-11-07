@@ -58,6 +58,12 @@ for equality after it counts, so a target below the divider's value waits for
 the wrap. Turning a timer on resets its divider and output. The TEST register
 is not emulated.
 
+`timers` reports a timer without a read of its output register, which would
+clear it. The cycles until the output increments are the cycles to the next
+input tick plus 128 (16 for timer 2) for each further tick the divider needs.
+The divider needs the difference between the target and its count, or 256 when
+they are equal.
+
 The timers count at cycles that are multiples of 16 and 128 of the machine's
 clock. The reference logs fit this phase for every driver that waits on a
 timer.
@@ -190,6 +196,17 @@ render and a log of the SPC700's DSP stores for each.
 - The register values that a driver reads back (volumes, pitches, KON, KOFF)
   are the stored ones. The DSP's own reads (ENVX, OUTX, ENDX) are not checked.
 
+## Register blocks
+
+The machine offers its registers as two blocks. Block 0 is the DSP's 128
+registers as the DSP holds them: ENVX and OUTX hold the values of the last
+sample, and ENDX holds the flags that no write has cleared. Block 1 is 0xF0 to
+0xFF as a program reads them. TEST and the control register read 0, 0xF3 reads
+the DSP register that 0xF2 selects, the inputs are the main CPU's values, 0xF8
+to 0xFC are the RAM bytes (the divisors read back as written), and 0xFD to 0xFF
+are the timer outputs. A read of the block does not clear an output and does
+not advance the clock, unlike a read by the program.
+
 ## Observer
 
 The observer sees every store to a DSP register and every store to an output
@@ -205,6 +222,30 @@ last 4,096 samples of each voice at the DSP's 32 kHz: the voice's output times
 its two volumes, averaged. `scope` resamples them to the output rate by linear
 interpolation. The ring is not part of a copy of the machine, which starts with
 an empty one.
+
+The echo scope shares the ring with the voices as two more channels, left and
+right. Each sample stores the filter's output times the echo volume, which is
+the amount that the echo adds to the mix. The channel mask and the mute flag do
+not change it. The ring costs one store of 20 bytes in place of 16, and a copy
+of the machine starts with an empty one like the voice scopes.
+
+`voice_brr` reads a voice's block address, its pitch counter and the header of
+the block it last decoded. The sample in the block is the counter's bits 15 to
+12. The loop count is a byte that a key-on clears and each jump to the loop
+address raises, stopping at 255. The directory entry comes from DIR and SRCN as
+they are now, so the loop address is the one the voice would read if it looped
+now. The two lengths come from a scan that follows the blocks from the start
+address, and from the loop address, to the first block with the end flag. A scan
+gives up after 4,096 blocks and reports 0.
+
+`sample` decodes a table entry with the voices' own block decoder, so the two
+cannot differ. It starts with both previous samples at 0, follows the blocks to
+the first end flag and returns signed 15-bit values, the ones the voice feeds to
+the interpolation. The loop address is a block of the decoded run in the usual
+case, and the result then names the sample where the loop begins. A loop that
+starts elsewhere has no start in the result. The filters of a looped pass start
+from the last two samples of the sample, so the first blocks of a loop that use
+a filter differ from the decoded run.
 
 The access map has one byte for each address of the sound RAM, with a bit for
 the SPC700 reading, writing or fetching it and for the DSP reading or writing

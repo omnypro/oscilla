@@ -23,14 +23,28 @@ pub const VOICES: usize = 8;
 /// DSP's 32 kHz, which is 128 ms.
 pub const SCOPE_LEN: usize = 4096;
 
+/// The scope's channels: the eight voices, then the left and right echo
+/// output.
+const SCOPE_CHANNELS: usize = VOICES + 2;
+
+/// The most blocks that a scan of a sample follows before it gives up on
+/// finding the end flag.
+pub const MAX_SAMPLE_BLOCKS: usize = 4096;
+
+/// A value of `SampleInfo::loop_start_sample` for a loop address that is not
+/// on a block of the decoded samples.
+pub const NO_LOOP_START: u32 = u32::MAX;
+
 /// What the DSP did to the sound RAM in the last sample: a range of addresses
 /// and the kind of access.
 pub const DSP_READ: u8 = 8;
 pub const DSP_WRITE: u8 = 16;
 
 /// The recent output of each voice, as the listener hears it before the master
-/// volume: the voice's output times its two volumes, averaged. It is not part
-/// of a copy of the DSP, which starts with an empty one.
+/// volume: the voice's output times its two volumes, averaged. The echo output
+/// (the filter's output times the echo volume, before it joins the mix) shares
+/// the ring as two more channels. It is not part of a copy of the DSP, which
+/// starts with an empty one.
 struct Scope {
     /// The ring, allocated by the first sample so that a copy costs nothing.
     data: Option<Box<[i16]>>,
@@ -43,13 +57,13 @@ impl Scope {
         Scope { data: None, at: 0 }
     }
 
-    fn push(&mut self, samples: [i16; VOICES]) {
+    fn push(&mut self, samples: [i16; SCOPE_CHANNELS]) {
         let data = self
             .data
-            .get_or_insert_with(|| vec![0; VOICES * SCOPE_LEN].into_boxed_slice());
-        // The voices of one moment sit side by side, so that a sample is one
+            .get_or_insert_with(|| vec![0; SCOPE_CHANNELS * SCOPE_LEN].into_boxed_slice());
+        // The channels of one moment sit side by side, so that a sample is one
         // contiguous store.
-        data[self.at * VOICES..(self.at + 1) * VOICES].copy_from_slice(&samples);
+        data[self.at * SCOPE_CHANNELS..(self.at + 1) * SCOPE_CHANNELS].copy_from_slice(&samples);
         self.at += 1;
         if self.at == SCOPE_LEN {
             self.at = 0;
@@ -57,10 +71,10 @@ impl Scope {
     }
 
     /// The sample `back` steps before the newest, 0 for the newest.
-    fn get(&self, voice: usize, back: usize) -> i16 {
+    fn get(&self, channel: usize, back: usize) -> i16 {
         match &self.data {
             Some(data) if back < SCOPE_LEN => {
-                data[((self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN) * VOICES + voice]
+                data[((self.at + SCOPE_LEN - 1 - back) % SCOPE_LEN) * SCOPE_CHANNELS + channel]
             }
             _ => 0,
         }
@@ -71,6 +85,55 @@ impl Clone for Scope {
     fn clone(&self) -> Scope {
         Scope::new()
     }
+}
+
+/// Where a voice is in its sample, and what the sample looks like from there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BrrPosition {
+    /// The address of the sample table entry: DIR * 256 + SRCN * 4, from the
+    /// registers as they are now.
+    pub directory_entry: u16,
+    /// The address of the block being played.
+    pub block: u16,
+    /// The loop address that the entry holds now.
+    pub loop_address: u16,
+    /// The sample of the block that the pitch counter points at, 0 to 15.
+    pub sample_in_block: u8,
+    /// The SRCN register.
+    pub source: u8,
+    /// The times the voice jumped back to the loop address since its key-on,
+    /// up to 255.
+    pub loops: u8,
+    /// The end (bit 0) and loop (bit 1) flags of the block being played.
+    pub flags: u8,
+    /// The filter number of the block being played, 0 to 3.
+    pub filter: u8,
+    /// The shift amount of the block being played, 0 to 15.
+    pub range: u8,
+    /// The samples from the loop address to the block with the end flag, 16 for
+    /// each block, or 0 when that block lacks the loop flag or none is found.
+    pub loop_length_samples: u32,
+    /// The samples from the start address to the block with the end flag, or 0
+    /// when none is found.
+    pub total_samples: u32,
+}
+
+/// What `decode_sample` found about a sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SampleInfo {
+    pub start_address: u16,
+    pub loop_address: u16,
+    /// The samples from the start address through the block with the end flag.
+    /// When the scan gave up it is the samples that it decoded.
+    pub total_samples: u32,
+    /// The index of the sample where the loop begins, or `NO_LOOP_START` when
+    /// the loop address is not on a block of the decoded samples.
+    pub loop_start_sample: u32,
+    /// The block with the end flag also has the loop flag.
+    pub has_loop: bool,
+    /// The scan followed `MAX_SAMPLE_BLOCKS` blocks without finding the end
+    /// flag.
+    pub truncated: bool,
 }
 
 /// What a voice is doing, read from its registers and its envelope.
@@ -117,6 +180,10 @@ struct Voice {
     block: u16,
     /// The flags of the block being played.
     flags: u8,
+    /// The header of the block being played.
+    header: u8,
+    /// The jumps back to the loop address since the key-on, saturating.
+    loops: u8,
     counter: u32,
     /// Three samples of the block before, then the 16 of this one.
     window: [i32; 19],
@@ -157,6 +224,109 @@ fn clamp16(v: i32) -> i32 {
 
 fn wrap16(v: i32) -> i32 {
     i32::from(v as i16)
+}
+
+/// Decodes the BRR block at `at` into 16 signed 15-bit samples. `old` and
+/// `older` are the two samples before it and the block's last two replace them.
+fn brr_block(ram: &[u8; 65536], at: usize, old: &mut i32, older: &mut i32) -> [i32; 16] {
+    let header = ram[at];
+    let range = i32::from(header >> 4);
+    let filter = (header >> 2) & 3;
+    let mut out = [0i32; 16];
+    for (n, slot) in out.iter_mut().enumerate() {
+        let byte = ram[(at + 1 + n / 2) & 0xFFFF];
+        let nibble = if n % 2 == 0 { byte >> 4 } else { byte & 15 };
+        let mut s = i32::from((nibble ^ 8) as i8 - 8);
+        let mut shift = range;
+        if shift > 12 {
+            s >>= 3;
+            shift = 12;
+        }
+        s = (s << shift) >> 1;
+        let (o, oo) = (*old, *older);
+        s += match filter {
+            0 => 0,
+            1 => o + ((-o) >> 4),
+            2 => o * 2 + ((-o * 3) >> 5) - oo + (oo >> 4),
+            _ => o * 2 + ((-o * 13) >> 6) - oo + ((oo * 3) >> 4),
+        };
+        // Past 16 bits the sum saturates to values that the 15-bit wrap below
+        // leaves at 0x3FFF and 0. Between 15 and 16 bits it wraps.
+        s = if s > 0x7FFF {
+            0x3FFF
+        } else if s < -0x8000 {
+            0
+        } else if s >= 0x4000 {
+            s - 0x8000
+        } else if s < -0x4000 {
+            s + 0x8000
+        } else {
+            s
+        };
+        *slot = s;
+        *older = o;
+        *old = s;
+    }
+    out
+}
+
+/// The start and loop addresses of the sample table entry at `entry`.
+fn directory_entry(ram: &[u8; 65536], entry: usize) -> (u16, u16) {
+    let word = |at: usize| u16::from_le_bytes([ram[at & 0xFFFF], ram[(at + 1) & 0xFFFF]]);
+    (word(entry), word(entry + 2))
+}
+
+/// Follows the blocks from `from` to the first one with the end flag. Returns
+/// the number of blocks, that one included, and whether it has the loop flag.
+/// None when `MAX_SAMPLE_BLOCKS` blocks pass without an end flag.
+fn scan_end(ram: &[u8; 65536], from: u16) -> Option<(u32, bool)> {
+    let mut at = from;
+    for n in 1..=MAX_SAMPLE_BLOCKS as u32 {
+        let header = ram[usize::from(at)];
+        if header & 1 != 0 {
+            return Some((n, header & 2 != 0));
+        }
+        at = at.wrapping_add(9);
+    }
+    None
+}
+
+/// Decodes the sample at entry `source` of the table at `dir * 256`, from the
+/// start address to the first block with the end flag, as the voices decode it
+/// with the two samples before the first block at 0. Writes the first
+/// `out.len()` samples to `out` as the 15-bit values that the DSP holds, and
+/// returns what it found.
+pub fn decode_sample(ram: &[u8; 65536], dir: u8, source: u8, out: &mut [i16]) -> SampleInfo {
+    let entry = (usize::from(dir) << 8) + usize::from(source) * 4;
+    let (start, loop_address) = directory_entry(ram, entry);
+    let mut info = SampleInfo {
+        start_address: start,
+        loop_address,
+        loop_start_sample: NO_LOOP_START,
+        ..SampleInfo::default()
+    };
+    let (mut old, mut older) = (0, 0);
+    let mut at = start;
+    for n in 0..MAX_SAMPLE_BLOCKS {
+        if at == loop_address && info.loop_start_sample == NO_LOOP_START {
+            info.loop_start_sample = n as u32 * 16;
+        }
+        let samples = brr_block(ram, usize::from(at), &mut old, &mut older);
+        for (k, s) in samples.iter().enumerate() {
+            if let Some(slot) = out.get_mut(n * 16 + k) {
+                *slot = *s as i16;
+            }
+        }
+        info.total_samples = (n as u32 + 1) * 16;
+        let header = ram[usize::from(at)];
+        if header & 1 != 0 {
+            info.has_loop = header & 2 != 0;
+            return info;
+        }
+        at = at.wrapping_add(9);
+    }
+    info.truncated = true;
+    info
 }
 
 impl Dsp {
@@ -250,6 +420,37 @@ impl Dsp {
         self.scope.get(voice % VOICES, back)
     }
 
+    /// The sample `back` steps before the newest of the echo output's scope,
+    /// for the left (0) or right (1) channel.
+    pub fn echo_scope_sample(&self, channel: usize, back: usize) -> i16 {
+        self.scope.get(VOICES + channel % 2, back)
+    }
+
+    /// Where a voice is in its sample. `ram` is the sound RAM.
+    pub fn voice_brr(&self, v: usize, ram: &[u8; 65536]) -> BrrPosition {
+        let v = v % VOICES;
+        let voice = &self.voices[v];
+        let source = self.regs[v * 16 + 4];
+        let entry = (usize::from(self.regs[0x5D]) << 8) + usize::from(source) * 4;
+        let (start, loop_address) = directory_entry(ram, entry);
+        BrrPosition {
+            directory_entry: entry as u16,
+            block: voice.block,
+            loop_address,
+            sample_in_block: ((voice.counter >> 12) & 15) as u8,
+            source,
+            loops: voice.loops,
+            flags: voice.flags,
+            filter: (voice.header >> 2) & 3,
+            range: voice.header >> 4,
+            loop_length_samples: match scan_end(ram, loop_address) {
+                Some((blocks, true)) => blocks * 16,
+                _ => 0,
+            },
+            total_samples: scan_end(ram, start).map_or(0, |(blocks, _)| blocks * 16),
+        }
+    }
+
     /// The next sample of the noise generator, as a signed 15-bit value.
     fn noise_out(&self) -> i32 {
         (self.noise << 17) >> 17
@@ -274,6 +475,8 @@ impl Dsp {
         voice.old = 0;
         voice.older = 0;
         voice.flags = 0;
+        voice.header = 0;
+        voice.loops = 0;
         voice.delay = KEY_ON_DELAY;
         self.endx &= !(1 << v);
     }
@@ -284,47 +487,14 @@ impl Dsp {
         self.note(at as u16, 9, DSP_READ);
         let voice = &mut self.voices[v];
         let header = ram[at];
-        let range = i32::from(header >> 4);
-        let filter = (header >> 2) & 3;
+        voice.header = header;
         voice.flags = header & 3;
         if voice.flags & 1 != 0 {
             self.endx |= 1 << v;
         }
         voice.window.copy_within(16..19, 0);
-        for n in 0..16usize {
-            let byte = ram[(at + 1 + n / 2) & 0xFFFF];
-            let nibble = if n % 2 == 0 { byte >> 4 } else { byte & 15 };
-            let mut s = i32::from((nibble ^ 8) as i8 - 8);
-            let mut shift = range;
-            if shift > 12 {
-                s >>= 3;
-                shift = 12;
-            }
-            s = (s << shift) >> 1;
-            let (old, older) = (voice.old, voice.older);
-            s += match filter {
-                0 => 0,
-                1 => old + ((-old) >> 4),
-                2 => old * 2 + ((-old * 3) >> 5) - older + (older >> 4),
-                _ => old * 2 + ((-old * 13) >> 6) - older + ((older * 3) >> 4),
-            };
-            // Past 16 bits the sum saturates to values that the 15-bit wrap
-            // below leaves at 0x3FFF and 0. Between 15 and 16 bits it wraps.
-            s = if s > 0x7FFF {
-                0x3FFF
-            } else if s < -0x8000 {
-                0
-            } else if s >= 0x4000 {
-                s - 0x8000
-            } else if s < -0x4000 {
-                s + 0x8000
-            } else {
-                s
-            };
-            voice.window[3 + n] = s;
-            voice.older = old;
-            voice.old = s;
-        }
+        let samples = brr_block(ram, at, &mut voice.old, &mut voice.older);
+        voice.window[3..19].copy_from_slice(&samples);
     }
 
     /// Moves a voice on to the next block, or back to the loop.
@@ -335,6 +505,7 @@ impl Dsp {
         self.note(entry as u16, 2, DSP_READ);
         let voice = &mut self.voices[v];
         if voice.flags & 1 != 0 {
+            voice.loops = voice.loops.saturating_add(1);
             voice.block = loop_at;
             if voice.flags == 1 {
                 voice.mode = Mode::Release;
@@ -436,7 +607,7 @@ impl Dsp {
         let mut main = [0i32; 2];
         let mut echo = [0i32; 2];
         let mut previous = 0;
-        let mut heard = [0i16; VOICES];
+        let mut heard = [0i16; SCOPE_CHANNELS];
         // The voice number indexes the registers, the voices and the scope.
         #[allow(clippy::needless_range_loop)]
         for v in 0..VOICES {
@@ -495,7 +666,6 @@ impl Dsp {
             }
         }
         self.regs[0x7C] = self.endx;
-        self.scope.push(heard);
 
         let esa = usize::from(self.regs[0x6D]) << 8;
         let at = (esa + self.echo_index as usize * 4) & 0xFFFF;
@@ -544,7 +714,11 @@ impl Dsp {
                 sum = clamp16(sum + ((fir_out[ch] * volume) >> 7));
             }
             out[ch] = if flg & 0x40 != 0 { 0 } else { sum };
+            // The echo output as it joins the mix, whatever the mask and the
+            // mute flag say.
+            heard[VOICES + ch] = clamp16((fir_out[ch] * volume) >> 7) as i16;
         }
+        self.scope.push(heard);
 
         self.counter = (self.counter + 1) % COUNTER_WRAP;
         self.samples += 1;

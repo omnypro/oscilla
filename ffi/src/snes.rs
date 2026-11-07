@@ -1,7 +1,7 @@
 //! The C interface of `csnes.h`.
 
 use crate::write_error;
-use oscilla_snes::{EndState, Machine, Observer, RestoreError, Snapshot, Spc};
+use oscilla_snes::{EndState, Machine, Observer, REGISTER_BLOCKS, RestoreError, Snapshot, Spc};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::Read;
 use std::sync::Arc;
@@ -636,6 +636,244 @@ pub unsafe extern "C" fn csnes_scope_get(
     let out = unsafe { slice::from_raw_parts_mut(out, frames) };
     unsafe { &(*machine).machine }.scope(voice as usize, out);
     frames
+}
+
+/// Fills `out` with the last `frames` frames of the echo output, the left
+/// channel for `channel` 0 and the right for 1. Returns `frames`, or 0 for a
+/// channel outside 0 to 1, a NULL buffer, 0 frames, more than 16,384 frames or
+/// a call from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_echo_scope_get(
+    machine: *const CMachine,
+    channel: c_int,
+    out: *mut f32,
+    frames: usize,
+) -> c_int {
+    if machine.is_null()
+        || out.is_null()
+        || !(0..2).contains(&channel)
+        || frames == 0
+        || frames > 16_384
+        || unsafe { in_callback(machine) }
+    {
+        return 0;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(out, frames) };
+    unsafe { &(*machine).machine }.echo_scope(channel as usize, out);
+    frames as c_int
+}
+
+/// Where a voice is in its sample; the layout of `csnes_brr`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CBrr {
+    directory_entry_address: u16,
+    block_address: u16,
+    loop_address: u16,
+    sample_in_block: u8,
+    srcn: u8,
+    loops_done_saturating: u8,
+    flags: u8,
+    filter: u8,
+    range: u8,
+    loop_length_samples: u32,
+    total_samples: u32,
+    reserved: [u8; 4],
+}
+
+const _: () = assert!(size_of::<CBrr>() == 24);
+
+/// Writes the position of one voice into `out`. Returns 1, or 0 for a voice
+/// outside 0 to 7, a NULL `out` or a call from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_voice_brr_get(
+    machine: *const CMachine,
+    voice: c_int,
+    out: *mut CBrr,
+) -> c_int {
+    if machine.is_null()
+        || out.is_null()
+        || !(0..8).contains(&voice)
+        || unsafe { in_callback(machine) }
+    {
+        return 0;
+    }
+    let p = unsafe { &(*machine).machine }.voice_brr(voice as usize);
+    unsafe {
+        *out = CBrr {
+            directory_entry_address: p.directory_entry,
+            block_address: p.block,
+            loop_address: p.loop_address,
+            sample_in_block: p.sample_in_block,
+            srcn: p.source,
+            loops_done_saturating: p.loops,
+            flags: p.flags,
+            filter: p.filter,
+            range: p.range,
+            loop_length_samples: p.loop_length_samples,
+            total_samples: p.total_samples,
+            reserved: [0; 4],
+        }
+    };
+    1
+}
+
+/// What a scan of a sample found; the layout of `csnes_sample_info`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CSampleInfo {
+    start_address: u16,
+    loop_address: u16,
+    total_samples: u32,
+    loop_start_sample: u32,
+    has_loop: u8,
+    truncated: u8,
+    reserved: [u8; 2],
+}
+
+const _: () = assert!(size_of::<CSampleInfo>() == 16);
+
+/// Decodes sample `srcn` into `out` and fills `info` when it is not NULL.
+/// Returns the number of samples written, or 0 for a `srcn` outside 0 to 255,
+/// a NULL `out`, 0 samples or a call from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_sample_get(
+    machine: *const CMachine,
+    srcn: c_int,
+    out: *mut i16,
+    max_samples: usize,
+    info: *mut CSampleInfo,
+) -> usize {
+    if machine.is_null()
+        || out.is_null()
+        || !(0..256).contains(&srcn)
+        || max_samples == 0
+        || max_samples > isize::MAX as usize / 2
+        || unsafe { in_callback(machine) }
+    {
+        return 0;
+    }
+    // Nothing past the longest sample is written, so a large `max_samples`
+    // reads no more than that much of `out`.
+    let longest = oscilla_snes::MAX_SAMPLE_BLOCKS * 16;
+    let out = unsafe { slice::from_raw_parts_mut(out, max_samples.min(longest)) };
+    let found = unsafe { &(*machine).machine }.sample(srcn as u8, out);
+    if !info.is_null() {
+        unsafe {
+            *info = CSampleInfo {
+                start_address: found.start_address,
+                loop_address: found.loop_address,
+                total_samples: found.total_samples,
+                loop_start_sample: found.loop_start_sample,
+                has_loop: u8::from(found.has_loop),
+                truncated: u8::from(found.truncated),
+                reserved: [0; 2],
+            }
+        };
+    }
+    (found.total_samples as usize).min(out.len())
+}
+
+/// The state of one timer; the layout of `csnes_timer`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CTimer {
+    enabled: u8,
+    divisor: u8,
+    output: u8,
+    reserved: u8,
+    ticks_until_output: u32,
+}
+
+const _: () = assert!(size_of::<CTimer>() == 8);
+
+/// Writes the three timers into `out`. Returns 1, or 0 for a NULL `out` or a
+/// call from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_timers_get(machine: *const CMachine, out: *mut CTimer) -> c_int {
+    if machine.is_null() || out.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let timers = unsafe { &(*machine).machine }.timers();
+    for (i, t) in timers.iter().enumerate() {
+        unsafe {
+            *out.add(i) = CTimer {
+                enabled: u8::from(t.enabled),
+                divisor: t.divisor,
+                output: t.output,
+                reserved: 0,
+                ticks_until_output: t.ticks_until_output,
+            }
+        };
+    }
+    1
+}
+
+const BLOCK_NAMES: [&CStr; 2] = [c"S-DSP", c"SPC700 I/O"];
+
+const _: () = assert!(REGISTER_BLOCKS.len() == BLOCK_NAMES.len());
+
+/// The number of register blocks: 2.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_register_block_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    REGISTER_BLOCKS.len() as c_int
+}
+
+fn block_index(block: c_int) -> Option<usize> {
+    usize::try_from(block)
+        .ok()
+        .filter(|b| *b < REGISTER_BLOCKS.len())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_register_block_name(
+    machine: *const CMachine,
+    block: c_int,
+) -> *const c_char {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return ptr::null();
+    }
+    block_index(block).map_or(ptr::null(), |b| BLOCK_NAMES[b].as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_register_block_base(machine: *const CMachine, block: c_int) -> u32 {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    block_index(block).map_or(0, |b| REGISTER_BLOCKS[b].base)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_register_block_size(
+    machine: *const CMachine,
+    block: c_int,
+) -> usize {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    block_index(block).map_or(0, |b| REGISTER_BLOCKS[b].size)
+}
+
+/// Copies at most `max` bytes of the block and returns how many.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn csnes_register_block_get(
+    machine: *const CMachine,
+    block: c_int,
+    out: *mut u8,
+    max: usize,
+) -> usize {
+    if machine.is_null() || out.is_null() || max == 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let Some(b) = block_index(block) else {
+        return 0;
+    };
+    let out = unsafe { slice::from_raw_parts_mut(out, max.min(REGISTER_BLOCKS[b].size)) };
+    unsafe { &(*machine).machine }.register_block_get(b, out)
 }
 
 #[unsafe(no_mangle)]

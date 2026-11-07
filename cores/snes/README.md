@@ -45,7 +45,7 @@ and fade in milliseconds, the length as the two added, the voices that the file
 asks a player to mute, and the amplification of the xid6 chunk. A value that the
 file leaves out is an empty string, -1 or the unchanged value.
 
-A player has five more groups of calls.
+A player has seven more groups of calls.
 
 - `csnes_snapshot_take` copies the whole machine. `csnes_snapshot_restore` puts
   a machine with the same file and output rate back to that point, and the same
@@ -58,6 +58,17 @@ A player has five more groups of calls.
   display. `csnes_set_access_tracking` turns on a map of the memory that the
   SPC700 read, wrote and executed and the DSP read and wrote, which
   `csnes_access_map_get` and `csnes_access_map_take` return.
+- `csnes_echo_scope_get` returns the last frames of the echo output, left or
+  right, as the amount that the echo adds to the mix.
+- `csnes_voice_brr_get` shows where a voice is in its sample: the block, the
+  sample inside it, the loops done, the header of the block and the lengths of
+  the sample and its loop. `csnes_sample_get` decodes any sample of the table
+  from the sound RAM as the S-DSP does, for a sample browser, without changing
+  the machine.
+- `csnes_register_block_get` copies the S-DSP's 128 registers and the SPC700's
+  I/O registers at 0xF0 to 0xFF, and `csnes_timers_get` shows the three timers
+  with the cycles until each output increments. Neither clears a counter that
+  a program clears by reading it.
 - `csnes_write_port` and `csnes_read_port` stand in for the main CPU: they set
   what the SPC700 reads at 0xF4 to 0xF7 and show what it wrote there.
 - `csnes_end_state_get` reports a processor that executed SLEEP or STOP.
@@ -91,6 +102,9 @@ chooses the voices and the echo (bit 8). `--info` prints the tags and the times.
   generated files. A change to the sound or to the stores changes a hash.
 - `viz`: the state of a voice, its scope and the access map, and no change to
   the sound.
+- `inspect`: the register blocks, the echo scope, the position in a sample, the
+  decoded samples and the timers, each checked against values worked by hand
+  from the documentation, and no change to the sound.
 - `fuzz`: files of random bytes run without a panic and render the same samples
   twice.
 - `reference`: a comparison with renders and store logs of a reference player.
@@ -117,4 +131,5 @@ Written from public documentation.
 
 - The SPC file format, version 0.30, with the xid6 extension.
 - nocash's fullsnes: the APU chapters on the SPC700, the DSP registers, BRR,
-  the Gaussian table, the envelopes, noise, echo and the low-level timings.
+  the Gaussian table, the envelopes, noise, echo and the low-level timings. The
+  BRR chapter (filters, shift, clamps) is the reference for `csnes_sample_get`.
