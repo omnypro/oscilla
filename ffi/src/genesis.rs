@@ -639,6 +639,192 @@ pub unsafe extern "C" fn cgenesis_scope_get(
     }
 }
 
+/// One operator of an FM patch. The layout is in `cgenesis.h`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CFmOperator {
+    multiple: u8,
+    detune: u8,
+    total_level: u8,
+    key_scale: u8,
+    attack_rate: u8,
+    decay_rate: u8,
+    sustain_rate: u8,
+    release_rate: u8,
+    sustain_level: u8,
+    ssg_eg: u8,
+    am: u8,
+    vibrato: u8,
+    sustained: u8,
+    waveform: u8,
+    phase: u8,
+    reserved: u8,
+    envelope_level: u16,
+    reserved2: u16,
+    frequency_hz: f32,
+}
+
+/// An FM patch. The layout is in `cgenesis.h`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CFm {
+    chip: u8,
+    algorithm: u8,
+    feedback: u8,
+    instrument: u8,
+    operators: u8,
+    reserved: [u8; 3],
+    op: [CFmOperator; 4],
+}
+
+const _: () = {
+    use std::mem::{align_of, offset_of, size_of};
+    assert!(size_of::<CFmOperator>() == 24 && align_of::<CFmOperator>() == 4);
+    assert!(offset_of!(CFmOperator, phase) == 14);
+    assert!(offset_of!(CFmOperator, envelope_level) == 16);
+    assert!(offset_of!(CFmOperator, frequency_hz) == 20);
+    assert!(size_of::<CFm>() == 104 && align_of::<CFm>() == 4);
+    assert!(offset_of!(CFm, operators) == 4);
+    assert!(offset_of!(CFm, op) == 8);
+};
+
+fn make_fm_operator(o: &oscilla_genesis::FmOperator) -> CFmOperator {
+    CFmOperator {
+        multiple: o.multiple,
+        detune: o.detune,
+        total_level: o.total_level,
+        key_scale: o.key_scale,
+        attack_rate: o.attack_rate,
+        decay_rate: o.decay_rate,
+        sustain_rate: o.sustain_rate,
+        release_rate: o.release_rate,
+        sustain_level: o.sustain_level,
+        ssg_eg: o.ssg_eg,
+        am: u8::from(o.am),
+        vibrato: u8::from(o.vibrato),
+        sustained: u8::from(o.sustained),
+        waveform: o.waveform,
+        phase: o.phase,
+        reserved: 0,
+        envelope_level: o.envelope_level,
+        reserved2: 0,
+        frequency_hz: o.frequency_hz,
+    }
+}
+
+/// Fills `out` with the FM patch of voice `voice` and returns 1, or returns 0
+/// and leaves `out` alone for a voice that is not an FM channel, an index
+/// outside the voices, a NULL buffer or a call from a callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_fm_get(
+    machine: *const CMachine,
+    voice: c_int,
+    out: *mut CFm,
+) -> c_int {
+    if machine.is_null() || out.is_null() || voice < 0 || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    let Some(p) = unsafe { &(*machine).machine }.fm_patch(voice as usize) else {
+        return 0;
+    };
+    let mut fm = CFm {
+        chip: p.chip as u8,
+        algorithm: p.algorithm,
+        feedback: p.feedback,
+        instrument: p.instrument,
+        operators: p.operators,
+        ..CFm::default()
+    };
+    for (to, from) in fm.op.iter_mut().zip(&p.op) {
+        *to = make_fm_operator(from);
+    }
+    unsafe { *out = fm };
+    1
+}
+
+/// The names of the register blocks. Each is one static string.
+fn block_name(chip: Chip) -> &'static CStr {
+    match chip {
+        Chip::Ym2612 => c"YM2612",
+        Chip::Ym2612Second => c"YM2612 (second)",
+        Chip::Sn76489 => c"SN76489",
+        Chip::Sn76489Second => c"SN76489 (second)",
+        Chip::Ym2413 => c"YM2413",
+        Chip::Ym2413Second => c"YM2413 (second)",
+    }
+}
+
+/// The block `block` of a machine, or `None` for a NULL machine, a call from a
+/// callback and a block outside the chips.
+unsafe fn block_of(
+    machine: *const CMachine,
+    block: c_int,
+) -> Option<oscilla_genesis::RegisterBlock> {
+    if machine.is_null() || block < 0 || unsafe { in_callback(machine) } {
+        return None;
+    }
+    unsafe { &(*machine).machine }.register_block(block as usize)
+}
+
+/// The number of register blocks: one for each chip that the file has.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_register_block_count(machine: *const CMachine) -> c_int {
+    if machine.is_null() || unsafe { in_callback(machine) } {
+        return 0;
+    }
+    unsafe { &(*machine).machine }.register_block_count() as c_int
+}
+
+/// The name of a block, a static string, or NULL for a block outside the chips.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_register_block_name(
+    machine: *const CMachine,
+    block: c_int,
+) -> *const c_char {
+    unsafe { block_of(machine, block) }.map_or(ptr::null(), |b| block_name(b.chip).as_ptr())
+}
+
+/// The address of byte 0 of a block in the chip's register space.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_register_block_base(
+    machine: *const CMachine,
+    block: c_int,
+) -> u32 {
+    unsafe { block_of(machine, block) }.map_or(0, |b| b.base)
+}
+
+/// The size of a block in bytes, 0 for a block outside the chips.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_register_block_size(
+    machine: *const CMachine,
+    block: c_int,
+) -> usize {
+    unsafe { block_of(machine, block) }.map_or(0, |b| b.size)
+}
+
+/// Copies at most `max` bytes of a block and returns how many. Returns 0 for a
+/// block outside the chips, a NULL buffer or a `max` of 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cgenesis_register_block_get(
+    machine: *const CMachine,
+    block: c_int,
+    out: *mut u8,
+    max: usize,
+) -> usize {
+    if out.is_null() || max == 0 || max > isize::MAX as usize {
+        return 0;
+    }
+    if unsafe { block_of(machine, block) }.is_none() {
+        return 0;
+    }
+    let Some(bytes) = unsafe { &(*machine).machine }.register_block_read(block as usize) else {
+        return 0;
+    };
+    let n = bytes.len().min(max);
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), out, n) };
+    n
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cgenesis_channel_levels_get(machine: *const CMachine, out: *mut i32) {
     if machine.is_null() || out.is_null() || unsafe { in_callback(machine) } {

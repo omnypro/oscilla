@@ -79,6 +79,53 @@ and panning are in a sample and the mask is not. `scope` resamples to the
 output rate by linear interpolation. The rings are not part of a copy of the
 machine, which starts with empty ones.
 
+## Inspection
+
+Two views read the chips without changing them. Both take `&self`, run no step
+of a chip and leave the scopes alone, so rendering with and without the calls
+gives the same samples.
+
+Register blocks: a file has one block for each chip it names, in the order of
+the channel mask (YM2612, SN76489, second YM2612, second SN76489, YM2413,
+second YM2413). The YM2612 does not keep its register file, so `registers`
+rebuilds the bytes from the fields that the writes set. The block is 512 bytes
+with base 0, and the byte at `port * 256 + register` is that register, the
+address that the observer reports. Register 0x28 is a command and reads 0, as
+do the reset bits of 0x27 and the registers that the chip does not keep. The
+DAC register reads 0x80 and the panning registers 0xC0 until a write changes
+them. The SN76489 block is 12 bytes: the three 10-bit tone registers as 16-bit
+little endian values (bytes 0 to 5), the noise control (6), the four
+attenuations (7 to 10) and the Game Gear stereo register (11). The YM2413 block
+is its 64-byte register file, user tone included.
+
+FM patches: `fm_patch` takes a voice index and returns the patch for a YM2612
+channel or a YM2413 melody channel, and `None` for everything else (the
+SN76489, channel 6 while the DAC is on, and the YM2413's channels 7 to 9 in
+rhythm mode, whose registers hold drum volumes). The YM2612's operators are in
+the numbering of the algorithm figures (the order of `slots`). The
+registers hold them as S1, S3, S2, S4, so the operator at +4 of a register
+group is operator 3 and the one at +8 is operator 2. The YM2413 patch is the
+one in use: the built-in table row for the instrument number, or the user tone
+registers when it is 0. Its operator 0 is the modulator and 1 the carrier.
+
+- Total level: the YM2612's 7 bits. The YM2413 modulator's 6 bits. The YM2413
+  carrier has no total level. Its field holds the volume register times 4,
+  in the same 0.75 dB step.
+- Key scale: the YM2612's rate scaling code and the YM2413's KSR bit. Both scale
+  the envelope rates with the pitch. The YM2413's KSL (a level scaling) has no field.
+- Envelope level: the operator's own attenuation after the SSG-EG inversion and
+  before the total level and the low frequency oscillator. The YM2612's is
+  10 bits in steps of 0.09375 dB and the YM2413's is 7 bits in steps of
+  0.375 dB.
+- Phase: attack, decay, sustain and release as the chips have them, and 4 (off)
+  when the envelope has reached its quietest level after a release or has not
+  started. The YM2413's fast fall before an attack counts as attack.
+- Frequency: the phase generator's step for the operator, with the multiple,
+  the YM2612's detune and, for channel 3 in special mode, the operator's own
+  F-number and block. The vibrato of the low frequency oscillator is left out.
+
+The phase generator and the view call the same function for the YM2612's step.
+
 ## GYM
 
 `formats/gym` reads a GYM file and writes the VGM file with the same commands.

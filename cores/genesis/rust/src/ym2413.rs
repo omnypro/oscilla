@@ -194,6 +194,7 @@ fn key_level(code: u32, block: u32, fnum: u32) -> u32 {
     steps * STEP_UNITS
 }
 
+use crate::patch::{FmChip, FmOperator, FmPatch, YM2413_BLOCK};
 use crate::scope::Scope;
 
 /// What a channel of the YM2413 is doing, from its registers and its envelope.
@@ -326,6 +327,79 @@ impl Ym2413 {
             drum,
             sustain: self.frequency_high[ch] & 0x20 != 0,
         }
+    }
+
+    /// The registers that the chip holds, as 64 bytes at their own addresses.
+    /// An address that is not a register reads 0. The registers 0x20 to 0x28
+    /// hold the key bit (bit 4) and the sustain bit (bit 5) with the block and
+    /// the top bit of the F-number.
+    pub fn registers(&self) -> [u8; YM2413_BLOCK] {
+        let mut r = [0u8; YM2413_BLOCK];
+        r[..8].copy_from_slice(&self.custom);
+        r[0x0E] = self.rhythm;
+        r[0x0F] = self.test;
+        r[0x10..0x19].copy_from_slice(&self.frequency_low);
+        r[0x20..0x29].copy_from_slice(&self.frequency_high);
+        r[0x30..0x39].copy_from_slice(&self.instrument);
+        r
+    }
+
+    /// The patch of channel `ch` (0 to 8): the modulator, then the carrier.
+    /// `rate_hz` is the chip's sample rate (its clock over 72). Returns `None`
+    /// for the channels that play a percussion sound in rhythm mode: the bass
+    /// drum on channel 7 and the sounds that the core leaves silent on 8 and
+    /// 9, whose instrument registers hold drum volumes.
+    pub fn fm_patch(&self, ch: usize, rate_hz: f64) -> Option<FmPatch> {
+        if ch >= 9 || (self.rhythm_mode() && ch >= 6) {
+            return None;
+        }
+        let patch = self.patch(ch);
+        let fnum = u32::from(self.frequency_low[ch]) | u32::from(self.frequency_high[ch] & 1) << 8;
+        let block = u32::from(self.frequency_high[ch] >> 1 & 7);
+        let volume = self.instrument[ch] & 15;
+        let mut op = [FmOperator::default(); 4];
+        for which in 0..2 {
+            let flags = patch[which];
+            let state = &self.ops[ch][which];
+            let inc = ((fnum << block) * MULTIPLE[usize::from(flags & 15)]) >> 1;
+            op[which] = FmOperator {
+                multiple: flags & 15,
+                detune: 0,
+                total_level: if which == 0 {
+                    patch[2] & 63
+                } else {
+                    volume * 4
+                },
+                key_scale: flags >> 4 & 1,
+                attack_rate: patch[4 + which] >> 4,
+                decay_rate: patch[4 + which] & 15,
+                sustain_rate: 0,
+                release_rate: patch[6 + which] & 15,
+                sustain_level: patch[6 + which] >> 4,
+                ssg_eg: 0,
+                am: flags & 0x80 != 0,
+                vibrato: flags & 0x40 != 0,
+                sustained: flags & 0x20 != 0,
+                waveform: patch[3] >> (3 + which) & 1,
+                phase: match state.state {
+                    ATTACK | DAMP => 0,
+                    DECAY => 1,
+                    SUSTAIN => 2,
+                    RELEASE => 3,
+                    _ => 4,
+                },
+                envelope_level: (state.att >> 16).min(127) as u16,
+                frequency_hz: (f64::from(inc) * rate_hz / 524_288.0) as f32,
+            };
+        }
+        Some(FmPatch {
+            chip: FmChip::Ym2413,
+            algorithm: 0,
+            feedback: patch[3] & 7,
+            instrument: self.instrument[ch] >> 4,
+            operators: 2,
+            op,
+        })
     }
 
     /// The sample `back` steps before the newest of a channel's scope: the

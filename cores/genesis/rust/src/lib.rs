@@ -3,6 +3,7 @@
 
 mod eg;
 mod machine;
+mod patch;
 mod psg;
 mod scope;
 mod stream;
@@ -11,6 +12,7 @@ mod ym2612;
 
 pub use eg::Phase;
 pub use machine::{Chip, EndState, Machine, MachineError, Observer, UNIT, Voice, VoiceKind};
+pub use patch::{FmChip, FmOperator, FmPatch, RegisterBlock};
 pub use psg::{Psg, PsgVoice};
 pub use scope::SCOPE_LEN;
 pub use ym2413::{OpllVoice, Ym2413};

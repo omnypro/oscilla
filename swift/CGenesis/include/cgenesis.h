@@ -261,6 +261,180 @@ const char *cgenesis_voice_name(const cgenesis_machine *machine, int index);
 size_t cgenesis_scope_get(const cgenesis_machine *machine, int voice, float *out, size_t frames);
 
 /*
+ * The FM patch of one voice, for a patch viewer. A call is read-only and
+ * changes no sound; call it on the render thread like the voice calls. Each
+ * field that a chip has no counterpart for is 0.
+ *
+ * cgenesis_fm_get(machine, voice, &out) takes a voice index as in
+ * cgenesis_voices_get and returns 1 with *out filled, or 0 with *out untouched
+ * for a voice that has no FM patch (an SN76489 voice, channel 6 of a YM2612
+ * while its DAC is on, and every YM2413 channel in rhythm mode from channel 7
+ * up, which carry the percussion sounds), an index outside the voices, a NULL
+ * machine or buffer, or a call from a callback.
+ *
+ * cgenesis_fm:
+ *   chip         0 YM2612, 1 YM2413
+ *   algorithm    the YM2612's algorithm, 0 to 7; 0 for the YM2413
+ *   feedback     the feedback level of the first operator (the YM2413's
+ *                modulator), 0 to 7
+ *   instrument   the YM2413's instrument register: 0 the user tone, 1 to 15
+ *                the built-in instruments; 0 for the YM2612
+ *   operators    4 for the YM2612, 2 for the YM2413
+ *   op           the operators in this order. YM2612: operators 1, 2, 3, 4 as
+ *                the algorithm figures of the manual number them. The
+ *                registers hold them in the order 1, 3, 2, 4, so op[1] is
+ *                the one at +8 of a register group and op[2] the one at +4.
+ *                YM2413: op[0] the modulator, op[1] the carrier. The
+ *                remaining entries are all 0.
+ *
+ * cgenesis_fm_operator:
+ *   multiple         the register code, 0 to 15. The YM2612 reads 0 as one
+ *                    half. The YM2413 reads the codes as 1/2, 1, 2, 3, 4, 5,
+ *                    6, 7, 8, 9, 10, 10, 12, 12, 15, 15.
+ *   detune           the YM2612's DT1 code, 0 to 7 (bits 0 and 1 the size,
+ *                    bit 2 the sign)
+ *   total_level      the YM2612's, 0 to 127. The YM2413 modulator's, 0 to 63.
+ *                    The YM2413 carrier has none; the field holds the
+ *                    volume register times 4 (0 to 60). All in steps of
+ *                    0.75 dB.
+ *   key_scale        the YM2612's rate scaling code, 0 to 3. The YM2413's
+ *                    KSR bit, 0 or 1. The YM2413's level scaling is not here.
+ *   attack_rate      the YM2612's 0 to 31, the YM2413's 0 to 15
+ *   decay_rate       the first decay rate, same ranges
+ *   sustain_rate     the YM2612's second decay rate, 0 to 31
+ *   release_rate     0 to 15
+ *   sustain_level    0 to 15
+ *   ssg_eg           the YM2612's SSG-EG: 0 while off, otherwise the low four
+ *                    bits of the register with bit 3 set
+ *   am               1 when the low frequency oscillator modulates the
+ *                    amplitude
+ *   vibrato          the YM2413's vibrato flag
+ *   sustained        the YM2413's EG type flag (the operator holds its
+ *                    sustain level until the key goes off)
+ *   waveform         the YM2413's wave: 0 sine, 1 half sine
+ *   phase            0 attack, 1 decay, 2 sustain, 3 release, 4 off
+ *   envelope_level   the envelope's attenuation, 0 the loudest, before the
+ *                    total level and the low frequency oscillator and after
+ *                    the SSG-EG inversion. The YM2612's range is 0 to 1023 in
+ *                    steps of 0.09375 dB. The YM2413's is 0 to 127 in steps
+ *                    of 0.375 dB.
+ *   frequency_hz     the operator's own frequency: the channel's pitch with
+ *                    the multiple applied (and the YM2612's detune, and
+ *                    channel 3's separate frequencies in its special mode),
+ *                    without the vibrato of the low frequency oscillator
+ *
+ * The sizes are fixed: cgenesis_fm_operator is 24 bytes with the float at
+ * offset 20, and cgenesis_fm is 104 bytes with op at offset 8.
+ */
+typedef struct {
+    uint8_t multiple;
+    uint8_t detune;
+    uint8_t total_level;
+    uint8_t key_scale;
+    uint8_t attack_rate;
+    uint8_t decay_rate;
+    uint8_t sustain_rate;
+    uint8_t release_rate;
+    uint8_t sustain_level;
+    uint8_t ssg_eg;
+    uint8_t am;
+    uint8_t vibrato;
+    uint8_t sustained;
+    uint8_t waveform;
+    uint8_t phase;
+    uint8_t reserved;
+    uint16_t envelope_level;
+    uint16_t reserved2;
+    float frequency_hz;
+} cgenesis_fm_operator;
+
+typedef struct {
+    uint8_t chip;
+    uint8_t algorithm;
+    uint8_t feedback;
+    uint8_t instrument;
+    uint8_t operators;
+    uint8_t reserved[3];
+    cgenesis_fm_operator op[4];
+} cgenesis_fm;
+
+#ifdef __cplusplus
+static_assert(sizeof(cgenesis_fm_operator) == 24, "cgenesis_fm_operator is 24 bytes");
+static_assert(offsetof(cgenesis_fm_operator, envelope_level) == 16, "envelope_level is at 16");
+static_assert(offsetof(cgenesis_fm_operator, frequency_hz) == 20, "frequency_hz is at 20");
+static_assert(sizeof(cgenesis_fm) == 104, "cgenesis_fm is 104 bytes");
+static_assert(offsetof(cgenesis_fm, op) == 8, "op is at 8");
+#else
+_Static_assert(sizeof(cgenesis_fm_operator) == 24, "cgenesis_fm_operator is 24 bytes");
+_Static_assert(offsetof(cgenesis_fm_operator, envelope_level) == 16, "envelope_level is at 16");
+_Static_assert(offsetof(cgenesis_fm_operator, frequency_hz) == 20, "frequency_hz is at 20");
+_Static_assert(sizeof(cgenesis_fm) == 104, "cgenesis_fm is 104 bytes");
+_Static_assert(offsetof(cgenesis_fm, op) == 8, "op is at 8");
+#endif
+
+int cgenesis_fm_get(const cgenesis_machine *machine, int voice, cgenesis_fm *out);
+
+/*
+ * The registers of each chip, for a register viewer. A file has one block for
+ * each chip it names, in the order of the channel mask and only for the chips
+ * that are present: the first YM2612, the first SN76489, the second YM2612,
+ * the second SN76489, the YM2413, a second YM2413. The calls are read-only,
+ * for the render thread, and do nothing inside an observer callback.
+ *
+ *   cgenesis_register_block_count   the number of blocks, 0 for a NULL machine
+ *   cgenesis_register_block_name    "YM2612", "YM2612 (second)", "SN76489",
+ *                                   "SN76489 (second)", "YM2413" or "YM2413
+ *                                   (second)". A static string: every call
+ *                                   returns the same pointer for the same
+ *                                   name. NULL for a block outside the chips.
+ *   cgenesis_register_block_base    the address of byte 0 in the chip's own
+ *                                   register space. 0 for every block here.
+ *   cgenesis_register_block_size    the number of bytes, 0 for a block
+ *                                   outside the chips
+ *   cgenesis_register_block_get     copies min(size, max) bytes of what the
+ *                                   chip holds now to `out` and returns the
+ *                                   count. Returns 0 for a block outside the
+ *                                   chips, a NULL machine or buffer, or a
+ *                                   max of 0.
+ *
+ * The layouts, as the byte at index i of the block:
+ *
+ *   YM2612 (512 bytes, base 0). One block for both ports. The byte at
+ *   port * 256 + register is that register, so 0x1B4 is register 0xB4 of port
+ *   1, the same address that the observer reports. The block holds what the
+ *   chip keeps: registers 0x22, 0x24 to 0x27, 0x2A to 0x2C, the operator
+ *   registers 0x30 to 0x9F, the frequency registers 0xA0 to 0xA6 and 0xA8 to
+ *   0xAE (0xA8 to 0xAE on port 0 only), and 0xB0 to 0xB6. Register 0x28 is a
+ *   command and reads 0, and so do the reset bits of 0x27. A register that was
+ *   never written reads 0, except 0x2A (0x80) and the panning registers 0xB4
+ *   to 0xB6 (0xC0). The registers at +3 of each group do not exist and read 0.
+ *
+ *   SN76489 (12 bytes, base 0).
+ *     0 to 5   the tone registers of channels 0, 1 and 2 (10 bits each) as
+ *              16-bit little endian values: byte 0 the low byte of channel 0,
+ *              byte 1 its top two bits, byte 2 the low byte of channel 1, and
+ *              so on
+ *     6        the noise control: bits 0 and 1 the rate, bit 2 white noise
+ *     7 to 10  the attenuations of the three tones and the noise, 0 loudest
+ *              and 15 off (15 at the start)
+ *     11       the Game Gear stereo register (bits 0 to 3 send channels 0 to
+ *              3 to the right, bits 4 to 7 to the left; 0xFF at the start)
+ *
+ *   YM2413 (64 bytes, base 0). The register file at its own addresses: the
+ *   user tone at 0x00 to 0x07, 0x0E the rhythm register, 0x0F the test
+ *   register, 0x10 to 0x18 the low byte of each channel's F-number, 0x20 to
+ *   0x28 the sustain bit (bit 5), key bit (bit 4), block and top F-number bit,
+ *   and 0x30 to 0x38 the instrument and volume. An address that is not a
+ *   register reads 0.
+ */
+int cgenesis_register_block_count(const cgenesis_machine *machine);
+const char *cgenesis_register_block_name(const cgenesis_machine *machine, int block);
+uint32_t cgenesis_register_block_base(const cgenesis_machine *machine, int block);
+size_t cgenesis_register_block_size(const cgenesis_machine *machine, int block);
+size_t cgenesis_register_block_get(const cgenesis_machine *machine, int block, uint8_t *out,
+                                   size_t max);
+
+/*
  * Sets the cutoff in Hz of the high-pass that stands for the console's output
  * coupling and removes the DC offset that the DAC can leave. The default is
  * 20 Hz and 0 turns it off. Returns 1, or 0 and no change for a value outside

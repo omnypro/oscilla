@@ -12,6 +12,7 @@ use oscilla_resample::{BLEP_SHIFT, OUT_RING, Resampler};
 use oscilla_vgm::{Banks, Command, SN76489, Vgm, YM2413, YM2612};
 
 use crate::eg::Phase;
+use crate::patch::{self, FmPatch, RegisterBlock};
 use crate::psg::{self, Psg};
 use crate::stream::{self, Stream};
 use crate::ym2413::{self, Ym2413};
@@ -564,6 +565,106 @@ impl Machine {
             *o = ((a + (b - a) * frac) / scale) as f32;
         }
         true
+    }
+
+    /// The register blocks of the chips that the file has, in the order of the
+    /// channel mask: the first YM2612, the first SN76489, the second YM2612,
+    /// the second SN76489, then the YM2413 and a second YM2413.
+    fn blocks(&self) -> impl Iterator<Item = RegisterBlock> + '_ {
+        let block = |present: bool, chip, name, size| {
+            present.then_some(RegisterBlock {
+                chip,
+                name,
+                base: 0,
+                size,
+            })
+        };
+        [
+            block(
+                self.fm[0].is_some(),
+                Chip::Ym2612,
+                "YM2612",
+                patch::YM2612_BLOCK,
+            ),
+            block(
+                self.psg[0].is_some(),
+                Chip::Sn76489,
+                "SN76489",
+                patch::SN76489_BLOCK,
+            ),
+            block(
+                self.fm[1].is_some(),
+                Chip::Ym2612Second,
+                "YM2612 (second)",
+                patch::YM2612_BLOCK,
+            ),
+            block(
+                self.psg[1].is_some(),
+                Chip::Sn76489Second,
+                "SN76489 (second)",
+                patch::SN76489_BLOCK,
+            ),
+            block(
+                self.opll[0].is_some(),
+                Chip::Ym2413,
+                "YM2413",
+                patch::YM2413_BLOCK,
+            ),
+            block(
+                self.opll[1].is_some(),
+                Chip::Ym2413Second,
+                "YM2413 (second)",
+                patch::YM2413_BLOCK,
+            ),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// The number of register blocks: one for each chip that the file has.
+    pub fn register_block_count(&self) -> usize {
+        self.blocks().count()
+    }
+
+    /// What block `index` is, or `None` for an index past the last.
+    pub fn register_block(&self, index: usize) -> Option<RegisterBlock> {
+        self.blocks().nth(index)
+    }
+
+    /// The registers that block `index` holds now, or `None` for an index past
+    /// the last. Reading changes nothing.
+    pub fn register_block_read(&self, index: usize) -> Option<Vec<u8>> {
+        let block = self.register_block(index)?;
+        Some(match block.chip {
+            Chip::Ym2612 => self.fm[0].as_ref()?.chip.registers().to_vec(),
+            Chip::Ym2612Second => self.fm[1].as_ref()?.chip.registers().to_vec(),
+            Chip::Sn76489 => self.psg[0].as_ref()?.chip.registers().to_vec(),
+            Chip::Sn76489Second => self.psg[1].as_ref()?.chip.registers().to_vec(),
+            Chip::Ym2413 => self.opll[0].as_ref()?.chip.registers().to_vec(),
+            Chip::Ym2413Second => self.opll[1].as_ref()?.chip.registers().to_vec(),
+        })
+    }
+
+    /// The FM patch that voice `index` uses now, or `None` for an index past
+    /// the last voice and for a voice that is not an FM channel: the SN76489,
+    /// channel 6 of a YM2612 while its DAC is on, and the YM2413's percussion
+    /// channels in rhythm mode (the bass drum has a kind of its own).
+    pub fn fm_patch(&self, index: usize) -> Option<FmPatch> {
+        let &(voice, _) = self.voices.get(index)?;
+        match voice {
+            VoiceRef::Fm(slot, c) => {
+                let f = self.fm[slot].as_ref()?;
+                if f.chip.voice(c).dac {
+                    return None;
+                }
+                Some(f.chip.fm_patch(c, f.clock as f64 / 144.0))
+            }
+            VoiceRef::Psg(..) => None,
+            VoiceRef::Opll(slot, c) => {
+                let o = self.opll[slot].as_ref()?;
+                o.chip.fm_patch(c, o.clock as f64 / 72.0)
+            }
+        }
     }
 
     pub fn output_rate(&self) -> i32 {

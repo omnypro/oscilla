@@ -17,8 +17,8 @@ SN76489 (three tones, noise, the Game Gear stereo write).
 
 - `rust/src`: `ym2612.rs` and `eg.rs` (the FM chip and its envelope generator),
   `ym2413.rs` (the OPLL),
-  `psg.rs` (the SN76489), `machine.rs` (the public type, the scheduler and the
-  output).
+  `psg.rs` (the SN76489), `patch.rs` (the types of the FM patch and register
+  block views), `machine.rs` (the public type, the scheduler and the output).
 - `rust/tests`: the Rust tests.
 - `tests/`: Swift Testing suites for the C interface.
 - `DESIGN.md`: how the core works.
@@ -66,6 +66,13 @@ A player has three more groups of calls.
 - `cgenesis_voices_get` returns what each channel of each chip is doing (its
   pitch, volume, pan, envelope, instrument and phase), and `cgenesis_scope_get`
   returns the last frames that one voice put out, for a display.
+- `cgenesis_register_block_count`, `_name`, `_base`, `_size` and `_get` read the
+  registers that each chip holds, one block for each chip the file names (the
+  YM2612's 512 bytes for both ports, the SN76489's 12 bytes, the YM2413's 64
+  bytes). The layouts are in `cgenesis.h`.
+- `cgenesis_fm_get` returns the patch that an FM voice uses (algorithm,
+  feedback, and for each operator its multiple, levels, rates, envelope phase
+  and level, and frequency in Hz) for a YM2612 or YM2413 voice.
 - `cgenesis_set_observer` sets a callback that hears every register write that
   a chip gets (the SN76489, the YM2612 and the YM2413, each first or second),
   with its address, its value and its time in samples of 44,100 Hz. It does not
@@ -101,6 +108,9 @@ times. `--bench` renders without output and prints the time it took.
 - `gym`: a GYM log renders the same samples as the VGM file with the same
   commands, a PAL log runs at 50 frames a second, and a loop comes round.
 - `viz`: the voices of the chips a file has, their state and their scopes.
+- `inspect`: the register blocks of every chip, the FM patch of YM2612 and
+  YM2413 voices (operator order, built-in and user patches, special mode), and
+  that reading does not change the samples.
 - `observer`: the chip, address, value and time of every write, DAC streams
   and second chips included, and no change to the sound.
 - `fuzz`: files of random bytes run without a panic and render the same samples

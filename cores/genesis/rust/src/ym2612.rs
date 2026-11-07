@@ -3,6 +3,7 @@
 //! output sample of the chip, 144 clocks of its input.
 
 use crate::eg::{Eg, Phase};
+use crate::patch::{FmChip, FmOperator, FmPatch, YM2612_BLOCK};
 use crate::scope::Scope;
 
 /// Samples between two steps of the LFO for each rate. A step is 1/128 of a
@@ -255,6 +256,23 @@ fn key_code(fnum: u16, block: u8) -> u8 {
     block << 2 | (n4 << 1 | n3) as u8
 }
 
+/// The phase generator's step for one operator: the F-number (with any
+/// vibrato) and block, the detune code and the multiple. A full wave is 2^20.
+fn increment(f: i32, block: u8, kc: u8, dt: u8, mul: u8) -> u32 {
+    let mut inc = if block == 0 { f >> 1 } else { f << (block - 1) } as u32;
+    let d = u32::from(DETUNE[usize::from(kc)][usize::from(dt & 3)]);
+    inc = if dt & 4 != 0 {
+        inc.wrapping_sub(d)
+    } else {
+        inc + d
+    } & 0x1FFFF;
+    if mul == 0 {
+        inc >> 1
+    } else {
+        (inc * u32::from(mul)) & 0xFFFFF
+    }
+}
+
 impl Ym2612 {
     pub fn new() -> Ym2612 {
         Ym2612 {
@@ -344,6 +362,112 @@ impl Ym2612 {
             total: loudest.output(0),
             phase: loudest.phase(),
             dac: c == 5 && self.dac_on,
+        }
+    }
+
+    /// The registers that the chip holds, as 512 bytes. The byte at index
+    /// `port * 256 + register` is that register of port 0 or port 1. A register
+    /// that the chip does not keep reads 0. Register 0x28 is a command and
+    /// reads 0, and so do the reset bits of 0x27. The DAC register 0x2A reads
+    /// 0x80 until a write changes it, and the panning registers 0xB4 to 0xB6
+    /// read 0xC0 until a write changes them.
+    pub fn registers(&self) -> [u8; YM2612_BLOCK] {
+        let mut r = [0u8; YM2612_BLOCK];
+        r[0x22] = u8::from(self.lfo_on) << 3 | self.lfo_rate;
+        r[0x24] = (self.timer_a >> 2) as u8;
+        r[0x25] = (self.timer_a & 3) as u8;
+        r[0x26] = self.timer_b;
+        r[0x27] = self.mode << 6
+            | u8::from(self.enable_b) << 3
+            | u8::from(self.enable_a) << 2
+            | u8::from(self.load_b) << 1
+            | u8::from(self.load_a);
+        r[0x2A] = self.dac;
+        r[0x2B] = u8::from(self.dac_on) << 7;
+        r[0x2C] = u8::from(self.dac_low) << 3;
+        for part in 0..2 {
+            let base = part * 0x100;
+            for low in 0..3 {
+                let ch = &self.ch[low + 3 * part];
+                for (position, &op) in REGISTER_ORDER.iter().enumerate() {
+                    let s = &ch.slots[op];
+                    let p = &s.eg.params;
+                    let at = base + low + 4 * position;
+                    r[at + 0x30] = s.dt << 4 | s.mul;
+                    r[at + 0x40] = p.tl;
+                    r[at + 0x50] = p.ks << 6 | p.ar;
+                    r[at + 0x60] = u8::from(p.am) << 7 | p.dr;
+                    r[at + 0x70] = p.sr;
+                    r[at + 0x80] = p.sl << 4 | p.rr;
+                    r[at + 0x90] = p.ssg;
+                }
+                r[base + 0xA0 + low] = ch.fnum as u8;
+                r[base + 0xA4 + low] = ch.high;
+                r[base + 0xB0 + low] = ch.fb << 3 | ch.alg;
+                r[base + 0xB4 + low] =
+                    u8::from(ch.left) << 7 | u8::from(ch.right) << 6 | ch.ams << 4 | ch.pms;
+            }
+        }
+        for low in 0..3 {
+            r[0xA8 + low] = self.special[low].0 as u8;
+            r[0xAC + low] = self.special_high[low];
+        }
+        r
+    }
+
+    /// The patch of channel `c` (0 to 5): its algorithm, feedback and the
+    /// four operators in the order of the manual's algorithm figures (the order of
+    /// `slots`). `rate_hz` is the chip's sample rate (its clock
+    /// over 144).
+    pub fn fm_patch(&self, c: usize, rate_hz: f64) -> FmPatch {
+        let c = c % 6;
+        let ch = &self.ch[c];
+        let mut op = [FmOperator::default(); 4];
+        for (i, o) in op.iter_mut().enumerate() {
+            let slot = &ch.slots[i];
+            let p = &slot.eg.params;
+            let (fnum, block) = self.frequency(c, i);
+            let inc = increment(
+                i32::from(fnum),
+                block,
+                key_code(fnum, block),
+                slot.dt,
+                slot.mul,
+            );
+            let level = slot.eg.level();
+            *o = FmOperator {
+                multiple: slot.mul,
+                detune: slot.dt,
+                total_level: p.tl,
+                key_scale: p.ks,
+                attack_rate: p.ar,
+                decay_rate: p.dr,
+                sustain_rate: p.sr,
+                release_rate: p.rr,
+                sustain_level: p.sl,
+                ssg_eg: if p.ssg & 8 != 0 { p.ssg & 15 } else { 0 },
+                am: p.am,
+                vibrato: false,
+                sustained: false,
+                waveform: 0,
+                phase: match slot.eg.phase() {
+                    Phase::Attack => 0,
+                    Phase::Decay => 1,
+                    Phase::Sustain => 2,
+                    Phase::Release if level >= 0x3FF => 4,
+                    Phase::Release => 3,
+                },
+                envelope_level: level,
+                frequency_hz: (f64::from(inc) * rate_hz / 1_048_576.0) as f32,
+            };
+        }
+        FmPatch {
+            chip: FmChip::Ym2612,
+            algorithm: ch.alg,
+            feedback: ch.fb,
+            instrument: 0,
+            operators: 4,
+            op,
         }
     }
 
@@ -617,20 +741,9 @@ impl Ym2612 {
                 let magnitude = ((f >> 4) * PM_PEAK[usize::from(pms)] * pm.abs()) >> 9;
                 f = (f + if pm < 0 { -magnitude } else { magnitude }) & 0x7FF;
             }
-            let mut inc = if block == 0 { f >> 1 } else { f << (block - 1) } as u32;
             let kc = key_code(fnum, block);
             let slot = &mut self.ch[c].slots[op];
-            let d = u32::from(DETUNE[usize::from(kc)][usize::from(slot.dt & 3)]);
-            inc = if slot.dt & 4 != 0 {
-                inc.wrapping_sub(d)
-            } else {
-                inc + d
-            } & 0x1FFFF;
-            inc = if slot.mul == 0 {
-                inc >> 1
-            } else {
-                (inc * u32::from(slot.mul)) & 0xFFFFF
-            };
+            let inc = increment(f, block, kc, slot.dt, slot.mul);
             slot.phase = (slot.phase + inc) & 0xFFFFF;
             phase[op] = slot.phase >> 10;
             att[op] = slot.eg.output(am);

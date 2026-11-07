@@ -3,6 +3,7 @@
 //! output holds a level until a counter expires, so the model runs from one
 //! expiry to the next and reports each change of level.
 
+use crate::patch::SN76489_BLOCK as PSG_BLOCK;
 use crate::scope::Scope;
 
 /// The peak-to-peak size of a channel at each attenuation. Each step is
@@ -127,6 +128,24 @@ impl Psg {
             left: self.stereo & (0x10 << c) != 0,
             right: self.stereo & (1 << c) != 0,
         }
+    }
+
+    /// The values that the chip holds, as 12 bytes. Bytes 0 to 5 are the
+    /// three tone registers (10 bits each) as 16-bit little endian values,
+    /// byte 6 is the noise control (bits 0 and 1 the rate, bit 2 white noise),
+    /// bytes 7 to 10 are the attenuations of the three tones and the noise
+    /// (0 loudest, 15 off), and byte 11 is the Game Gear stereo register
+    /// (bits 0 to 3 send channels 0 to 3 to the right and bits 4 to 7 to the
+    /// left, 0xFF at the start).
+    pub fn registers(&self) -> [u8; PSG_BLOCK] {
+        let mut r = [0u8; PSG_BLOCK];
+        for (c, tone) in self.tone.iter().enumerate() {
+            r[2 * c..2 * c + 2].copy_from_slice(&tone.to_le_bytes());
+        }
+        r[6] = self.noise;
+        r[7..11].copy_from_slice(&self.attenuation);
+        r[11] = self.stereo;
+        r
     }
 
     /// The sample `back` steps before the newest of a channel's scope, which
