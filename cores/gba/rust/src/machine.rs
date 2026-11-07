@@ -19,7 +19,7 @@ const BLOCKS: [(&str, u32, usize); 5] = [
     ("Sound", 0x0400_0060, 0x2A),
     ("Wave RAM", 0x0400_0090, 32),
     ("FIFO", 0x0400_00A0, 8),
-    ("Timers and DMA sound", 0x0400_0100, 16),
+    ("Timers", 0x0400_0100, 16),
     ("DMA 1 and 2", 0x0400_00BC, 24),
 ];
 

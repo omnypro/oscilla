@@ -167,7 +167,7 @@ uint32_t cgba_peek(const cgba_machine *machine, uint32_t address, int width);
  *     (0x040000A4). Each byte is the last one stored to its address, so a
  *     32-bit store shows as one word. The bytes are recorded when the FIFO is
  *     full and drops them, and when a DMA channel makes the store.
- *   3 "Timers and DMA sound" (16 bytes, base 0x04000100): the reload value then
+ *   3 "Timers" (16 bytes, base 0x04000100): the reload value then
  *     the control value of timers 0 to 3, 4 bytes each. This block holds the
  *     timers that clock the FIFOs. The DMA channels that feed them are block 4.
  *   4 "DMA 1 and 2" (24 bytes, base 0x040000BC): the source address, the

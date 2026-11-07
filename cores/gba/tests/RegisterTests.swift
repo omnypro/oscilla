@@ -28,7 +28,7 @@ struct RegisterTests {
         defer { cgba_free(m) }
         let table: [(String, UInt32, Int)] = [
             ("Sound", 0x0400_0060, 0x2A), ("Wave RAM", 0x0400_0090, 32), ("FIFO", 0x0400_00A0, 8),
-            ("Timers and DMA sound", 0x0400_0100, 16), ("DMA 1 and 2", 0x0400_00BC, 24),
+            ("Timers", 0x0400_0100, 16), ("DMA 1 and 2", 0x0400_00BC, 24),
         ]
         #expect(cgba_register_block_count(m) == 5)
         for (i, (name, base, size)) in table.enumerated() {

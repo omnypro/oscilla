@@ -56,7 +56,7 @@ A player has four more groups of calls.
 - `cgba_register_block_count`, `_name`, `_base`, `_size` and `_get` return the
   registers as the program stored them, in five blocks: "Sound" (SOUND1CNT_L
   to SOUNDBIAS, 42 bytes at 0x04000060), "Wave RAM" (both banks, 32 bytes at
-  0x04000090), "FIFO" (8 bytes at 0x040000A0), "Timers and DMA sound" (the four
+  0x04000090), "FIFO" (8 bytes at 0x040000A0), "Timers" (the four
   timers' reload and control values, 16 bytes at 0x04000100) and "DMA 1 and 2"
   (24 bytes at 0x040000BC).
 - `cgba_end_state_get` reports a CPU that waits for an interrupt that no

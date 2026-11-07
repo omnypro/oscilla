@@ -303,7 +303,7 @@ pub unsafe extern "C" fn cgba_register_block_name(
         c"Sound",
         c"Wave RAM",
         c"FIFO",
-        c"Timers and DMA sound",
+        c"Timers",
         c"DMA 1 and 2",
     ];
     if machine.is_null() || unsafe { in_callback(machine) } {

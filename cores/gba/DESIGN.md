@@ -117,7 +117,7 @@ by name.
 | 0     | Sound                | `0x04000060` | 42    |
 | 1     | Wave RAM             | `0x04000090` | 32    |
 | 2     | FIFO                 | `0x040000A0` | 8     |
-| 3     | Timers and DMA sound | `0x04000100` | 16    |
+| 3     | Timers | `0x04000100` | 16    |
 | 4     | DMA 1 and 2          | `0x040000BC` | 24    |
 
 The sound block runs from SOUND1CNT_L (0x60) to the second byte of SOUNDBIAS
@@ -156,8 +156,7 @@ clears). An 8-bit store to a DMA control register merges its other byte from
 the DMA state, so that byte can differ from the last value stored to it. The
 DMA block lists the source address, destination address, count and control
 value of DMA 1, then the same of DMA 2, in the order of the registers from
-0x040000BC. DMA 0 and DMA 3 do not feed the FIFOs and have no block. The timer
-block is named "Timers and DMA sound" and holds only the timers.
+0x040000BC. DMA 0 and DMA 3 do not feed the FIFOs and have no block.
 
 `written` and `fifo_written` are part of the machine state. A copy and a
 snapshot carry them, and `size` counts them in `size_of::<Machine>()`.
